@@ -1,0 +1,17 @@
+# Arquivos de Ambiente e Segurança
+venv/
+.env
+
+# Arquivos de Cache e Compilação
+__pycache__/
+*.pyc
+*.log
+
+# Arquivos de Banco de Dados Locais
+db.sqlite3
+
+# Arquivos de Mídia de Usuários
+media/
+
+# Configurações do VS Code
+.vscode/
