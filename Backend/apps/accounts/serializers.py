@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import User, UserQuestionnaire
 from django.db import transaction
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from .services import BitrixService
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
@@ -62,5 +63,11 @@ class RegisterSerializer(serializers.ModelSerializer):
                 answers=questionnaire_answers,
                 is_latest=True
             )
+            
+            # Integração Bitrix
+            bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
+            if bitrix_id:
+                user.id_bitrix = bitrix_id
+                user.save()
             
         return user

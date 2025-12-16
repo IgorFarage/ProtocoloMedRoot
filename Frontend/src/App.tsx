@@ -45,7 +45,7 @@ const App = () => (
             <Route path="/register" element={<Register />} />
 
             {/* [AJUSTE] Padronizado para inglês para bater com os links internos */}
-            <Route path="/questionnaire" element={<Questionnaire />} />
+            <Route path="/questionario" element={<Questionnaire />} />
 
             <Route path="/sobre-nos" element={<AboutUs />} />
             <Route path="/contato" element={<Contact />} />
