@@ -10,6 +10,7 @@ import { ArrowLeft, ArrowRight, CheckCircle, AlertTriangle } from "lucide-react"
 import { useNavigate } from "react-router-dom";
 import NotFound from "./NotFound";
 import { Checkbox } from "@/components/ui/checkbox";
+import api from "../lib/api";
 
 // --- IMPORTAÇÃO DOS PRODUTOS (Imagens) ---
 // Certifique-se de que as imagens estão na pasta: src/assets/produtos/
@@ -229,9 +230,13 @@ const Questionnaire = () => {
 
   // Handlers
   const handleAnswer = (value: string) => {
-    setAnswers({ ...answers, [currentQuestion.id]: value });
+    const newAnswers = { ...answers, [currentQuestion.id]: value };
+    setAnswers(newAnswers);
+    // Persiste para o fluxo de registro
+    sessionStorage.setItem('pending_questionnaire', JSON.stringify(newAnswers));
   };
 
+  // Altere o handleMultipleAnswer para:
   const handleMultipleAnswer = (value: string, isChecked: boolean) => {
     const currentAnswer = answers[currentQuestion.id] || "";
     const selectedValues = currentAnswer.split(',').filter(v => v !== '');
@@ -246,7 +251,10 @@ const Questionnaire = () => {
     } else {
       newSelectedValues = selectedValues.filter(v => v !== value);
     }
-    setAnswers({ ...answers, [currentQuestion.id]: newSelectedValues.join(',') });
+    const newAnswers = { ...answers, [currentQuestion.id]: newSelectedValues.join(',') };
+    setAnswers(newAnswers);
+    // Persiste para o fluxo de registro
+    sessionStorage.setItem('pending_questionnaire', JSON.stringify(newAnswers));
   };
 
   const handleNext = () => {
@@ -262,28 +270,26 @@ const Questionnaire = () => {
     if (nextStep < totalSteps) {
       setCurrentStep(nextStep);
     } else {
-      // Finalização
-      try {
-        const raw = localStorage.getItem("submissions");
-        const submissions = raw ? JSON.parse(raw) : [];
-        const id = String(Date.now());
-        const authUser = (() => {
-          try {
-            return JSON.parse(localStorage.getItem("auth_user") || "null");
-          } catch { return null; }
-        })();
-
-        const submission = {
-          id,
-          patientName: authUser?.name,
-          timestamp: Date.now(),
-          answers,
-        };
-        submissions.unshift(submission);
-        localStorage.setItem("submissions", JSON.stringify(submissions));
-      } catch (e) { }
-
+      // FINALIZAÇÃO
+      saveQuestionnaire(); // Nova função
       setShowResults(true);
+    }
+  };
+
+  const saveQuestionnaire = async () => {
+    const token = localStorage.getItem('access_token');
+
+    if (token) {
+      try {
+        // Se o usuário está logado, enviamos para o endpoint de histórico
+        await api.post('/accounts/questionnaires/', { answers });
+        console.log("Questionário salvo no histórico do usuário.");
+      } catch (err) {
+        console.error("Erro ao salvar histórico:", err);
+      }
+    } else {
+      // Se não está logado, garantimos que está no sessionStorage para o Register.tsx
+      sessionStorage.setItem('pending_questionnaire', JSON.stringify(answers));
     }
   };
 

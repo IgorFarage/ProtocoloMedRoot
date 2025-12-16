@@ -1,96 +1,136 @@
 import { useState } from "react";
-import { Header } from "@/components/Header";
-import { Footer } from "@/components/Footer";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/auth/AuthProvider";
-import { useNavigate, Link } from "react-router-dom";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Loader2, AlertCircle } from "lucide-react";
+import { Header } from "@/components/Header";
+import { Footer } from "@/components/Footer";
 
 const Login = () => {
-  const { login } = useAuth();
-  // Mantemos o estado para controlar o perfil selecionado (começa como 'patient')
-  const [role, setRole] = useState<"patient" | "doctor">("patient");
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const { login } = useAuth(); // Nossa função que conecta com o Django
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
+    setIsLoading(true);
 
-    // 1. [CORREÇÃO] Chama a função login com o ROLE ATUALMENTE SELECIONADO (role)
-    login({
-      role,
-      // Valores de protótipo baseados no role
-      name: name || (role === 'doctor' ? 'Dr(a). Protótipo' : 'Paciente Protótipo'),
-      email: email || `${role}@protocolomed.com`
-    });
+    try {
+      // 1. Tenta fazer login
+      await login(email, password);
 
-    // 2. [CORREÇÃO ESSENCIAL] Redirecionamento condicional para as rotas CORRETAS
-    if (role === "doctor") {
-      // Redireciona para a rota configurada para o médico
-      navigate("/DoctorDashboard");
-    } else {
-      // Redireciona para a rota configurada para o paciente/cliente
-      navigate("/ClientDashboard");
+      // 2. Se não der erro, o AuthProvider já salvou o usuario e token.
+      // Vamos verificar o role para redirecionar corretamente (embora o AuthProvider já atualize o estado)
+      // Como o estado 'user' pode demorar um milissegundo para atualizar, 
+      // podemos confiar que se o login passou, podemos redirecionar.
+
+      // Pequeno timeout para garantir que o estado global atualizou ou redirecionar baseado na lógica padrão
+      // Uma abordagem melhor seria ler o token decodificado aqui, mas vamos simplificar:
+      // O App.tsx vai redirecionar se o usuário tentar acessar a rota protegida.
+
+      navigate("/dashboard"); // Manda para o Dashboard do Cliente por padrão
+
+    } catch (err: any) {
+      console.error(err);
+      // Tratamento de erros comuns do Django SimpleJWT
+      if (err.response?.status === 401) {
+        setError("E-mail ou senha incorretos.");
+      } else {
+        setError("Erro ao conectar com o servidor. Tente novamente.");
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen flex flex-col bg-background">
       <Header />
-      <main className="container mx-auto px-4 py-12">
-        <div className="max-w-md mx-auto">
-          <h1 className="text-2xl font-bold mb-4">Entrar</h1>
-          <form onSubmit={handleSubmit} className="space-y-4">
 
-            {/* 3. [CORREÇÃO] Botões de seleção de Perfil restaurados e funcionais */}
-            <div>
-              <label className="block text-sm font-medium mb-1">Tipo de usuário</label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  // Estilo e lógica para selecionar Paciente
-                  className={`px-4 py-2 rounded ${role === "patient" ? "bg-primary text-primary-foreground" : "border"}`}
-                  onClick={() => setRole("patient")}
-                >
-                  Paciente
-                </button>
-                <button
-                  type="button"
-                  // Estilo e lógica para selecionar Médico
-                  className={`px-4 py-2 rounded ${role === "doctor" ? "bg-primary text-primary-foreground" : "border"}`}
-                  onClick={() => setRole("doctor")}
-                >
-                  Médico
-                </button>
+      <main className="flex-1 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1">
+            <CardTitle className="text-2xl font-bold text-center">Acesse sua conta</CardTitle>
+            <CardDescription className="text-center">
+              Entre para acompanhar seu protocolo e entregas
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+
+              {/* Exibe erro se houver */}
+              {error && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="email">E-mail</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="seu@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
               </div>
-            </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-1">Nome</label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" />
-            </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">Senha</Label>
+                  <Link
+                    to="/recuperar-senha"
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Esqueceu a senha?
+                  </Link>
+                </div>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-1">Email</label>
-              <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu@email.com" />
-            </div>
-
-            <div>
-              <Button type="submit" className="w-full">
-                Entrar
+              <Button type="submit" className="w-full" disabled={isLoading}>
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Entrando...
+                  </>
+                ) : (
+                  "Entrar"
+                )}
               </Button>
-            </div>
+            </form>
+          </CardContent>
 
-            <div className="text-center text-sm">
-              Não tem uma conta?{" "}
-              <Link to="/register" className="text-primary hover:underline">
-                Cadastre-se
+          <CardFooter className="flex justify-center">
+            <div className="text-sm text-muted-foreground">
+              Ainda não tem conta?{" "}
+              <Link to="/questionnaire" className="text-primary hover:underline font-medium">
+                Fazer avaliação gratuita
               </Link>
             </div>
-          </form>
-        </div>
+          </CardFooter>
+        </Card>
       </main>
+
       <Footer />
     </div>
   );

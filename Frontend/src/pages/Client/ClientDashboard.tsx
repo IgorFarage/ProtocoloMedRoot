@@ -1,64 +1,36 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import * as Recharts from "recharts";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAuth } from "@/auth/AuthProvider"; // Para a função logout
-import { ChevronRight, Heart, TrendingUp, Calendar, UserCheck, Upload, LogOut } from "lucide-react";
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
-import { useState } from "react";
+import { useAuth } from "@/auth/AuthProvider";
+import { ChevronRight, Heart, TrendingUp, UserCheck, Upload, LogOut, ShoppingBag, FileText, AlertCircle } from "lucide-react";
+import api from "@/lib/api";
 
-// ===============================================
-// IMPORTAÇÃO DE ASSETS (PLACEHOLDERS)
-// [ATENÇÃO] Verifique se os caminhos correspondem à localização das suas imagens.
-// ===============================================
-import Photo1 from "@/assets/Images/careca01.jpg";
-import Photo2 from "@/assets/Images/careca02.jpg";
-import Photo3 from "@/assets/Images/careca03.jpg";
-import Photo4 from "@/assets/Images/careca04.jpg";
+// --- IMPORTAÇÃO DOS PRODUTOS (Lógica Real) ---
+import minoxidilCpsImg from "@/assets/Produtos/MinoxidilCPS.png";
+import finasteridaCpsImg from "@/assets/Produtos/FinasteridaCPS.png";
+import dutasteridaCpsImg from "@/assets/Produtos/DutasteridaCPS.png";
+import minoxidilSprayImg from "@/assets/Produtos/MinoxidilSpray.png";
+import finasteridaSprayImg from "@/assets/Produtos/FinasteridaSpray.png";
+import shampooImg from "@/assets/Produtos/SawpalmetoShampoo.png";
+import biotinaImg from "@/assets/Produtos/BiotinaCPS.png";
 
-// ===============================================
-// DADOS DE EXEMPLO E TIPOS
-// ===============================================
-
-const progressChartData = [
-  { month: "Jan", score: 46 },
-  { month: "Fev", score: 52 },
-  { month: "Mar", score: 66 },
-  { month: "Abr", score: 73 },
-];
-
-interface PhotoHistoryItem {
-  id: number;
-  date: string;
-  src: string;
-}
-
-const photoHistory: PhotoHistoryItem[] = [
-  { id: 1, date: "15/Out/2024", src: Photo1 },
-  { id: 2, date: "15/Set/2024", src: Photo2 },
-  { id: 3, date: "15/Ago/2024", src: Photo3 },
-  { id: 4, date: "15/Jul/2024", src: Photo4 },
-];
-
-// ===============================================
-// COMPONENTES AUXILIARES
-// ===============================================
-
-const ActionCard = ({ title, description, link, linkText, icon: Icon, color }: { title: string, description: string, link: string, linkText: string, icon: React.ElementType, color: string }) => (
+// Componente de Card de Ação Rápida
+const ActionCard = ({ title, description, link, linkText, icon: Icon, color }: any) => (
   <Card className="flex flex-col justify-between">
     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
       <CardTitle className="text-sm font-medium">{title}</CardTitle>
       <Icon className={`h-4 w-4 ${color}`} />
     </CardHeader>
     <CardContent>
-      <div className="text-2xl font-bold mb-2">{description}</div>
+      <div className="text-lg font-bold mb-2 leading-tight">{description}</div>
     </CardContent>
     <CardFooter>
-      <Link to={link}>
+      <Link to={link} className="w-full">
         <Button variant="outline" className="w-full justify-between">
           {linkText}
           <ChevronRight className="h-4 w-4 ml-2" />
@@ -68,26 +40,86 @@ const ActionCard = ({ title, description, link, linkText, icon: Icon, color }: {
   </Card>
 );
 
-// ===============================================
-// DASHBOARD PRINCIPAL (CLIENTE)
-// ===============================================
-
-export const ClientDashboard = () => {
-  const userName = "João"; // Deve vir do AuthProvider
-  const { logout } = useAuth(); // Obtém a função de logout
+export default function ClientDashboard() {
+  const { user, logout } = useAuth();
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [answers, setAnswers] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  // 1. Busca Histórico Real
+  useEffect(() => {
+    async function fetchHistory() {
+      try {
+        const response = await api.get('/accounts/questionnaires/');
+        if (response.data && response.data.length > 0) {
+          setAnswers(response.data[0].answers);
+        }
+      } catch (error) {
+        console.error("Erro ao buscar histórico:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchHistory();
+  }, []);
+
+  // 2. Lógica de Protocolo Dinâmico
+  const getProtocol = () => {
+    if (!answers) return null;
+
+    const shampoo = { name: "Shampoo Saw Palmetto", sub: "Café verde + Mentol", img: shampooImg };
+    const biotina = { name: "Biotina 45ug", sub: "Suplemento vitamínico", img: biotinaImg };
+    let selectedCapsule = null;
+    let selectedSpray = null;
+
+    const gender = answers["F1_Q1_gender"];
+    const hasPets = answers["F2_Q18_pets"] === "sim";
+    const allergies = answers["F2_Q15_allergy"] || "";
+    const priority = answers["F2_Q19_priority"];
+    const intervention = answers["F2_Q16_intervention"];
+
+    const allergicFinasterida = allergies.includes("finasterida");
+    const allergicMinoxidil = allergies.includes("minoxidil");
+    const allergicDutasterida = allergies.includes("dutasterida");
+    const isHighEfficacy = priority === "efetividade" || intervention === "dutasterida";
+
+    if (gender === "feminino") {
+      selectedCapsule = allergicMinoxidil
+        ? { name: "Consulte Especialista", sub: "Restrição alérgica", img: null }
+        : { name: "Minoxidil 2.5mg", sub: "Cápsula oral", img: minoxidilCpsImg };
+    } else {
+      if (isHighEfficacy && !allergicDutasterida) {
+        selectedCapsule = { name: "Dutasterida 0.5mg", sub: "Alta eficácia", img: dutasteridaCpsImg };
+      } else if (!allergicFinasterida) {
+        selectedCapsule = { name: "Finasterida 1mg", sub: "Bloqueador DHT", img: finasteridaCpsImg };
+      } else {
+        selectedCapsule = !allergicMinoxidil
+          ? { name: "Minoxidil 2.5mg", sub: "Estimulante oral", img: minoxidilCpsImg }
+          : { name: "Saw Palmetto", sub: "Alternativa natural", img: null };
+      }
+    }
+
+    if (hasPets) {
+      selectedSpray = { name: "Loção Finasterida", sub: "Spray pet-friendly", img: finasteridaSprayImg };
+    } else {
+      selectedSpray = allergicMinoxidil
+        ? { name: "Loção Finasterida", sub: "Spray tópico", img: finasteridaSprayImg }
+        : { name: "Loção Minoxidil 5%", sub: "Spray tópico", img: minoxidilSprayImg };
+    }
+
+    return [selectedCapsule, selectedSpray, shampoo, biotina].filter((p): p is { name: string, sub: string, img: string | null } => p !== null);
+  };
+
+  const protocol = getProtocol();
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setUploadedFile(file);
-    }
+    if (file) setUploadedFile(file);
   };
 
   const handlePhotoSubmit = () => {
     if (uploadedFile) {
-      console.log("Enviando foto:", uploadedFile.name);
-      // Adicionar lógica de envio ao backend aqui
+      alert("Funcionalidade de upload será ativada em breve.");
       setUploadedFile(null);
     }
   };
@@ -95,254 +127,185 @@ export const ClientDashboard = () => {
   return (
     <div className="container mx-auto px-4 py-8 space-y-8">
 
-      {/* 1. Welcome e Botão Sair (Logout) */}
+      {/* HEADER */}
       <header className="space-y-4 mb-6">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold">Olá, {userName}!</h1>
-            <p className="text-lg text-muted-foreground">Bem-vindo à sua central de saúde personalizada.</p>
+            <h1 className="text-3xl font-bold">Olá, {user?.full_name?.split(" ")[0] || "Paciente"}!</h1>
+            <p className="text-lg text-muted-foreground">Bem-vindo à sua central de tratamento.</p>
           </div>
-          {/* Botões de Ação */}
           <div className="flex gap-2">
             <Link to="/perfil">
               <Button variant="outline" className="flex items-center gap-2">
-                <UserCheck className="h-4 w-4" />
-                Meu perfil
+                <UserCheck className="h-4 w-4" /> Meu perfil
               </Button>
             </Link>
-            <Button
-              onClick={logout}
-              variant="outline"
-              className="flex items-center gap-2"
-            >
-              <LogOut className="h-4 w-4" />
-              Sair
+            <Button onClick={logout} variant="outline" className="flex items-center gap-2 hover:bg-red-50 hover:text-red-600">
+              <LogOut className="h-4 w-4" /> Sair
             </Button>
           </div>
         </div>
 
-        <Alert className="bg-primary text-primary-foreground border-primary/50">
-          <Calendar className="h-4 w-4" />
-          <AlertTitle>Seu próximo passo é importante!</AlertTitle>
-          <AlertDescription className="flex items-center justify-between">
-            <span className="font-semibold">Sua próxima consulta de acompanhamento está agendada para 05/Dez.</span>
-            <Link to="/agendamento">
-              <Button variant="secondary" className="bg-white text-primary hover:bg-gray-100 ml-2">
-                Ver agendamentos
-              </Button>
-            </Link>
+        <Alert className="bg-primary/5 border-primary/20 text-primary-800">
+          <ShoppingBag className="h-4 w-4 text-primary" />
+          <AlertTitle>Status do Pedido: Em Análise</AlertTitle>
+          <AlertDescription>
+            Nossa equipe médica está revisando suas respostas para liberar a prescrição.
           </AlertDescription>
         </Alert>
       </header>
 
       <Separator />
 
-      {/* 2. Cartões de Status e Ações Rápidas */}
+      {/* STATS */}
       <section className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Estágio de queda</CardTitle>
             <Heart className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">Moderado</div>
-            <p className="text-xs text-muted-foreground mt-1">Requer atenção especial.</p>
+            <div className="text-2xl font-bold text-destructive capitalize">
+              {answers?.["F1_Q2_stage"]?.replace('_', ' ') || "--"}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Conforme sua anamnese.</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Seu médico</CardTitle>
+            <CardTitle className="text-sm font-medium">Médico Responsável</CardTitle>
             <UserCheck className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold">Dr. Protótipo Silva</div>
-            <p className="text-xs text-muted-foreground mt-1">Especialista em tricologia.</p>
+            <div className="text-xl font-bold">Equipe ProtocoloMed</div>
+            <p className="text-xs text-muted-foreground mt-1">Especialistas em Tricologia</p>
           </CardContent>
-          <CardFooter className="flex flex-col items-start gap-2">
-            <Link to="/SeuProtocolo" className="w-full">
-              <Button variant="outline" size="sm" className="w-full">
-                Histórico de prescrição
-              </Button>
-            </Link>
-            <Link to="/PerfilMedico" className="text-sm text-primary hover:underline flex items-center self-end justify-end">
-              Ver perfil
-            </Link>
-          </CardFooter>
         </Card>
 
         <ActionCard
-          title="Próxima Avaliação"
-          description="Sua saúde evolui. Mantenha seu plano atualizado."
-          link="/questionario"
-          linkText="Iniciar Reavaliação"
+          title="Nova Avaliação"
+          description="Mudança no quadro?"
+          link="/questionnaire"
+          linkText="Refazer Anamnese"
           icon={TrendingUp}
           color="text-green-600"
         />
 
         <ActionCard
-          title="Suporte Dedicado"
-          description="Dúvidas? Fale com nossa equipe de saúde agora."
+          title="Suporte"
+          description="Fale com a equipe."
           link="/contato"
-          linkText="Falar por Chat"
+          linkText="Chat Online"
           icon={Heart}
           color="text-orange-500"
         />
       </section>
 
-      {/* 3. Seção de Progresso e Histórico (Gráfico) */}
+      {/* ÁREA CENTRAL: GRÁFICO (Placeholder) E PROTOCOLO */}
       <section className="grid gap-6 lg:grid-cols-3">
 
+        {/* Gráfico - Estado Vazio */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Histórico de evolução</CardTitle>
-            <CardDescription>Visualização do seu progresso nos últimos 4 meses.</CardDescription>
+            <CardTitle>Evolução do Tratamento</CardTitle>
+            <CardDescription>Acompanhe seu progresso ao longo dos meses.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="h-[300px]">
-              <ChartContainer
-                config={{ score: { label: "Score de Risco", color: "hsl(var(--primary))" } }}
-                className="h-[300px] w-full"
-              >
-                <Recharts.LineChart data={progressChartData}>
-                  <Recharts.CartesianGrid vertical={false} strokeDasharray="4 4" />
-
-                  <Recharts.XAxis
-                    dataKey="month"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                  />
-
-                  <Recharts.YAxis
-                    dataKey="score"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    domain={[40, 90]}
-                  />
-
-                  <ChartTooltip content={<ChartTooltipContent />} />
-
-                  <Recharts.Line
-                    dataKey="score"
-                    type="monotone"
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={2}
-                    dot={{
-                      fill: "hsl(var(--primary))",
-                    }}
-                    activeDot={{
-                      r: 6,
-                      fill: "hsl(var(--primary))",
-                      stroke: "hsl(var(--primary) / 0.5)",
-                    }}
-                  />
-                </Recharts.LineChart>
-              </ChartContainer>
-            </div>
+          <CardContent className="flex flex-col items-center justify-center h-[300px] bg-gray-50/50 rounded-lg border border-dashed m-4">
+            <TrendingUp className="h-12 w-12 text-gray-300 mb-4" />
+            <h3 className="text-lg font-medium text-gray-500">Gráfico indisponível</h3>
+            <p className="text-sm text-gray-400 text-center max-w-sm mt-2">
+              Seu gráfico de densidade capilar será gerado automaticamente após o início do tratamento e envio das primeiras fotos.
+            </p>
           </CardContent>
         </Card>
 
-        <Card>
+        {/* Protocolo - Dinâmico */}
+        <Card className="flex flex-col h-full border-primary/20 bg-blue-50/30">
           <CardHeader>
-            <CardTitle>Seu protocolo de tratamento</CardTitle>
-            <CardDescription>Protocolo ativo: plano essencial</CardDescription>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5 text-primary" /> Protocolo Sugerido
+            </CardTitle>
+            <CardDescription>Produtos baseados no seu perfil</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium leading-none">Status:</h4>
-              <p className="text-sm text-muted-foreground font-semibold">Em andamento</p>
-            </div>
-            <Separator />
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium leading-none">Próxima entrega:</h4>
-              <p className="text-sm text-muted-foreground">15 de dezembro</p>
-            </div>
-          </CardContent>
-          <CardFooter>
-            <Link to="/SeuProtocolo">
-              <Button variant="default" className="w-full">
-                Gerenciar plano
-              </Button>
-            </Link>
-          </CardFooter>
-        </Card>
-      </section>
-
-      {/* 4. Upload e Histórico de Fotos */}
-      <section className="grid gap-6 lg:grid-cols-3">
-
-        {/* Área 1: Upload de Fotos */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>Upload semanal de fotos</CardTitle>
-            <CardDescription>Mantenha seu médico atualizado com seu progresso visual.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {uploadedFile ? (
-              <div className="border p-4 rounded-lg flex items-center justify-between bg-primary/10">
-                <span className="text-sm font-medium truncate">{uploadedFile.name}</span>
-                <Button variant="destructive" size="sm" onClick={() => setUploadedFile(null)}>
-                  Remover
-                </Button>
+          <CardContent className="flex-1 space-y-4">
+            {loading ? (
+              <p className="text-center text-sm text-gray-500">Carregando...</p>
+            ) : !protocol ? (
+              <div className="text-center py-4">
+                <AlertCircle className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">Responda a anamnese para ver seu protocolo.</p>
+                <Link to="/questionnaire"><Button size="sm" className="mt-4">Iniciar</Button></Link>
               </div>
             ) : (
-              <label className="flex flex-col items-center justify-center p-8 rounded-lg border-2 border-dashed border-border hover:border-primary transition-colors cursor-pointer bg-muted/50">
-                <Upload className="h-8 w-8 text-muted-foreground mb-2" />
-                <span className="text-sm text-muted-foreground">Arraste ou clique para carregar (JPEG/PNG)</span>
-                <Input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                />
-              </label>
-            )}
-          </CardContent>
-          <CardFooter>
-            <Button
-              onClick={handlePhotoSubmit}
-              disabled={!uploadedFile}
-              className="w-full"
-            >
-              Enviar foto de progresso
-            </Button>
-          </CardFooter>
-        </Card>
-
-        {/* Área 2: Histórico de Fotos */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Histórico visual ({photoHistory.length} registros)</CardTitle>
-            <CardDescription>Suas fotos passadas para comparação e análise.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-72 w-full pr-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                {photoHistory.map((photo) => (
-                  <div key={photo.id} className="relative aspect-[4/5] rounded-lg overflow-hidden border border-border bg-muted">
-
-                    <img
-                      src={photo.src}
-                      alt={`Foto de progresso de ${photo.date}`}
-                      className="w-full h-full object-cover"
-                    />
-
-                    <div className="absolute bottom-0 left-0 right-0 bg-background/70 backdrop-blur-sm p-1 text-center">
-                      <small className="text-xs font-medium text-foreground">{photo.date}</small>
+              <div className="space-y-3">
+                {protocol.map((prod, idx) => (
+                  <div key={idx} className="flex items-center gap-3 bg-white p-3 rounded-lg border shadow-sm">
+                    <div className="w-12 h-12 flex-shrink-0 p-1">
+                      {prod.img && <img src={prod.img} alt={prod.name} className="w-full h-full object-contain" />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-gray-800 leading-tight">{prod.name}</p>
+                      <p className="text-[10px] text-gray-500">{prod.sub}</p>
                     </div>
                   </div>
                 ))}
               </div>
-            </ScrollArea>
+            )}
+          </CardContent>
+          {protocol && (
+            <CardFooter>
+              <Button className="w-full">Prosseguir para Assinatura</Button>
+            </CardFooter>
+          )}
+        </Card>
+      </section>
+
+      {/* UPLOAD E FOTOS - Estado Vazio */}
+      <section className="grid gap-6 lg:grid-cols-3">
+
+        {/* Card de Upload */}
+        <Card className="lg:col-span-1">
+          <CardHeader>
+            <CardTitle>Envio de Fotos</CardTitle>
+            <CardDescription>Atualize seu médico sobre seu progresso.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {uploadedFile ? (
+              <div className="border p-4 rounded-lg flex items-center justify-between bg-primary/10">
+                <span className="text-sm font-medium truncate max-w-[150px]">{uploadedFile.name}</span>
+                <Button variant="ghost" size="sm" onClick={() => setUploadedFile(null)} className="text-red-500 h-8 w-8 p-0">X</Button>
+              </div>
+            ) : (
+              <label className="flex flex-col items-center justify-center p-8 rounded-lg border-2 border-dashed border-gray-200 hover:border-primary/50 transition-colors cursor-pointer bg-gray-50/50">
+                <Upload className="h-8 w-8 text-gray-400 mb-2" />
+                <span className="text-xs text-gray-500 text-center">Clique para carregar foto</span>
+                <Input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+              </label>
+            )}
+          </CardContent>
+          <CardFooter>
+            <Button onClick={handlePhotoSubmit} disabled={!uploadedFile} className="w-full">
+              Enviar Foto
+            </Button>
+          </CardFooter>
+        </Card>
+
+        {/* Histórico - Estado Vazio */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Galeria de Evolução</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center justify-center h-60 text-center text-gray-400">
+            <div className="p-4 bg-gray-100 rounded-full mb-3">
+              <Upload className="h-6 w-6" />
+            </div>
+            <p>Nenhuma foto enviada ainda.</p>
+            <p className="text-xs mt-1">Suas fotos aparecerão aqui após o upload.</p>
           </CardContent>
         </Card>
       </section>
 
     </div>
   );
-};
-
-export default ClientDashboard;
+}

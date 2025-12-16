@@ -3,20 +3,26 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "@/auth/AuthProvider";
+import ProtectedRoute from "@/components/ProtectedRoute";
+
+// Páginas
 import Index from "./pages/Index";
 import Questionnaire from "./pages/Questionnaire";
 import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import AboutUs from "./pages/AboutUs";
-import ClientDashboard from "./pages/Client/ClientDashboard";
-import { AuthProvider } from "@/auth/AuthProvider";
-import ProtectedRoute from "@/components/ProtectedRoute";
-import DoctorDashboard from "./pages/Doctor/DoctorDashboard";
 import Contact from "./pages/Contact";
+
+// Área do Cliente
+import ClientDashboard from "./pages/Client/ClientDashboard";
 import ClientProfile from "./pages/Client/ClientProfile";
 import ClientProtocol from "./pages/Client/ClientProtocol";
 import ClientSchedule from "./pages/Client/ClientSchedule";
+
+// Área do Médico
+import DoctorDashboard from "./pages/Doctor/DoctorDashboard";
 import DoctorRecord from "./pages/Doctor/DoctorRecord";
 import DoctorTelemedicine from "./pages/Doctor/DoctorTelemedicine";
 import DoctorSchedule from "./pages/Doctor/DoctorSchedule";
@@ -24,14 +30,6 @@ import DoctorProfileSettings from "./pages/Doctor/DoctorProfileSettings";
 import DoctorProfile from "./pages/Doctor/DoctorProfile";
 
 const queryClient = new QueryClient();
-
-// [NEW] Placeholder temporário para o dashboard médico.
-// Este componente deverá ser movido para um arquivo separado (ex: ./pages/MedicoDashboard.tsx).
-// const MedicoDashboard = () =>
-//   <div className="p-8">
-//     <h1 className="text-3xl font-bold">Dashboard Médico (Em Construção)</h1>
-//     <p className="text-muted-foreground">O acesso está protegido para o perfil 'doctor'.</p>
-//   </div>;
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -41,13 +39,26 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <Routes>
+            {/* Rotas Públicas */}
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
-            <Route path="/questionario" element={<Questionnaire />} />
+
+            {/* [AJUSTE] Padronizado para inglês para bater com os links internos */}
+            <Route path="/questionnaire" element={<Questionnaire />} />
+
             <Route path="/sobre-nos" element={<AboutUs />} />
             <Route path="/contato" element={<Contact />} />
-            <Route path="/agendamento" element={<ClientSchedule />} />
+
+            {/* Rotas Protegidas - PACIENTE */}
+            <Route
+              path="/dashboard" // [OPCIONAL] Mudei para /dashboard para URL ficar mais limpa, mas pode manter /ClientDashboard se preferir
+              element={
+                <ProtectedRoute requireRole="patient">
+                  <ClientDashboard />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/perfil"
               element={
@@ -56,18 +67,14 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
-            {/* Dashboard do Paciente */}
             <Route
-              path="/ClientDashboard"
+              path="/agendamento" // Movi para protegido, pois agenda é pessoal
               element={
                 <ProtectedRoute requireRole="patient">
-                  <ClientDashboard />
+                  <ClientSchedule />
                 </ProtectedRoute>
               }
-
             />
-            {/* Protocolo do Cliente */}
             <Route
               path="/SeuProtocolo"
               element={
@@ -76,8 +83,6 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
-            {/* Perfil do medico */}
             <Route
               path="/PerfilMedico"
               element={
@@ -87,8 +92,7 @@ const App = () => (
               }
             />
 
-
-            {/* Dashboard do Médico (Usando o Placeholder) */}
+            {/* Rotas Protegidas - MÉDICO */}
             <Route
               path="/DoctorDashboard"
               element={
@@ -97,8 +101,6 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
-            {/* Prontuário do Paciente */}
             <Route
               path="/medico/paciente/:id"
               element={
@@ -107,8 +109,6 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
-            {/* Teleconsulta */}
             <Route
               path="/medico/teleconsulta/:id"
               element={
@@ -117,8 +117,6 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
-            {/* Agenda do Médico */}
             <Route
               path="/medico/agenda"
               element={
@@ -127,8 +125,6 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
-            {/* Configurações do Médico */}
             <Route
               path="/medico/configuracoes"
               element={
@@ -138,7 +134,6 @@ const App = () => (
               }
             />
 
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

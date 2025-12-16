@@ -1,61 +1,83 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import api from '../lib/api';
+import { jwtDecode } from 'jwt-decode'; // Você precisará instalar: npm install jwt-decode
 
-type Role = "patient" | "doctor";
-
+// Interface do Usuário (Alinhada com o Django CustomUser)
 interface User {
-  name?: string;
-  email?: string;
-  role: Role;
+  id: string;
+  email: string;
+  full_name: string;
+  role: 'doctor' | 'patient';
 }
 
 interface AuthContextType {
   user: User | null;
-  login: (user: User) => void;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => {
-    try {
-      const raw = localStorage.getItem("auth_user");
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const navigate = useNavigate();
-
+  // 1. Verificar se já existe um token ao carregar a aplicação
   useEffect(() => {
-    if (user) localStorage.setItem("auth_user", JSON.stringify(user));
-    else localStorage.removeItem("auth_user");
-  }, [user]);
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      try {
+        const decoded: any = jwtDecode(token);
+        // Opcional: Aqui você pode fazer um "api.get('/accounts/me/')" 
+        // para buscar os dados frescos do banco
+        setUser({
+          id: decoded.user_id,
+          email: decoded.email || '',
+          full_name: decoded.full_name || '',
+          role: decoded.role || 'patient'
+        });
+      } catch (err) {
+        logout();
+      }
+    }
+    setLoading(false);
+  }, []);
 
-  const login = (u: User) => {
-    setUser(u);
-    if (u.role === "doctor") navigate("/dashboard");
-    else navigate("/questionario");
+  // 2. Função de Login Real via API
+  const login = async (email: string, password: string) => {
+    try {
+      const response = await api.post('/accounts/login/', { email, password });
+      const { access, refresh, user: userData } = response.data;
+
+      // Salva os tokens no LocalStorage
+      localStorage.setItem('access_token', access);
+      localStorage.setItem('refresh_token', refresh);
+
+      // Define o usuário no estado global
+      setUser(userData);
+    } catch (error) {
+      console.error("Erro no login:", error);
+      throw error; // Repassa o erro para ser tratado na página de Login (ex: exibir alerta)
+    }
   };
 
+  // 3. Função de Logout
   const logout = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     setUser(null);
-    navigate("/");
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
-      {children}
+    <AuthContext.Provider value={{ user, login, logout, loading }}>
+      {!loading && children}
     </AuthContext.Provider>
   );
 };
 
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
-}
-
-export type { Role, User };
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth deve ser usado dentro de um AuthProvider');
+  return context;
+};
