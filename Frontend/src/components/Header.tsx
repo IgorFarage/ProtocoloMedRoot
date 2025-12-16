@@ -29,7 +29,7 @@ export const Header = () => {
           <DropdownMenuContent align="start" className="w-48">
             {/* Opções de navegação do Menu */}
             <DropdownMenuItem asChild className="md:hidden">
-              <Link to="/login">Login</Link>
+              <Link to="/login">Entrar</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild className="md:hidden">
               <Link to="/register">Cadastre-se</Link>
@@ -39,7 +39,7 @@ export const Header = () => {
               <Link to="/">Home</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <Link to="/questionario">Anamnese</Link>
+              <Link to="/questionario">Avaliação</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link to="/sobre-nos">Sobre Nós</Link>
@@ -49,7 +49,7 @@ export const Header = () => {
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link to="/login" className="hidden md:block text-sm text-muted-foreground hover:text-foreground">
-                Login
+                Entrar
               </Link>
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -70,13 +70,6 @@ export const Header = () => {
 
         {/* Bloco de Ações/Login (Direita) */}
         <div className="flex items-center gap-3">
-          {/* Botão Questionário Principal */}
-          <Link to="/questionario">
-            <Button variant="default" className="text-xs px-2 py-1 h-8 md:text-base md:px-6 md:py-2 md:h-11">
-              Questionário
-            </Button>
-          </Link>
-
           {/* Link Entrar/Login: Visível apenas em Desktop */}
           <Link to="/login" className="hidden md:block text-sm text-muted-foreground hover:text-foreground">
             Entrar
