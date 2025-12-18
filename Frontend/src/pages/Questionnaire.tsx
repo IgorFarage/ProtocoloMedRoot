@@ -232,8 +232,8 @@ const Questionnaire = () => {
   const handleAnswer = (value: string) => {
     const newAnswers = { ...answers, [currentQuestion.id]: value };
     setAnswers(newAnswers);
-    // Persiste para o fluxo de registro
-    sessionStorage.setItem('pending_questionnaire', JSON.stringify(newAnswers));
+    // CORREÇÃO: Mudar de 'pending_questionnaire' para 'quiz_answers'
+    sessionStorage.setItem('quiz_answers', JSON.stringify(newAnswers));
   };
 
   // Altere o handleMultipleAnswer para:
@@ -253,8 +253,8 @@ const Questionnaire = () => {
     }
     const newAnswers = { ...answers, [currentQuestion.id]: newSelectedValues.join(',') };
     setAnswers(newAnswers);
-    // Persiste para o fluxo de registro
-    sessionStorage.setItem('pending_questionnaire', JSON.stringify(newAnswers));
+    // CORREÇÃO: Mudar de 'pending_questionnaire' para 'quiz_answers'
+    sessionStorage.setItem('quiz_answers', JSON.stringify(newAnswers));
   };
 
   const handleNext = () => {
@@ -281,15 +281,14 @@ const Questionnaire = () => {
 
     if (token) {
       try {
-        // Se o usuário está logado, enviamos para o endpoint de histórico
         await api.post('/accounts/questionnaires/', { answers });
         console.log("Questionário salvo no histórico do usuário.");
       } catch (err) {
         console.error("Erro ao salvar histórico:", err);
       }
     } else {
-      // Se não está logado, garantimos que está no sessionStorage para o Register.tsx
-      sessionStorage.setItem('pending_questionnaire', JSON.stringify(answers));
+      // CORREÇÃO: Mudar de 'pending_questionnaire' para 'quiz_answers'
+      sessionStorage.setItem('quiz_answers', JSON.stringify(answers));
     }
   };
 

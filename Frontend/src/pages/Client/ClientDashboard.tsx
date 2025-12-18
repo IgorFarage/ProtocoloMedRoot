@@ -3,16 +3,29 @@ import { Link } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/auth/AuthProvider";
-import { ChevronRight, Heart, TrendingUp, UserCheck, Upload, LogOut, ShoppingBag, FileText, AlertCircle, ClipboardList, History } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription, // Importante para não dar erro
+  DialogFooter
+} from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
+import {
+  LogOut, ShoppingBag, FileText, History,
+  Upload, ClipboardList, Trash2, Loader2, MapPin
+} from "lucide-react";
 import api from "@/lib/api";
 
-// --- IMPORTAÇÃO DOS PRODUTOS (Lógica Real) ---
+// --- IMPORTAÇÃO DOS PRODUTOS ---
 import minoxidilCpsImg from "@/assets/Produtos/MinoxidilCPS.png";
 import finasteridaCpsImg from "@/assets/Produtos/FinasteridaCPS.png";
 import dutasteridaCpsImg from "@/assets/Produtos/DutasteridaCPS.png";
@@ -21,45 +34,65 @@ import finasteridaSprayImg from "@/assets/Produtos/FinasteridaSpray.png";
 import shampooImg from "@/assets/Produtos/SawpalmetoShampoo.png";
 import biotinaImg from "@/assets/Produtos/BiotinaCPS.png";
 
-// Componente de Card de Ação Rápida
-const ActionCard = ({ title, description, link, linkText, icon: Icon, color }: any) => (
-  <Card className="flex flex-col justify-between">
-    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-      <CardTitle className="text-sm font-medium">{title}</CardTitle>
-      <Icon className={`h-4 w-4 ${color}`} />
-    </CardHeader>
-    <CardContent>
-      <div className="text-lg font-bold mb-2 leading-tight">{description}</div>
-    </CardContent>
-    <CardFooter>
-      <Link to={link} className="w-full">
-        <Button variant="outline" className="w-full justify-between">
-          {linkText}
-          <ChevronRight className="h-4 w-4 ml-2" />
-        </Button>
-      </Link>
-    </CardFooter>
-  </Card>
-);
+// --- CONFIGURAÇÕES MOCKADAS (Preços e Instruções) ---
+const PRICES: Record<string, number> = {
+  "Minoxidil 2.5mg": 49.90,
+  "Finasterida 1mg": 39.90,
+  "Dutasterida 0.5mg": 89.90,
+  "Saw Palmetto": 55.00,
+  "Loção Finasterida": 65.00,
+  "Loção Minoxidil 5%": 59.90,
+  "Shampoo Saw Palmetto": 35.00,
+  "Biotina 45ug": 29.90
+};
+
+const INSTRUCTIONS: Record<string, string> = {
+  "Minoxidil 2.5mg": "Tomar 1 cápsula via oral pela manhã.",
+  "Finasterida 1mg": "Tomar 1 comprimido via oral todos os dias.",
+  "Dutasterida 0.5mg": "Tomar 1 cápsula via oral diariamente.",
+  "Loção Minoxidil 5%": "Aplicar 6 borrifadas no couro cabeludo seco à noite.",
+  "Loção Finasterida": "Aplicar nas áreas afetadas 1x ao dia.",
+  "Shampoo Saw Palmetto": "Uso diário. Deixar agir por 3 minutos.",
+  "Biotina 45ug": "Tomar 1 cápsula junto com o almoço."
+};
 
 export default function ClientDashboard() {
   const { user, logout } = useAuth();
+  const { toast } = useToast();
+
+  // Estados de Dados
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [answers, setAnswers] = useState<any>(null);
   const [fullHistory, setFullHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 1. Busca Histórico Real e Normalizado
+  // Estados do Checkout
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [checkoutStep, setCheckoutStep] = useState(1); // 1 = Carrinho, 2 = Endereço
+  const [cart, setCart] = useState<any[]>([]);
+  const [address, setAddress] = useState({
+    cep: "",
+    street: "",
+    number: "",
+    neighborhood: "",
+    city: "",
+    state: "",
+    complement: ""
+  });
+  const [loadingCep, setLoadingCep] = useState(false);
+  const [submittingOrder, setSubmittingOrder] = useState(false);
+
+  // 1. Busca Histórico Real
   useEffect(() => {
     async function fetchData() {
       try {
         const response = await api.get('/accounts/questionnaires/');
         if (response.data && response.data.length > 0) {
           setFullHistory(response.data);
-          setAnswers(response.data[0].answers); // Define o mais recente como padrão
+          setAnswers(response.data[0].answers);
         }
       } catch (error) {
-        console.error("Erro ao buscar dados do cliente:", error);
+        console.error("Erro ao buscar dados:", error);
       } finally {
         setLoading(false);
       }
@@ -67,7 +100,7 @@ export default function ClientDashboard() {
     fetchData();
   }, []);
 
-  // 2. Lógica de Protocolo Dinâmico
+  // 2. Lógica de Protocolo
   const calculateProtocol = (targetAnswers: any) => {
     if (!targetAnswers) return null;
 
@@ -82,8 +115,8 @@ export default function ClientDashboard() {
     const priority = targetAnswers["F2_Q19_priority"];
     const intervention = targetAnswers["F2_Q16_intervention"];
 
-    const allergicFinasterida = allergies.includes("finasterida");
     const allergicMinoxidil = allergies.includes("minoxidil");
+    const allergicFinasterida = allergies.includes("finasterida");
     const allergicDutasterida = allergies.includes("dutasterida");
     const isHighEfficacy = priority === "efetividade" || intervention === "dutasterida";
 
@@ -110,11 +143,84 @@ export default function ClientDashboard() {
         ? { name: "Loção Finasterida", sub: "Spray tópico", img: finasteridaSprayImg }
         : { name: "Loção Minoxidil 5%", sub: "Spray tópico", img: minoxidilSprayImg };
     }
+
     return [selectedCapsule, selectedSpray, shampoo, biotina].filter((p): p is any => p !== null);
   };
 
   const currentProtocol = calculateProtocol(answers);
 
+  // --- FUNÇÕES DE CHECKOUT ---
+
+  const openCheckout = () => {
+    if (!currentProtocol) return;
+    const itemsWithPrice = currentProtocol.map((p: any) => ({
+      ...p,
+      price: PRICES[p.name] || 0
+    }));
+    setCart(itemsWithPrice);
+    setCheckoutStep(1);
+    setIsCheckoutOpen(true);
+  };
+
+  const removeFromCart = (index: number) => {
+    setCart(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const totalValue = cart.reduce((acc, item) => acc + item.price, 0);
+
+  const handleCepBlur = async () => {
+    const cep = address.cep.replace(/\D/g, '');
+    if (cep.length !== 8) return;
+
+    setLoadingCep(true);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      const data = await response.json();
+      if (!data.erro) {
+        setAddress(prev => ({
+          ...prev,
+          street: data.logradouro,
+          neighborhood: data.bairro,
+          city: data.localidade,
+          state: data.uf
+        }));
+      } else {
+        toast({ title: "CEP não encontrado", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Erro ao buscar CEP", variant: "destructive" });
+    } finally {
+      setLoadingCep(false);
+    }
+  };
+
+  const handleSubscribe = async () => {
+    if (!address.street || !address.number) {
+      toast({ title: "Endereço incompleto", description: "Preencha número e rua.", variant: "destructive" });
+      return;
+    }
+
+    setSubmittingOrder(true);
+    try {
+      await api.post('/accounts/subscribe/', {
+        address,
+        products: cart,
+        total: totalValue
+      });
+      toast({
+        title: "Pedido Recebido!",
+        description: "Seu kit será preparado. Acompanhe pelo email.",
+        className: "bg-green-600 text-white"
+      });
+      setIsCheckoutOpen(false);
+    } catch (error) {
+      toast({ title: "Erro ao processar", description: "Tente novamente.", variant: "destructive" });
+    } finally {
+      setSubmittingOrder(false);
+    }
+  };
+
+  // --- FUNÇÕES DE UPLOAD ---
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) setUploadedFile(file);
@@ -152,7 +258,7 @@ export default function ClientDashboard() {
           </TabsTrigger>
         </TabsList>
 
-        {/* CONTEÚDO: PROTOCOLO ATUAL */}
+        {/* --- PROTOCOLO ATUAL --- */}
         <TabsContent value="overview" className="space-y-8 pt-4">
           <section className="grid gap-6 lg:grid-cols-3">
             <Card className="lg:col-span-2">
@@ -186,30 +292,35 @@ export default function ClientDashboard() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {currentProtocol?.map((prod: any, idx: number) => (
-                  <div key={idx} className="flex items-center gap-3 bg-white p-3 rounded-lg border shadow-sm">
-                    <div className="w-12 h-12 p-1">
+                  <div key={idx} className="flex items-start gap-3 bg-white p-3 rounded-lg border shadow-sm">
+                    <div className="w-12 h-12 p-1 shrink-0">
                       {prod.img && <img src={prod.img} alt={prod.name} className="w-full h-full object-contain" />}
                     </div>
                     <div>
                       <p className="text-sm font-bold text-gray-800 leading-tight">{prod.name}</p>
-                      <p className="text-[10px] text-gray-500">{prod.sub}</p>
+                      <p className="text-[10px] text-gray-500 mb-1">{prod.sub}</p>
+                      {/* POSOLOGIA AQUI */}
+                      <p className="text-[10px] text-blue-600 font-medium bg-blue-50 px-1 rounded w-fit">
+                        {INSTRUCTIONS[prod.name] || "Uso conforme orientação"}
+                      </p>
                     </div>
                   </div>
                 ))}
               </CardContent>
               <CardFooter>
-                <Button className="w-full">Assinar Plano</Button>
+                <Button className="w-full" onClick={openCheckout}>
+                  Assinar Plano
+                </Button>
               </CardFooter>
             </Card>
           </section>
         </TabsContent>
 
-        {/* CONTEÚDO: HISTÓRICO DE RESPOSTAS E REMÉDIOS */}
+        {/* --- HISTÓRICO --- */}
         <TabsContent value="history" className="pt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Histórico de Consultas e Respostas</CardTitle>
-              <CardDescription>Veja como seu perfil e recomendações mudaram ao longo do tempo.</CardDescription>
+              <CardTitle>Histórico de Consultas</CardTitle>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[500px] pr-4">
@@ -223,12 +334,10 @@ export default function ClientDashboard() {
                         </Badge>
                         {index === 0 && <Badge className="bg-green-600">Atual</Badge>}
                       </div>
-
                       <div className="grid md:grid-cols-2 gap-6">
-                        {/* Respostas da época */}
                         <div>
                           <h4 className="font-semibold mb-3 flex items-center gap-2">
-                            <ClipboardList className="w-4 h-4" /> Respostas enviadas:
+                            <ClipboardList className="w-4 h-4" /> Respostas:
                           </h4>
                           <div className="grid grid-cols-1 gap-2">
                             {Object.entries(entry.answers).map(([key, value]: [string, any]) => (
@@ -239,18 +348,14 @@ export default function ClientDashboard() {
                             ))}
                           </div>
                         </div>
-
-                        {/* Remédios recomendados na época */}
                         <div>
                           <h4 className="font-semibold mb-3 flex items-center gap-2">
-                            <ShoppingBag className="w-4 h-4" /> Recomendação na data:
+                            <ShoppingBag className="w-4 h-4" /> Recomendação:
                           </h4>
                           <div className="flex flex-wrap gap-2">
                             {pastProtocol?.map((p: any, i: number) => (
-                              <div key={i} className="bg-white border p-2 rounded flex items-center gap-2 text-xs w-full">
+                              <div key={i} className="bg-white border p-2 rounded text-xs">
                                 <span className="font-bold">{p.name}</span>
-                                <span className="text-gray-400">|</span>
-                                <span className="text-gray-500">{p.sub}</span>
                               </div>
                             ))}
                           </div>
@@ -265,7 +370,7 @@ export default function ClientDashboard() {
         </TabsContent>
       </Tabs>
 
-      {/* UPLOAD E FOTOS */}
+      {/* --- SEÇÃO DE UPLOAD --- */}
       <section className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardHeader>
@@ -293,7 +398,6 @@ export default function ClientDashboard() {
           </CardFooter>
         </Card>
 
-        {/* Histórico - Placeholder */}
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Galeria de Evolução</CardTitle>
@@ -303,10 +407,121 @@ export default function ClientDashboard() {
               <Upload className="h-6 w-6" />
             </div>
             <p>Nenhuma foto enviada ainda.</p>
-            <p className="text-xs mt-1">Suas fotos aparecerão aqui após o upload.</p>
           </CardContent>
         </Card>
       </section>
+
+      {/* --- MODAL DE CHECKOUT --- */}
+      <Dialog open={isCheckoutOpen} onOpenChange={setIsCheckoutOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {checkoutStep === 1 ? "Revisar Pedido" : "Dados de Entrega"}
+            </DialogTitle>
+            <DialogDescription>
+              {checkoutStep === 1
+                ? "Confira os itens do seu protocolo e o valor total."
+                : "Informe o endereço para recebimento do kit."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* PASSO 1: CARRINHO */}
+          {checkoutStep === 1 && (
+            <div className="space-y-4">
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
+                {cart.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-4">Carrinho vazio.</p>
+                ) : (
+                  cart.map((item, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-secondary/20 p-3 rounded-lg">
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-sm">{item.name}</span>
+                        <span className="text-xs text-muted-foreground">{item.sub}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-sm">
+                          {item.price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </span>
+                        <Button
+                          variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                          onClick={() => removeFromCart(idx)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <Separator />
+              <div className="flex justify-between items-center pt-2">
+                <span className="font-bold text-lg">Total</span>
+                <span className="font-bold text-xl text-primary">
+                  {totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </span>
+              </div>
+              <DialogFooter className="pt-4">
+                <Button variant="outline" onClick={() => setIsCheckoutOpen(false)}>Cancelar</Button>
+                <Button onClick={() => setCheckoutStep(2)} disabled={cart.length === 0}>
+                  Continuar
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+
+          {/* PASSO 2: ENDEREÇO */}
+          {checkoutStep === 2 && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-1 space-y-2">
+                  <Label>CEP</Label>
+                  <div className="relative">
+                    <Input
+                      value={address.cep}
+                      onChange={e => setAddress({ ...address, cep: e.target.value })}
+                      onBlur={handleCepBlur}
+                      placeholder="00000-000"
+                      maxLength={9}
+                    />
+                    {loadingCep && <Loader2 className="absolute right-2 top-2.5 h-4 w-4 animate-spin text-muted-foreground" />}
+                  </div>
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <Label>Rua</Label>
+                  <Input value={address.street} onChange={e => setAddress({ ...address, street: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-4 gap-4">
+                <div className="col-span-1 space-y-2">
+                  <Label>Número</Label>
+                  <Input value={address.number} onChange={e => setAddress({ ...address, number: e.target.value })} />
+                </div>
+                <div className="col-span-3 space-y-2">
+                  <Label>Complemento</Label>
+                  <Input value={address.complement} onChange={e => setAddress({ ...address, complement: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Bairro</Label>
+                  <Input value={address.neighborhood} onChange={e => setAddress({ ...address, neighborhood: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Cidade/UF</Label>
+                  <Input value={`${address.city}/${address.state}`} readOnly className="bg-muted" />
+                </div>
+              </div>
+              <DialogFooter className="pt-4">
+                <Button variant="outline" onClick={() => setCheckoutStep(1)}>Voltar</Button>
+                <Button onClick={handleSubscribe} disabled={submittingOrder}>
+                  {submittingOrder && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Confirmar Assinatura
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

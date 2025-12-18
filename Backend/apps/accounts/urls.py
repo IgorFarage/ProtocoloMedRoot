@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView
+from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView
 
 urlpatterns = [
     # Rota de Cadastro
@@ -12,4 +12,7 @@ urlpatterns = [
     
     # Questionários (Histórico e novas respostas)
     path('questionnaires/', UserQuestionnaireListView.as_view(), name='user_questionnaires'),
+    
+    # Nova rota para assinatura
+    path('subscribe/', SubscribeView.as_view(), name='subscribe'),
 ]
