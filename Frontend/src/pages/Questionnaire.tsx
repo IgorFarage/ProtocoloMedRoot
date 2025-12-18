@@ -90,6 +90,7 @@ const questions: Question[] = [
   },
   {
     id: "F2_Q8_symptom", question: "Poderia especificar qual sintoma ou condição você identificou?",
+    type: "checkbox",
     options: [
       { value: "dor_vermelhidao", label: "Dor/vermelhidão" },
       { value: "coceira", label: "Coceira" },
@@ -237,23 +238,24 @@ const Questionnaire = () => {
   };
 
   // Altere o handleMultipleAnswer para:
-  const handleMultipleAnswer = (value: string, isChecked: boolean) => {
+  const handleMultipleAnswer = (value: string, shouldBeChecked: boolean) => {
     const currentAnswer = answers[currentQuestion.id] || "";
-    const selectedValues = currentAnswer.split(',').filter(v => v !== '');
+    // Limpa strings vazias para evitar arrays como [""]
+    let selectedValues = currentAnswer.split(',').filter(v => v.trim() !== '');
 
-    let newSelectedValues: string[];
-    if (isChecked) {
+    if (shouldBeChecked) {
+      // Adiciona apenas se ainda não estiver na lista
       if (!selectedValues.includes(value)) {
-        newSelectedValues = [...selectedValues, value];
-      } else {
-        newSelectedValues = selectedValues;
+        selectedValues.push(value);
       }
     } else {
-      newSelectedValues = selectedValues.filter(v => v !== value);
+      // Remove o item da lista
+      selectedValues = selectedValues.filter(v => v !== value);
     }
-    const newAnswers = { ...answers, [currentQuestion.id]: newSelectedValues.join(',') };
+
+    const newAnswers = { ...answers, [currentQuestion.id]: selectedValues.join(',') };
     setAnswers(newAnswers);
-    // CORREÇÃO: Mudar de 'pending_questionnaire' para 'quiz_answers'
+    // Salva no sessionStorage para persistência
     sessionStorage.setItem('quiz_answers', JSON.stringify(newAnswers));
   };
 
@@ -553,19 +555,25 @@ const Questionnaire = () => {
               {currentQuestion.type === "checkbox" ? (
                 <div className="space-y-3">
                   {currentQuestion.options?.map((option) => {
-                    const isChecked = answers[currentQuestion.id]?.includes(option.value);
+                    const isChecked = answers[currentQuestion.id]?.split(',').includes(option.value);
                     return (
                       <div
                         key={option.value}
                         className={`flex items-center space-x-3 border rounded-lg p-4 transition-colors cursor-pointer ${isChecked ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'}`}
-                        onClick={() => handleMultipleAnswer(option.value, !isChecked)}
+                        // Ajuste aqui: previne conflito de eventos
+                        onClick={(e) => {
+                          // Se o clique foi direto no input/checkbox, deixamos o onCheckedChange lidar
+                          if ((e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).dataset.state === undefined) {
+                            handleMultipleAnswer(option.value, !isChecked);
+                          }
+                        }}
                       >
                         <Checkbox
                           id={option.value}
                           checked={isChecked}
                           onCheckedChange={(checked) => handleMultipleAnswer(option.value, checked as boolean)}
                         />
-                        <Label htmlFor={option.value} className="flex-1 cursor-pointer text-foreground">
+                        <Label htmlFor={option.value} className="flex-1 cursor-pointer text-foreground pointer-events-none">
                           {option.label}
                         </Label>
                       </div>
@@ -573,6 +581,7 @@ const Questionnaire = () => {
                   })}
                 </div>
               ) : (
+                // ... bloco do RadioGroup
                 <RadioGroup
                   value={answers[currentQuestion.id] || ""}
                   onValueChange={handleAnswer}
