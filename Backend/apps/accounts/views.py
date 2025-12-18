@@ -28,14 +28,26 @@ class RegisterView(generics.CreateAPIView):
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
-            user = serializer.save()
-            return Response({
-                "message": "Usuário e questionário registrados com sucesso!",
-                "user": {
-                    "email": user.email,
-                    "full_name": user.full_name
-                }
-            }, status=status.HTTP_201_CREATED)
+            try:
+                user = serializer.save()
+                return Response({
+                    "message": "Usuário e questionário registrados com sucesso!",
+                    "user": {
+                        "email": user.email,
+                        "full_name": user.full_name
+                    }
+                }, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                # Captura erros que acontecem DURANTE o salvamento (ex: erro no create do Serializer)
+                print(f"❌ ERRO NO SAVE: {e}")
+                return Response({"erro_interno": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # --- AQUI ESTÁ O SEGREDO ---
+        # Se os dados forem inválidos, imprimimos o motivo no terminal
+        print("\n🛑 ERRO DE VALIDAÇÃO (400):")
+        print(serializer.errors)  # <--- Isso vai mostrar o que está errado (Ex: E-mail já existe)
+        print("-" * 30)
+        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # 3. View para Histórico de Questionários

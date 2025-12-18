@@ -48,7 +48,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         email = validated_data['email']
         
         with transaction.atomic():
-            # Criar o Utilizador usando o manager oficial para garantir hash de senha
+            # 1. Cria usuário local (O ID é gerado aqui)
             user = User.objects.create_user(
                 username=email, 
                 email=email,
@@ -57,17 +57,28 @@ class RegisterSerializer(serializers.ModelSerializer):
                 role='patient' # Garante que novos registros via site sejam pacientes
             )
             
-            # Salvar o Primeiro Questionário
+            # 2. Salva o Primeiro Questionário
             UserQuestionnaire.objects.create(
                 user=user,
                 answers=questionnaire_answers,
                 is_latest=True
             )
             
-            # Integração Bitrix
+            # 3. Integração Bitrix com Debug e Salvamento Explícito
+            print(f"🔄 Tentando registrar no Bitrix para o user ID: {user.id}")
+            
+            # Chama o serviço (que agora também deve enviar o ID local para o Bitrix)
             bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
+            
             if bitrix_id:
-                user.id_bitrix = bitrix_id
-                user.save()
+                # Converte para string para garantir compatibilidade com CharField
+                user.id_bitrix = str(bitrix_id)
+                
+                # Força o update apenas deste campo para garantir que o Django não se perca
+                user.save(update_fields=['id_bitrix'])
+                
+                print(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
+            else:
+                print("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
             
         return user
