@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView
+from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView, RecommendationView
 
 urlpatterns = [
     # Rota de Cadastro
@@ -15,5 +15,5 @@ urlpatterns = [
     
     # Nova rota para assinatura
     path('subscribe/', SubscribeView.as_view(), name='subscribe'),
-
+    path('recommendation/', RecommendationView.as_view(), name='recommendation'),
 ]

@@ -59,7 +59,7 @@ export function ProductCarouselSection() {
                     </div>
                 ) : (
                     <div className="px-1">
-                        {/* --- CARROSSEL  --- */}
+                        {/* --- CARROSSEL --- */}
                         <Carousel
                             opts={{
                                 align: "start",

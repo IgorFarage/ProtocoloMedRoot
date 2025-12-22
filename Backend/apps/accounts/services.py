@@ -335,11 +335,75 @@ class BitrixService:
             print(f"❌ Erro ao setar productrows no Bitrix: {e}")
             return False
 
+    # @staticmethod
+    # def get_product_catalog():
+    #     """
+    #     Versão RAIO-X: Imprime o JSON cru do primeiro produto para descobrirmos
+    #     onde está a imagem ou confirmar que ela não existe.
+    #     """
+    #     base_url = os.getenv('BITRIX_WEBHOOK_URL')
+    #     if not base_url: return []
+    #     if not base_url.endswith('/'): base_url += '/'
+        
+    #     try:
+    #         target_ids = [16, 18, 20, 22, 24]
+            
+    #         # TIRAMOS O SELECT PARA VIR TUDO (Padrão)
+    #         payload = {
+    #             "filter": { 
+    #                 "SECTION_ID": target_ids 
+    #             },
+    #             # Limite de 1 para não poluir o terminal
+    #             # mas pegamos a lista toda depois se precisar
+    #         }
+            
+    #         # Usando crm.product.list
+    #         response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=10)
+    #         data = response.json()
+            
+    #         if "result" in data:
+    #             products_raw = data["result"]
+                
+    #             if len(products_raw) > 0:
+    #                 print("\n🔍 --- RAIO-X DO PRIMEIRO PRODUTO ---")
+    #                 p_demo = products_raw[0]
+    #                 # Imprime chaves e valores para analisarmos
+    #                 for key, val in p_demo.items():
+    #                     # Trunca valores muito longos para leitura fácil
+    #                     val_str = str(val)
+    #                     if len(val_str) > 100: val_str = val_str[:100] + "..."
+    #                     print(f"   👉 {key}: {val_str}")
+    #                 print("--------------------------------------\n")
+                
+    #             # ... (resto do código para montar o catálogo normal) ...
+    #             catalog = []
+    #             for p in products_raw:
+    #                 img_val = p.get("DETAIL_PICTURE") or p.get("PREVIEW_PICTURE")
+    #                 img_id = None
+    #                 if isinstance(img_val, dict): img_id = img_val.get("id")
+    #                 elif img_val: img_id = img_val
+                    
+    #                 catalog.append({
+    #                     "id": p.get("ID"),
+    #                     "name": p.get("NAME"),
+    #                     "price": float(p.get("PRICE") or 0),
+    #                     "description": p.get("DESCRIPTION", ""),
+    #                     "image_id": img_id, 
+    #                 })
+    #             return catalog
+            
+    #         return []
+
+    #     except Exception as e:
+    #         print(f"❌ Erro: {e}")
+    #         return []
+
     @staticmethod
     def get_product_catalog():
         """
-        Versão RAIO-X: Imprime o JSON cru do primeiro produto para descobrirmos
-        onde está a imagem ou confirmar que ela não existe.
+        1. Lista produtos.
+        2. Busca a imagem na Galeria (catalog.productImage.list).
+        3. Retorna a URL direta (CDN) para o Frontend.
         """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url: return []
@@ -348,54 +412,62 @@ class BitrixService:
         try:
             target_ids = [16, 18, 20, 22, 24]
             
-            # TIRAMOS O SELECT PARA VIR TUDO (Padrão)
+            # 1. Busca lista básica de produtos
             payload = {
-                "filter": { 
-                    "SECTION_ID": target_ids 
-                },
-                # Limite de 1 para não poluir o terminal
-                # mas pegamos a lista toda depois se precisar
+                "filter": { "SECTION_ID": target_ids },
+                "select": ["ID", "NAME", "PRICE", "DESCRIPTION"] 
             }
             
-            # Usando crm.product.list
             response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=10)
             data = response.json()
             
+            catalog = []
+
             if "result" in data:
                 products_raw = data["result"]
-                
-                if len(products_raw) > 0:
-                    print("\n🔍 --- RAIO-X DO PRIMEIRO PRODUTO ---")
-                    p_demo = products_raw[0]
-                    # Imprime chaves e valores para analisarmos
-                    for key, val in p_demo.items():
-                        # Trunca valores muito longos para leitura fácil
-                        val_str = str(val)
-                        if len(val_str) > 100: val_str = val_str[:100] + "..."
-                        print(f"   👉 {key}: {val_str}")
-                    print("--------------------------------------\n")
-                
-                # ... (resto do código para montar o catálogo normal) ...
-                catalog = []
+                print(f"📦 Processando {len(products_raw)} produtos...")
+
                 for p in products_raw:
-                    img_val = p.get("DETAIL_PICTURE") or p.get("PREVIEW_PICTURE")
-                    img_id = None
-                    if isinstance(img_val, dict): img_id = img_val.get("id")
-                    elif img_val: img_id = img_val
+                    p_id = p.get("ID")
+                    img_url = None
                     
+                    # 2. Para cada produto, busca a imagem na galeria
+                    try:
+                        img_res = requests.get(f"{base_url}catalog.productImage.list.json", params={"productId": p_id})
+                        img_data = img_res.json()
+                        
+                        if "result" in img_data:
+                            # O Bitrix retorna: result: { productImages: [...] }
+                            result_obj = img_data["result"]
+                            
+                            # Verifica se tem a chave productImages e se a lista não está vazia
+                            if "productImages" in result_obj and len(result_obj["productImages"]) > 0:
+                                first_img = result_obj["productImages"][0]
+                                # A 'detailUrl' é o link público do CDN (mais rápido)
+                                img_url = first_img.get("detailUrl")
+                                # Se não tiver detailUrl, tenta downloadUrl
+                                if not img_url:
+                                    img_url = first_img.get("downloadUrl")
+                                    
+                    except Exception as e:
+                        print(f"   ⚠️ Erro ao buscar imagem para produto {p_id}: {e}")
+
+                    # Adiciona ao catálogo final
                     catalog.append({
                         "id": p.get("ID"),
                         "name": p.get("NAME"),
                         "price": float(p.get("PRICE") or 0),
                         "description": p.get("DESCRIPTION", ""),
-                        "image_id": img_id, 
+                        "image_url": img_url, # Nova chave com a URL direta
+                        "image_id": None      # Não precisamos mais do ID para proxy
                     })
+                
                 return catalog
             
             return []
 
         except Exception as e:
-            print(f"❌ Erro: {e}")
+            print(f"❌ Erro crítico no catálogo: {e}")
             return []
 
     @staticmethod
@@ -501,3 +573,183 @@ class BitrixService:
         except:
             pass
         return None, None
+
+    @staticmethod
+    def generate_protocol(answers):
+        """
+        Versão ESCALÁVEL (Sem IDs fixos):
+        1. Busca produtos no Bitrix.
+        2. Encontra os itens corretos procurando palavras-chave no NOME.
+        3. Aplica a lógica médica.
+        """
+        base_url = os.getenv('BITRIX_WEBHOOK_URL')
+        if not base_url: return None
+        if not base_url.endswith('/'): base_url += '/'
+
+        # --- CONFIGURAÇÃO INTELIGENTE (MATCHERS) ---
+        # O sistema buscará produtos que tenham TODAS as palavras da lista no nome.
+        # Ex: "minoxidil_oral" busca produto com "Minoxidil" E "Cápsula" no nome (case insensitive)
+        MATCHERS = {
+            "minoxidil_oral":     ["Minoxidil", "Cápsula"],
+            "finasterida_oral":   ["Finasterida", "Cápsula"],
+            "dutasterida_oral":   ["Dutasterida", "Cápsula"],
+            "saw_palmetto_oral":  ["Saw", "Palmetto", "Cápsula"], # Ou apenas "Saw Palmetto" se for o único
+            "biotina":            ["Biotina"],
+            
+            "minoxidil_topico":   ["Minoxidil", "Spray"], # Ou "Loção" dependendo do seu cadastro
+            "finasterida_topica": ["Finasterida", "Spray"],
+            "shampoo":            ["Shampoo"]
+        }
+        # ---------------------------------------------------------
+
+        # --- 1. BUSCA CATÁLOGO COMPLETO DO BITRIX ---
+        # Buscamos todos os produtos das categorias relevantes para filtrar na memória (mais rápido que N requests)
+        catalog_cache = []
+        try:
+            # IDs das categorias que usamos no site (Ajuste se criar novas categorias)
+            target_section_ids = [16, 18, 20, 22, 24] 
+            
+            payload = {
+                "filter": { "SECTION_ID": target_section_ids },
+                "select": ["ID", "NAME", "PRICE", "DESCRIPTION"]
+            }
+            response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=10)
+            if "result" in response.json():
+                catalog_cache = response.json()["result"]
+        except Exception as e:
+            print(f"Erro ao baixar catálogo: {e}")
+            return {"error": "Erro de comunicação com CRM"}
+
+        # Função Helper para encontrar produto no cache
+        def find_product_by_keywords(role_key):
+            keywords = MATCHERS.get(role_key, [])
+            if not keywords: return None
+            
+            for product in catalog_cache:
+                name = product.get("NAME", "").lower()
+                # Verifica se TODAS as palavras-chave estão no nome
+                if all(k.lower() in name for k in keywords):
+                    return product
+            return None
+
+        # --- 2. LÓGICA DE DECISÃO (MÉDICA) ---
+        # Leitura das Respostas
+        gender = answers.get("F1_Q1_gender")
+        health_cond = answers.get("F2_Q14_health_cond", [])
+        if isinstance(health_cond, str): health_cond = health_cond.split(',')
+        
+        allergies = answers.get("F2_Q15_allergy", [])
+        if isinstance(allergies, str): allergies = allergies.split(',')
+        
+        has_pets = answers.get("F2_Q18_pets") == "sim"
+        scalp_issues = answers.get("F2_Q8_symptom", [])
+        if isinstance(scalp_issues, str): scalp_issues = scalp_issues.split(',')
+
+        intervention = answers.get("F2_Q16_intervention")
+        priority = answers.get("F2_Q19_priority")
+        minox_pref = answers.get("F2_Q17_minox_format")
+
+        # Red Flag
+        if "depressao" in health_cond:
+            return {
+                "redFlag": True,
+                "title": "Atenção Médica Necessária",
+                "description": "Devido ao histórico de depressão/ansiedade, o uso de bloqueadores hormonais requer liberação psiquiátrica direta."
+            }
+
+        # Definição de Bloqueios
+        block_hormonal = (gender == "feminino" or "cancer" in health_cond or 
+                          "hepatica" in health_cond or "finasterida" in allergies or 
+                          "dutasterida" in allergies)
+
+        block_minox_oral = ("cardiaca" in health_cond or "renal" in health_cond or 
+                            "hepatica" in health_cond or "ginecomastia" in health_cond or 
+                            "minoxidil" in allergies)
+
+        block_minox_topical = (has_pets or "psoriase" in scalp_issues or 
+                               "cardiaca" in health_cond or "ginecomastia" in health_cond or 
+                               "minoxidil" in allergies)
+
+        block_saw = (gender == "feminino" or "cancer" in health_cond or "saw_palmetto" in allergies)
+
+        # Seleção dos Produtos (Pelas Chaves Lógicas)
+        selected_roles = []
+
+        # Fixos
+        selected_roles.append("shampoo")
+        selected_roles.append("biotina")
+
+        # Decisão Cápsula
+        capsule_role = None
+        if gender == "feminino":
+            if not block_minox_oral: capsule_role = "minoxidil_oral"
+        else:
+            # Homens
+            if (intervention == "dutasterida" or priority == "efetividade") and not block_hormonal:
+                capsule_role = "dutasterida_oral"
+            elif not block_hormonal and "finasterida" not in allergies:
+                capsule_role = "finasterida_oral"
+            elif not block_minox_oral:
+                capsule_role = "minoxidil_oral"
+            elif not block_saw:
+                capsule_role = "saw_palmetto_oral"
+        
+        if capsule_role: selected_roles.append(capsule_role)
+
+        # Decisão Tópico
+        topical_role = None
+        if not block_minox_topical:
+            if minox_pref != "comprimido":
+                topical_role = "minoxidil_topico"
+        
+        if not topical_role and gender == "masculino" and not block_hormonal:
+            topical_role = "finasterida_topica"
+            
+        if topical_role: selected_roles.append(topical_role)
+
+        # --- 3. MONTAGEM FINAL DO PROTOCOLO ---
+        final_products = []
+        
+        for role in selected_roles:
+            product_found = find_product_by_keywords(role)
+            
+            if product_found:
+                p_id = product_found.get("ID")
+                img_url = None
+                
+                # Busca Imagem na Galeria (Se existir)
+                try:
+                    img_res = requests.get(f"{base_url}catalog.productImage.list.json", params={"productId": p_id})
+                    img_data = img_res.json()
+                    if "result" in img_data:
+                        res_obj = img_data["result"]
+                        if "productImages" in res_obj and len(res_obj["productImages"]) > 0:
+                            img_url = res_obj["productImages"][0].get("detailUrl")
+                except:
+                    pass
+
+                final_products.append({
+                    "id": p_id,
+                    "name": product_found.get("NAME"),
+                    "price": float(product_found.get("PRICE") or 0),
+                    "sub": "Recomendado para seu perfil", 
+                    "img": img_url
+                })
+            else:
+                # Log opcional: Produto não encontrado no estoque com esse nome
+                print(f"⚠️ Aviso: Produto com papel '{role}' não encontrado no Bitrix.")
+
+        if not final_products:
+             return {
+                "redFlag": False,
+                "title": "Em Análise",
+                "description": "Nenhum produto compatível encontrado no estoque atual. Entraremos em contato.",
+                "products": []
+            }
+
+        return {
+            "redFlag": False,
+            "title": "Seu protocolo exclusivo",
+            "description": "Com base na sua triagem, estes são os medicamentos reais disponíveis no nosso estoque para você.",
+            "products": final_products
+        }

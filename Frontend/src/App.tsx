@@ -31,6 +31,7 @@ import DoctorProfile from "./pages/Doctor/DoctorProfile";
 
 // Produtos
 import ProductCatalog from "./pages/Products/ProductCatalog";
+import PlanSelection from "./pages/Plans/PlanSelection";
 
 const queryClient = new QueryClient();
 
@@ -55,6 +56,7 @@ const App = () => (
 
             <Route path="/sobre-nos" element={<AboutUs />} />
             <Route path="/contato" element={<Contact />} />
+            <Route path="/planos" element={<PlanSelection />} />
 
             {/* Rotas Protegidas - PACIENTE */}
             <Route

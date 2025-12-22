@@ -101,3 +101,12 @@ class SubscribeView(APIView):
                 {"error": "Erro ao processar assinatura."}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+class RecommendationView(APIView):
+    def post(self, request):
+        answers = request.data.get('answers', {})
+        result = BitrixService.generate_protocol(answers)
+        
+        if not result:
+            return Response({"error": "Erro ao gerar protocolo"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        return Response(result)
