@@ -240,3 +240,264 @@ class BitrixService:
     @staticmethod
     def diagnostico_completo(email_usuario):
         pass
+
+    @staticmethod
+    def get_client_protocol(user):
+        """
+        Busca o último negócio e retorna os itens da ABA DE PRODUTOS.
+        """
+        base_url = os.getenv('BITRIX_WEBHOOK_URL')
+        if not base_url: return None
+        if not base_url.endswith('/'): base_url += '/'
+
+        if not user.id_bitrix:
+            return {"error": "Usuário não vinculado ao Bitrix"}
+
+        try:
+            # 1. Busca Negócio (Deal)
+            response = requests.get(f"{base_url}crm.deal.list.json", params={
+                "filter[CONTACT_ID]": user.id_bitrix,
+                "order[ID]": "DESC",
+                "select[]": ["ID", "STAGE_ID", "TITLE"] 
+            })
+            deals = response.json().get('result', [])
+            
+            if not deals:
+                return {"status": "no_deal", "message": "Nenhum protocolo encontrado."}
+
+            latest_deal = deals[0]
+            deal_id = latest_deal.get("ID")
+
+            # 2. Busca os Produtos do Negócio (Product Rows)
+            rows_response = requests.get(f"{base_url}crm.deal.productrows.get.json", params={"id": deal_id})
+            product_rows = rows_response.json().get('result', [])
+
+            # 3. Formata para o Front
+            products_formatted = []
+            for row in product_rows:
+                products_formatted.append({
+                    "name": row.get("PRODUCT_NAME"),
+                    "price": float(row.get("PRICE", 0)),
+                    "quantity": int(row.get("QUANTITY", 1)),
+                })
+
+            return {
+                "deal_id": deal_id,
+                "stage": latest_deal.get("STAGE_ID"),
+                "products": products_formatted,
+            }
+
+        except Exception as e:
+            print(f"❌ Erro ao buscar rows no Bitrix: {e}")
+            return {"error": "Erro de conexão com o CRM"}
+
+    @staticmethod
+    def update_deal_products(user, product_data_list):
+        """
+        Recebe lista de objetos com preço e adiciona no Negócio do Bitrix.
+        """
+        base_url = os.getenv('BITRIX_WEBHOOK_URL')
+        if not base_url: return False
+        if not base_url.endswith('/'): base_url += '/'
+
+        if not user.id_bitrix:
+            return False
+
+        try:
+            response = requests.get(f"{base_url}crm.deal.list.json", params={
+                "filter[CONTACT_ID]": user.id_bitrix,
+                "order[ID]": "DESC",
+                "select[]": ["ID"]
+            })
+            deals = response.json().get('result', [])
+            
+            if deals:
+                deal_id = deals[0]['ID']
+                
+                rows_payload = []
+                for item in product_data_list:
+                    rows_payload.append({
+                        "PRODUCT_NAME": item['name'],
+                        "PRICE": str(item['price']),
+                        "QUANTITY": 1,
+                        "MEASURE_CODE": 796,
+                        "MEASURE_NAME": "un"
+                    })
+                
+                requests.post(f"{base_url}crm.deal.productrows.set.json", json={
+                    "id": deal_id,
+                    "rows": rows_payload
+                })
+                return True
+            return False
+
+        except Exception as e:
+            print(f"❌ Erro ao setar productrows no Bitrix: {e}")
+            return False
+
+    @staticmethod
+    def get_product_catalog():
+        """
+        Versão RAIO-X: Imprime o JSON cru do primeiro produto para descobrirmos
+        onde está a imagem ou confirmar que ela não existe.
+        """
+        base_url = os.getenv('BITRIX_WEBHOOK_URL')
+        if not base_url: return []
+        if not base_url.endswith('/'): base_url += '/'
+        
+        try:
+            target_ids = [16, 18, 20, 22, 24]
+            
+            # TIRAMOS O SELECT PARA VIR TUDO (Padrão)
+            payload = {
+                "filter": { 
+                    "SECTION_ID": target_ids 
+                },
+                # Limite de 1 para não poluir o terminal
+                # mas pegamos a lista toda depois se precisar
+            }
+            
+            # Usando crm.product.list
+            response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=10)
+            data = response.json()
+            
+            if "result" in data:
+                products_raw = data["result"]
+                
+                if len(products_raw) > 0:
+                    print("\n🔍 --- RAIO-X DO PRIMEIRO PRODUTO ---")
+                    p_demo = products_raw[0]
+                    # Imprime chaves e valores para analisarmos
+                    for key, val in p_demo.items():
+                        # Trunca valores muito longos para leitura fácil
+                        val_str = str(val)
+                        if len(val_str) > 100: val_str = val_str[:100] + "..."
+                        print(f"   👉 {key}: {val_str}")
+                    print("--------------------------------------\n")
+                
+                # ... (resto do código para montar o catálogo normal) ...
+                catalog = []
+                for p in products_raw:
+                    img_val = p.get("DETAIL_PICTURE") or p.get("PREVIEW_PICTURE")
+                    img_id = None
+                    if isinstance(img_val, dict): img_id = img_val.get("id")
+                    elif img_val: img_id = img_val
+                    
+                    catalog.append({
+                        "id": p.get("ID"),
+                        "name": p.get("NAME"),
+                        "price": float(p.get("PRICE") or 0),
+                        "description": p.get("DESCRIPTION", ""),
+                        "image_id": img_id, 
+                    })
+                return catalog
+            
+            return []
+
+        except Exception as e:
+            print(f"❌ Erro: {e}")
+            return []
+
+    @staticmethod
+    def get_product_image_content(product_id):
+        """
+        Versão de Diagnóstico para baixar imagem.
+        Tenta: catalog.product.download com DETAIL_PICTURE
+        """
+        base_url = os.getenv('BITRIX_WEBHOOK_URL')
+        if not base_url: return None, None
+        if not base_url.endswith('/'): base_url += '/'
+
+        try:
+            print(f"\n🖼️ [DEBUG] Buscando imagem Produto ID: {product_id}")
+            
+            # 1. Pega informações do produto para achar o ID do arquivo
+            # Usando crm.product.get que é mais estável para pegar IDs de campo
+            info_response = requests.get(f"{base_url}crm.product.get.json", params={"id": product_id})
+            info_data = info_response.json()
+            
+            file_id = None
+            field_code = "DETAIL_PICTURE" # Tenta Maiúsculo primeiro (Padrão CRM)
+
+            if "result" in info_data:
+                product = info_data["result"]
+                
+                # Debug do campo raw
+                raw_detail = product.get("DETAIL_PICTURE")
+                raw_preview = product.get("PREVIEW_PICTURE")
+                print(f"   ↳ Raw DETAIL_PICTURE: {raw_detail}")
+                
+                # Tenta pegar ID do DETAIL_PICTURE
+                if isinstance(raw_detail, dict):
+                    # Às vezes vem: {'id': '123', 'showUrl': '...'}
+                    file_id = raw_detail.get("id")
+                    # Se já tiver URL pública (downloadUrl ou showUrl), USAMOS ELA DIRETO!
+                    if raw_detail.get("downloadUrl"):
+                        print(f"   ✅ URL de download encontrada direto no CRM!")
+                        return BitrixService._download_from_url(raw_detail["downloadUrl"])
+                    if raw_detail.get("showUrl"):
+                        return BitrixService._download_from_url(raw_detail["showUrl"])
+                        
+                elif raw_detail: 
+                    file_id = raw_detail # É o ID direto (int ou str)
+
+                # Se falhar, tenta PREVIEW
+                if not file_id:
+                    field_code = "PREVIEW_PICTURE"
+                    if isinstance(raw_preview, dict):
+                        file_id = raw_preview.get("id")
+                    elif raw_preview:
+                        file_id = raw_preview
+
+            if not file_id:
+                print("   ❌ Produto sem imagem (Nenhum ID encontrado).")
+                return None, None
+
+            print(f"   📎 File ID: {file_id} | Field: {field_code}. Tentando catalog.product.download...")
+
+            # 2. Tenta baixar via catalog.product.download
+            download_payload = {
+                "fields": {
+                    "productId": product_id,
+                    "fileId": file_id,
+                    "fieldName": field_code 
+                }
+            }
+            
+            download_response = requests.post(f"{base_url}catalog.product.download", json=download_payload)
+            content_type = download_response.headers.get('Content-Type', '')
+
+            print(f"   📡 Status Download: {download_response.status_code} | Type: {content_type}")
+
+            # Se retornou JSON, pode ser erro ou URL
+            if 'application/json' in content_type:
+                try:
+                    resp_json = download_response.json()
+                    if "result" in resp_json:
+                        res = resp_json["result"]
+                        if isinstance(res, dict) and "downloadUrl" in res:
+                            print(f"   🔗 Redirecionando para: {res['downloadUrl']}")
+                            return BitrixService._download_from_url(res['downloadUrl'])
+                except:
+                    pass
+            
+            if download_response.status_code == 200 and 'image' in content_type:
+                return download_response.content, content_type
+            
+            print(f"   ❌ Falha no download. Conteúdo (primeiros 100 chars): {download_response.text[:100]}")
+            return None, None
+
+        except Exception as e:
+            print(f"❌ Erro crítico imagem: {e}")
+            return None, None
+
+    @staticmethod
+    def _download_from_url(url):
+        """Helper para baixar de uma URL e retornar content/type"""
+        try:
+            r = requests.get(url)
+            if r.status_code == 200:
+                return r.content, r.headers.get('Content-Type', 'image/jpeg')
+        except:
+            pass
+        return None, None

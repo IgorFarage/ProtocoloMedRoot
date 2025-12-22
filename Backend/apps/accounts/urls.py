@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView
 
@@ -15,4 +15,5 @@ urlpatterns = [
     
     # Nova rota para assinatura
     path('subscribe/', SubscribeView.as_view(), name='subscribe'),
+
 ]
