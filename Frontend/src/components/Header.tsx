@@ -45,6 +45,9 @@ export const Header = () => {
               <Link to="/sobre-nos">Sobre Nós</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
+              <Link to="/produtos">Produtos</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
               <Link to="/contato">Contato</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>

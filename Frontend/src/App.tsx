@@ -29,6 +29,9 @@ import DoctorSchedule from "./pages/Doctor/DoctorSchedule";
 import DoctorProfileSettings from "./pages/Doctor/DoctorProfileSettings";
 import DoctorProfile from "./pages/Doctor/DoctorProfile";
 
+// Produtos
+import ProductCatalog from "./pages/Products/ProductCatalog";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -44,6 +47,9 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
 
+            {/* NOVA ROTA DE PRODUTOS */}
+            <Route path="/produtos" element={<ProductCatalog />} />
+
             {/* [AJUSTE] Padronizado para inglês para bater com os links internos */}
             <Route path="/questionario" element={<Questionnaire />} />
 
@@ -52,7 +58,7 @@ const App = () => (
 
             {/* Rotas Protegidas - PACIENTE */}
             <Route
-              path="/dashboard" // [OPCIONAL] Mudei para /dashboard para URL ficar mais limpa, mas pode manter /ClientDashboard se preferir
+              path="/dashboard"
               element={
                 <ProtectedRoute requireRole="patient">
                   <ClientDashboard />
@@ -68,7 +74,7 @@ const App = () => (
               }
             />
             <Route
-              path="/agendamento" // Movi para protegido, pois agenda é pessoal
+              path="/agendamento"
               element={
                 <ProtectedRoute requireRole="patient">
                   <ClientSchedule />

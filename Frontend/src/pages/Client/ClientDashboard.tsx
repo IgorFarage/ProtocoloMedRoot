@@ -274,7 +274,7 @@ export default function ClientDashboard() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 border rounded-lg bg-gray-50">
                     <p className="text-sm text-muted-foreground">Estágio Atual</p>
-                    <p className="text-xl font-bold text-destructive capitalize">{answers?.["F1_Q2_stage"]?.replace('_', ' ') || "--"}</p>
+                    <p className="text-xl font-bold text-primary capitalize">{answers?.["F1_Q2_stage"]?.replace('_', ' ') || "--"}</p>
                   </div>
                   <div className="p-4 border rounded-lg bg-gray-50">
                     <p className="text-sm text-muted-foreground">Prioridade</p>
@@ -297,10 +297,10 @@ export default function ClientDashboard() {
                       {prod.img && <img src={prod.img} alt={prod.name} className="w-full h-full object-contain" />}
                     </div>
                     <div>
-                      <p className="text-sm font-bold text-gray-800 leading-tight">{prod.name}</p>
-                      <p className="text-[10px] text-gray-500 mb-1">{prod.sub}</p>
+                      <p className="text-lg font-bold text-gray-800 leading-tight">{prod.name}</p>
+                      <p className="text-[14px] text-gray-500 mb-1">{prod.sub}</p>
                       {/* POSOLOGIA AQUI */}
-                      <p className="text-[10px] text-blue-600 font-medium bg-blue-50 px-1 rounded w-fit">
+                      <p className="text-[12px] text-blue-600 font-medium bg-blue-50 px-1 rounded w-fit">
                         {INSTRUCTIONS[prod.name] || "Uso conforme orientação"}
                       </p>
                     </div>
