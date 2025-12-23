@@ -62,23 +62,17 @@ const PlanSelection = () => {
     const handleSubscribe = async (planId: "standard" | "plus") => {
         setLoading(planId);
 
-        const token = localStorage.getItem('access_token'); // Verifica se está logado
+        const token = localStorage.getItem('access_token');
 
         if (!token) {
-            // Manda para registro levando TUDO
-            navigate("/register", {
-                state: {
-                    selectedPlan: planId,
-                    billingCycle,
-                    products,
-                    total_price
-                }
+            navigate("/cadastro", {
+                state: { selectedPlan: planId, billingCycle, products, total_price }
             });
             return;
         }
 
         try {
-            const response = await api.post("/financial/checkout/", {
+            const response = await api.post("/api/financial/checkout/", {
                 plan_id: planId,
                 billing_cycle: billingCycle,
                 products: products

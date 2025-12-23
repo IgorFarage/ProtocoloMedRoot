@@ -594,31 +594,70 @@ class BitrixService:
 
     @staticmethod
     def get_product_detail(product_id):
-        """
-        Busca detalhes (Nome e Preço) de um produto/serviço específico pelo ID.
-        Usado para pegar o valor atualizado da Taxa do Plano (262 ou 264).
-        """
+        """Busca preço atualizado de um produto/serviço específico."""
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url: return None
         if not base_url.endswith('/'): base_url += '/'
 
         try:
-            # Seleciona apenas o necessário para ser rápido
-            payload = {
-                "filter": { "ID": product_id },
-                "select": ["ID", "NAME", "PRICE"] 
-            }
+            payload = { "filter": { "ID": product_id }, "select": ["ID", "NAME", "PRICE"] }
             response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=5)
             data = response.json()
-            
             if "result" in data and len(data["result"]) > 0:
                 item = data["result"][0]
-                return {
-                    "id": item["ID"],
-                    "name": item["NAME"],
-                    "price": float(item.get("PRICE") or 0)
-                }
+                return { "id": item["ID"], "name": item["NAME"], "price": float(item.get("PRICE") or 0) }
             return None
+        except: return None
+
+    @staticmethod
+    def prepare_deal_payment(user, products_list, plan_name, total_amount):
+        """
+        Versão Dinâmica: Atualiza o negócio e INSERE AS LINHAS (Items) dos produtos.
+        """
+        base_url = os.getenv('BITRIX_WEBHOOK_URL')
+        if not base_url or not user.id_bitrix: return None
+        if not base_url.endswith('/'): base_url += '/'
+
+        try:
+            # 1. Busca ou Cria Deal
+            deal_resp = requests.get(f"{base_url}crm.deal.list.json", params={
+                "filter[CONTACT_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID"]
+            })
+            deals = deal_resp.json().get('result', [])
+            
+            deal_fields = {
+                "TITLE": f"Assinatura - {plan_name} - {user.full_name}",
+                "OPPORTUNITY": total_amount,
+                "CURRENCY_ID": "BRL",
+                "STAGE_ID": "NEW",
+                "SOURCE_ID": "WEB"
+            }
+
+            if deals:
+                deal_id = deals[0]['ID']
+                requests.post(f"{base_url}crm.deal.update.json", json={"id": deal_id, "fields": deal_fields})
+            else:
+                create_resp = requests.post(f"{base_url}crm.deal.add.json", json={
+                    "fields": {"CONTACT_ID": user.id_bitrix, **deal_fields}
+                })
+                deal_id = create_resp.json().get('result')
+
+            if not deal_id: return None
+
+            # 2. Insere os Produtos (Rows)
+            rows = []
+            for item in products_list:
+                rows.append({
+                    "PRODUCT_ID": item['id'], # ID do produto no Bitrix
+                    "PRODUCT_NAME": item['name'],
+                    "PRICE": item['price'],
+                    "QUANTITY": 1,
+                    "MEASURE_CODE": 796
+                })
+            
+            requests.post(f"{base_url}crm.deal.productrows.set.json", json={"id": deal_id, "rows": rows})
+            return deal_id
+
         except Exception as e:
-            print(f"❌ Erro ao buscar serviço {product_id}: {e}")
+            print(f"❌ Erro Bitrix Deal: {e}")
             return None

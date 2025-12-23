@@ -36,7 +36,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         model = User
         fields = ['email', 'full_name', 'password', 'questionnaire_data']
 
-    # Validação para evitar erro de integridade se o e-mail já existir
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Este e-mail já está cadastrado.")
@@ -48,13 +47,13 @@ class RegisterSerializer(serializers.ModelSerializer):
         email = validated_data['email']
         
         with transaction.atomic():
-            # 1. Cria usuário local (O ID é gerado aqui)
+            # CORREÇÃO CRÍTICA AQUI:
+            # Removemos 'username=email' porque seu model User não tem o campo username.
             user = User.objects.create_user(
-                username=email, 
                 email=email,
                 full_name=validated_data.get('full_name', ''),
                 password=password,
-                role='patient' # Garante que novos registros via site sejam pacientes
+                role='patient'
             )
             
             # 2. Salva o Primeiro Questionário
@@ -64,21 +63,64 @@ class RegisterSerializer(serializers.ModelSerializer):
                 is_latest=True
             )
             
-            # 3. Integração Bitrix com Debug e Salvamento Explícito
+            # 3. Integração Bitrix
             print(f"🔄 Tentando registrar no Bitrix para o user ID: {user.id}")
             
-            # Chama o serviço (que agora também deve enviar o ID local para o Bitrix)
-            bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
+            try:
+                bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
+                
+                if bitrix_id:
+                    user.id_bitrix = str(bitrix_id)
+                    user.save(update_fields=['id_bitrix'])
+                    print(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
+                else:
+                    print("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
+            except Exception as e:
+                print(f"⚠️ Erro não fatal na integração com Bitrix: {e}")
             
-            if bitrix_id:
-                # Converte para string para garantir compatibilidade com CharField
-                user.id_bitrix = str(bitrix_id)
+        return user
+
+class RegisterSerializer(serializers.ModelSerializer):
+    questionnaire_data = serializers.JSONField(write_only=True)
+    address_data = serializers.JSONField(write_only=True, required=False) # Novo campo
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    class Meta:
+        model = User
+        fields = ['email', 'full_name', 'password', 'questionnaire_data', 'address_data']
+
+    def create(self, validated_data):
+        questionnaire_answers = validated_data.pop('questionnaire_data')
+        address_info = validated_data.pop('address_data', {}) # Extrai endereço
+        password = validated_data.pop('password')
+        email = validated_data['email']
+        
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=email,
+                full_name=validated_data.get('full_name', ''),
+                password=password,
+                role='patient'
+            )
+            
+            UserQuestionnaire.objects.create(
+                user=user,
+                answers=questionnaire_answers,
+                is_latest=True
+            )
+            
+            # Atualiza Bitrix com Endereço
+            try:
+                # Modifique seu BitrixService.create_lead para aceitar address_info
+                # Ou combine os dados:
+                full_data = {**questionnaire_answers, **address_info}
                 
-                # Força o update apenas deste campo para garantir que o Django não se perca
-                user.save(update_fields=['id_bitrix'])
+                bitrix_id = BitrixService.create_lead(user, full_data)
                 
-                print(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
-            else:
-                print("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
+                if bitrix_id:
+                    user.id_bitrix = str(bitrix_id)
+                    user.save(update_fields=['id_bitrix'])
+            except Exception as e:
+                print(f"Erro Bitrix: {e}")
             
         return user

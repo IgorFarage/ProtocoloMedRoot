@@ -1,88 +1,44 @@
 import mercadopago
-import requests
 import os
-from django.conf import settings
+import datetime
 
 class FinancialService:
     def __init__(self):
-        self.mp_sdk = mercadopago.SDK(os.getenv('MERCADO_PAGO_ACCESS_TOKEN'))
-        self.bitrix_url = os.getenv('BITRIX_WEBHOOK_URL')
-        if self.bitrix_url and not self.bitrix_url.endswith('/'):
-            self.bitrix_url += '/'
+        token = os.getenv('MERCADO_PAGO_ACCESS_TOKEN')
+        if not token:
+            print("⚠️ AVISO: MERCADOPAGO_ACCESS_TOKEN não encontrado no .env")
+        self.sdk = mercadopago.SDK(token)
 
-    def get_plan_from_bitrix(self, plan_slug):
+    def create_subscription(self, title, price, user_email, external_reference, frequency=1):
         """
-        Busca preço e nome do plano no Bitrix (Seção 35).
-        IDs Fixos: Standard (262), Plus (264).
+        Gera um link de ASSINATURA (Recorrente) no Mercado Pago.
+        frequency: 1 (Mensal) ou 3 (Trimestral)
         """
-        # Mapeamento Slug -> ID do Bitrix
-        # CONFIRA SE 262 É STANDARD E 264 É PLUS NO SEU CRM
-        PLAN_MAP = {
-            'standard': 262,
-            'plus': 264
-        }
-        
-        bitrix_id = PLAN_MAP.get(plan_slug)
-        if not bitrix_id: return None
+        # URL de retorno (Frontend)
+        back_url = "http://localhost:5173/pagamento/sucesso"
 
-        try:
-            # Busca produto específico pelo ID
-            response = requests.post(
-                f"{self.bitrix_url}crm.product.list.json",
-                json={
-                    "filter": {"ID": bitrix_id},
-                    "select": ["ID", "NAME", "PRICE", "DESCRIPTION"] 
-                },
-                timeout=5
-            )
-            data = response.json()
-            
-            if "result" in data and len(data["result"]) > 0:
-                product = data["result"][0]
-                return {
-                    "name": product.get("NAME"),
-                    "price": float(product.get("PRICE") or 0),
-                    "description": product.get("DESCRIPTION", "")
-                }
-        except Exception as e:
-            print(f"Erro ao buscar plano no Bitrix: {e}")
-            return None
-        
-        return None
-
-    def create_preference(self, transaction, user_email, user_name, plan_name):
-        """
-        Gera o link de pagamento no Mercado Pago.
-        """
-        back_urls = {
-            "success": "http://localhost:5173/pagamento/sucesso",
-            "failure": "http://localhost:5173/pagamento/erro",
-            "pending": "http://localhost:5173/pagamento/pendente"
-        }
-
-        preference_data = {
-            "items": [
-                {
-                    "id": transaction.plan_type,
-                    "title": f"Assinatura - {plan_name}", # Nome vindo do Bitrix
-                    "quantity": 1,
-                    "currency_id": "BRL",
-                    "unit_price": float(transaction.amount)
-                }
-            ],
-            "payer": {
-                "email": user_email,
-                "name": user_name
+        # Dados da Assinatura (Preapproval)
+        subscription_data = {
+            "reason": title,
+            "external_reference": str(external_reference),
+            "payer_email": user_email,
+            "auto_recurring": {
+                "frequency": frequency,
+                "frequency_type": "months",
+                "transaction_amount": float(price),
+                "currency_id": "BRL"
             },
-            "back_urls": back_urls,
-            "auto_return": "approved",
-            "external_reference": str(transaction.external_reference),
-            "statement_descriptor": "MEDROOT",
+            "back_url": back_url,
+            "status": "authorized"
         }
 
         try:
-            pref = self.mp_sdk.preference().create(preference_data)
-            return pref["response"].get("sandbox_init_point") # Mude para init_point em produção
+            # Cria a assinatura (endpoint /preapproval)
+            response = self.sdk.preapproval().create(subscription_data)
+            response_data = response.get("response", {})
+            
+            # O link para o usuário assinar é o 'init_point'
+            return response_data.get("init_point") 
         except Exception as e:
-            print(f"Erro MP: {e}")
+            print(f"Erro ao criar assinatura MP: {e}")
             return None
