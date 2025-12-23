@@ -1,166 +1,230 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Check, Shield, Star, Zap } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { Check, Shield, Star, Zap, AlertCircle, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Header } from "@/components/Header";
-import { Footer } from "@/components/Footer";
+import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/hooks/use-toast";
+import api from "@/lib/api";
 
-export default function PlanSelection() {
+const PlanSelection = () => {
     const navigate = useNavigate();
+    const location = useLocation();
+    const { toast } = useToast();
+
     const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly">("monthly");
+    const [loading, setLoading] = useState<string | null>(null);
 
-    const plans = [
-        {
-            id: "standard",
-            name: "Protocolo Standard",
-            description: "O essencial para recuperar seus fios com eficácia comprovada.",
-            price: billingCycle === "monthly" ? 149.90 : 399.90, // Exemplo
-            features: [
-                "Entrega mensal discreta em casa",
-                "Fórmulas manipuladas personalizadas",
-                "Prescrição médica inclusa",
-                "Suporte via WhatsApp",
-            ],
-            highlight: false,
-            color: "bg-white",
-            btnVariant: "outline" as const,
-        },
-        {
-            id: "plus",
-            name: "Protocolo Plus",
-            description: "Acelere seus resultados com acompanhamento completo de especialistas.",
-            price: billingCycle === "monthly" ? 199.90 : 539.90, // Exemplo
-            features: [
-                "Tudo do plano Standard",
-                "Consulta mensal com Tricologista",
-                "Plano alimentar com Nutricionista",
-                "Ajuste fino da fórmula a cada 3 meses",
-                "Prioridade no suporte",
-            ],
-            highlight: true,
-            color: "bg-slate-900 text-white",
-            btnVariant: "default" as const,
+    // 1. RECUPERA DADOS (Tenta pegar do state ou do sessionStorage se o state falhar)
+    const { total_price, products } = location.state || {};
+
+    // Redirecionamento de segurança (Se o usuário tentar acessar direto sem ter feito o quiz)
+    useEffect(() => {
+        if (!products || total_price === undefined) {
+            // toast({
+            //   variant: "destructive",
+            //   title: "Dados não encontrados",
+            //   description: "Redirecionando para o questionário...",
+            // });
+
+            // --- CORREÇÃO AQUI: A rota no seu App.tsx é /questionario (PT), não /questionnaire ---
+            navigate("/questionario");
         }
-    ];
+    }, [products, total_price, navigate, toast]);
 
-    const handleSelectPlan = (planId: string) => {
-        // Salva o plano escolhido no localStorage para usar no Registro depois
-        localStorage.setItem("selectedPlan", planId);
-        localStorage.setItem("billingCycle", billingCycle);
+    // Se não tiver dados, mostra um loading ou volta (evita renderizar o resto e quebrar)
+    if (!products || total_price === undefined) {
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center gap-4">
+                <p>Carregando plano...</p>
+                <Button variant="outline" onClick={() => navigate("/questionario")}>
+                    <ArrowLeft className="mr-2 h-4 w-4" /> Voltar ao Início
+                </Button>
+            </div>
+        );
+    }
 
-        // Redireciona para o Cadastro (onde ele cria conta e depois paga)
-        navigate("/cadastro");
+    // 2. CÁLCULO DOS PREÇOS
+    const medicationBase = parseFloat(total_price);
+    const serviceFeePlus = 150.00;
+
+    const prices = {
+        standard: {
+            monthly: medicationBase,
+            quarterly: medicationBase * 3 * 0.90
+        },
+        plus: {
+            monthly: medicationBase + serviceFeePlus,
+            quarterly: (medicationBase + serviceFeePlus) * 3 * 0.90
+        }
+    };
+
+    const handleSubscribe = async (planId: "standard" | "plus") => {
+        setLoading(planId);
+
+        const token = localStorage.getItem('access_token'); // Verifica se está logado
+
+        if (!token) {
+            // Manda para registro levando TUDO
+            navigate("/register", {
+                state: {
+                    selectedPlan: planId,
+                    billingCycle,
+                    products,
+                    total_price
+                }
+            });
+            return;
+        }
+
+        try {
+            const response = await api.post("/financial/checkout/", {
+                plan_id: planId,
+                billing_cycle: billingCycle,
+                products: products
+            });
+
+            const { checkout_url } = response.data;
+
+            if (checkout_url) {
+                window.location.href = checkout_url;
+            }
+
+        } catch (error) {
+            console.error("Erro no checkout:", error);
+            toast({
+                variant: "destructive",
+                title: "Erro ao iniciar pagamento",
+                description: "Tente novamente mais tarde.",
+            });
+            setLoading(null);
+        }
     };
 
     return (
-        <div className="min-h-screen flex flex-col bg-gray-50">
-            <Header />
+        <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+            <div className="max-w-7xl mx-auto space-y-12">
 
-            <main className="flex-1 container mx-auto px-4 py-16">
-                <div className="text-center max-w-3xl mx-auto mb-12 space-y-4">
-                    <h1 className="text-4xl font-bold tracking-tight text-slate-900">
-                        Escolha o plano ideal para seu cabelo
+                <div className="text-center space-y-4">
+                    <h1 className="text-4xl font-extrabold text-gray-900 sm:text-5xl">
+                        Seu Tratamento Personalizado
                     </h1>
-                    <p className="text-lg text-slate-600">
-                        Assinatura flexível. Cancele quando quiser. Resultados reais.
+                    <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+                        Baseado na sua avaliação, selecionamos os melhores ativos para você.
                     </p>
+                </div>
 
-                    {/* Toggle Mensal/Trimestral (Opcional) */}
-                    <div className="flex items-center justify-center mt-6 gap-4">
-                        <button
-                            onClick={() => setBillingCycle("monthly")}
-                            className={`px-4 py-2 rounded-full text-sm font-semibold transition-all ${billingCycle === "monthly" ? "bg-primary text-white shadow-md" : "text-gray-500 hover:bg-gray-100"
-                                }`}
-                        >
-                            Mensal
-                        </button>
-                        <button
-                            onClick={() => setBillingCycle("quarterly")}
-                            className={`px-4 py-2 rounded-full text-sm font-semibold transition-all ${billingCycle === "quarterly" ? "bg-primary text-white shadow-md" : "text-gray-500 hover:bg-gray-100"
-                                }`}
-                        >
-                            Trimestral <span className="text-xs ml-1 opacity-80">(-10%)</span>
-                        </button>
-                    </div>
+                <div className="flex justify-center items-center space-x-4">
+                    <span className={`text-sm font-medium ${billingCycle === 'monthly' ? 'text-gray-900' : 'text-gray-500'}`}>
+                        Mensal
+                    </span>
+                    <Switch
+                        checked={billingCycle === "quarterly"}
+                        onCheckedChange={(checked) => setBillingCycle(checked ? "quarterly" : "monthly")}
+                    />
+                    <span className={`text-sm font-medium ${billingCycle === 'quarterly' ? 'text-gray-900' : 'text-gray-500'}`}>
+                        Trimestral <span className="text-green-600 font-bold ml-1">(-10%)</span>
+                    </span>
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
-                    {plans.map((plan) => (
-                        <Card
-                            key={plan.id}
-                            className={`relative border-2 transition-all duration-300 hover:shadow-xl flex flex-col ${plan.highlight ? "border-primary shadow-lg scale-105 z-10" : "border-gray-100"
-                                } ${plan.color === "bg-slate-900 text-white" ? "bg-slate-900 text-white" : "bg-white"}`}
-                        >
-                            {plan.highlight && (
-                                <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-primary text-white px-4 py-1 rounded-full text-sm font-bold flex items-center gap-1 shadow-md">
-                                    <Star className="w-3 h-3 fill-current" /> MAIS ESCOLHIDO
-                                </div>
-                            )}
 
-                            <CardHeader>
-                                <CardTitle className={`text-2xl font-bold ${plan.highlight ? "text-white" : "text-slate-900"}`}>
-                                    {plan.name}
-                                </CardTitle>
-                                <CardDescription className={plan.highlight ? "text-slate-300" : "text-slate-500"}>
-                                    {plan.description}
-                                </CardDescription>
-                            </CardHeader>
+                    {/* STANDARD */}
+                    <Card className="border-2 border-gray-200 shadow-sm hover:shadow-md transition-shadow bg-white">
+                        <CardHeader>
+                            <CardTitle className="flex items-center justify-between">
+                                <span className="text-2xl font-bold">Standard</span>
+                                <Shield className="h-8 w-8 text-blue-500" />
+                            </CardTitle>
+                            <CardDescription>Apenas os medicamentos do seu protocolo.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                            <div className="flex items-baseline">
+                                <span className="text-4xl font-extrabold">
+                                    R$ {billingCycle === 'monthly' ? prices.standard.monthly.toFixed(2) : prices.standard.quarterly.toFixed(2)}
+                                </span>
+                                <span className="text-gray-500 ml-2">
+                                    /{billingCycle === 'monthly' ? 'mês' : 'trimestre'}
+                                </span>
+                            </div>
+                            <ul className="space-y-3">
+                                <li className="flex items-center text-sm text-gray-600 bg-gray-100 p-2 rounded">
+                                    <AlertCircle className="h-4 w-4 mr-2" />
+                                    Valor exato dos medicamentos (Sem Taxa de Serviço)
+                                </li>
+                                {products.map((p: any) => (
+                                    <li key={p.id} className="flex items-center text-sm">
+                                        <Check className="h-4 w-4 text-green-500 mr-2" />
+                                        {p.name}
+                                    </li>
+                                ))}
+                            </ul>
+                        </CardContent>
+                        <CardFooter>
+                            <Button
+                                className="w-full"
+                                size="lg"
+                                variant="outline"
+                                onClick={() => handleSubscribe("standard")}
+                                disabled={loading === "standard"}
+                            >
+                                {loading === "standard" ? "Processando..." : "Assinar Standard"}
+                            </Button>
+                        </CardFooter>
+                    </Card>
 
-                            <CardContent className="flex-1">
-                                <div className="mb-6">
-                                    <span className="text-4xl font-extrabold">
-                                        R$ {plan.price.toFixed(2).replace('.', ',')}
-                                    </span>
-                                    <span className={`text-sm ${plan.highlight ? "text-slate-400" : "text-slate-500"}`}>
-                                        /{billingCycle === "monthly" ? "mês" : "trimestre"}
-                                    </span>
-                                </div>
+                    {/* PLUS */}
+                    <Card className="border-2 border-primary shadow-lg relative overflow-hidden bg-white">
+                        <div className="absolute top-0 right-0 bg-primary text-white px-3 py-1 text-xs font-bold rounded-bl-lg">
+                            MAIS COMPLETO
+                        </div>
+                        <CardHeader>
+                            <CardTitle className="flex items-center justify-between">
+                                <span className="text-2xl font-bold text-primary">Plus</span>
+                                <Star className="h-8 w-8 text-primary" />
+                            </CardTitle>
+                            <CardDescription>Tratamento + Acompanhamento + Entrega.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                            <div className="flex items-baseline">
+                                <span className="text-4xl font-extrabold">
+                                    R$ {billingCycle === 'monthly' ? prices.plus.monthly.toFixed(2) : prices.plus.quarterly.toFixed(2)}
+                                </span>
+                                <span className="text-gray-500 ml-2">
+                                    /{billingCycle === 'monthly' ? 'mês' : 'trimestre'}
+                                </span>
+                            </div>
+                            <ul className="space-y-3">
+                                <li className="flex items-center font-medium">
+                                    <Check className="h-5 w-5 text-primary mr-2" />
+                                    Todos os medicamentos do Standard
+                                </li>
+                                <li className="flex items-center">
+                                    <Zap className="h-5 w-5 text-yellow-500 mr-2" />
+                                    <span className="font-bold">Entrega Grátis em Casa</span>
+                                </li>
+                                <li className="flex items-center">
+                                    <Check className="h-5 w-5 text-primary mr-2" />
+                                    <span>Acompanhamento Médico Prioritário</span>
+                                </li>
+                            </ul>
+                        </CardContent>
+                        <CardFooter>
+                            <Button
+                                className="w-full bg-primary hover:bg-primary/90"
+                                size="lg"
+                                onClick={() => handleSubscribe("plus")}
+                                disabled={loading === "plus"}
+                            >
+                                {loading === "plus" ? "Processando..." : "Assinar Plus"}
+                            </Button>
+                        </CardFooter>
+                    </Card>
 
-                                <ul className="space-y-3">
-                                    {plan.features.map((feature, idx) => (
-                                        <li key={idx} className="flex items-start gap-3">
-                                            <div className={`mt-1 p-0.5 rounded-full ${plan.highlight ? "bg-primary text-white" : "bg-green-100 text-green-700"}`}>
-                                                <Check className="w-3 h-3" />
-                                            </div>
-                                            <span className={`text-sm ${plan.highlight ? "text-slate-200" : "text-slate-600"}`}>
-                                                {feature}
-                                            </span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </CardContent>
-
-                            <CardFooter>
-                                <Button
-                                    className={`w-full h-12 text-lg font-semibold ${plan.highlight
-                                            ? "bg-white text-slate-900 hover:bg-slate-100"
-                                            : ""
-                                        }`}
-                                    variant={plan.highlight ? "default" : "default"} // Visual tweak
-                                    onClick={() => handleSelectPlan(plan.id)}
-                                >
-                                    {plan.highlight && <Zap className="w-4 h-4 mr-2" />}
-                                    Escolher {plan.name}
-                                </Button>
-                            </CardFooter>
-                        </Card>
-                    ))}
                 </div>
-
-                <div className="mt-16 text-center max-w-2xl mx-auto bg-blue-50 p-6 rounded-xl border border-blue-100">
-                    <div className="flex justify-center mb-4">
-                        <Shield className="w-10 h-10 text-primary" />
-                    </div>
-                    <h3 className="text-lg font-semibold text-slate-900 mb-2">Garantia de Satisfação</h3>
-                    <p className="text-slate-600 text-sm">
-                        Se não estiver satisfeito com o protocolo nos primeiros 30 dias, devolvemos seu dinheiro.
-                        Acreditamos na eficácia do nosso tratamento.
-                    </p>
-                </div>
-            </main>
-
-            <Footer />
+            </div>
         </div>
     );
-}
+};
+
+export default PlanSelection;

@@ -10,8 +10,8 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "./pages/Index";
 import Questionnaire from "./pages/Questionnaire";
 import NotFound from "./pages/NotFound";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
+import Login from "./auth/Login";
+import Register from "./auth/Register";
 import AboutUs from "./pages/AboutUs";
 import Contact from "./pages/Contact";
 
@@ -46,7 +46,7 @@ const App = () => (
             {/* Rotas Públicas */}
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
+            <Route path="/cadastro" element={<Register />} />
 
             {/* NOVA ROTA DE PRODUTOS */}
             <Route path="/produtos" element={<ProductCatalog />} />

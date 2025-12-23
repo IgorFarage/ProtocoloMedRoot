@@ -18,7 +18,6 @@ import NotFound from "../NotFound";
 
 // --- IMPORTS LOCAIS ---
 import { questions } from "./data";
-// Nota: removemos o import de 'logic.ts' pois a lógica agora vem do Backend
 
 const Questionnaire = () => {
     const [currentStep, setCurrentStep] = useState(0);
@@ -28,7 +27,7 @@ const Questionnaire = () => {
     const [showResults, setShowResults] = useState(false);
     const [showSimpleRedFlag, setShowSimpleRedFlag] = useState(false); // Flags imediatas (ex: idade)
 
-    // Estados de API (Novo)
+    // Estados de API
     const [loadingRec, setLoadingRec] = useState(false);
     const [protocolData, setProtocolData] = useState<any>(null); // Dados vindos do Bitrix
 
@@ -194,7 +193,7 @@ const Questionnaire = () => {
     // --- RENDERIZAÇÃO: RESULTADOS (DADOS DO BACKEND) ---
     if (showResults && protocolData) {
 
-        // Verifica Flag Complexa vinda do Backend (ex: Depressão)
+        // Verifica Flag Complexa vinda do Backend
         if (protocolData.redFlag) {
             return (
                 <div className="min-h-screen bg-background">
@@ -294,17 +293,22 @@ const Questionnaire = () => {
                                         Já tenho conta
                                     </Button>
 
-                                    {/* AÇÃO PRINCIPAL -> SELEÇÃO DE PLANOS */}
+                                    {/* --- CORREÇÃO PRINCIPAL: BOTÃO AGORA ENVIA OS DADOS --- */}
                                     <Button
                                         size="lg"
                                         className="w-full sm:w-auto bg-primary hover:bg-primary/90"
                                         onClick={() => {
-                                            // O questionário já foi salvo no finishQuestionnaire
-                                            navigate("/planos");
+                                            navigate("/planos", {
+                                                state: {
+                                                    products: protocolData.products,
+                                                    total_price: protocolData.total_price
+                                                }
+                                            });
                                         }}
                                     >
                                         Ver Planos e Cadastrar
                                     </Button>
+                                    {/* ----------------------------------------------------- */}
                                 </div>
                             </div>
                         </CardContent>

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import api from "@/lib/api";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,9 +16,9 @@ const Login = () => {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-
-  const { login } = useAuth(); // Nossa função que conecta com o Django
+  const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,20 +29,33 @@ const Login = () => {
       // 1. Tenta fazer login
       await login(email, password);
 
-      // 2. Se não der erro, o AuthProvider já salvou o usuario e token.
-      // Vamos verificar o role para redirecionar corretamente (embora o AuthProvider já atualize o estado)
-      // Como o estado 'user' pode demorar um milissegundo para atualizar, 
-      // podemos confiar que se o login passou, podemos redirecionar.
+      // 2. LÓGICA DE CHECKOUT (O Pulo do Gato)
+      // Verifica se veio um plano do Registro ou da Seleção
+      if (location.state?.selectedPlan) {
+        try {
+          // Opcional: Mostre um aviso visual aqui se tiver o toast
+          // toast({ title: "Redirecionando para pagamento..." });
 
-      // Pequeno timeout para garantir que o estado global atualizou ou redirecionar baseado na lógica padrão
-      // Uma abordagem melhor seria ler o token decodificado aqui, mas vamos simplificar:
-      // O App.tsx vai redirecionar se o usuário tentar acessar a rota protegida.
+          const checkoutRes = await api.post("/financial/checkout/", {
+            plan_id: location.state.selectedPlan,
+            billing_cycle: location.state.billingCycle || 'monthly'
+          });
 
-      navigate("/dashboard"); // Manda para o Dashboard do Cliente por padrão
+          if (checkoutRes.data.checkout_url) {
+            window.location.href = checkoutRes.data.checkout_url;
+            return; // PARE AQUI! Não deixe ir para o dashboard
+          }
+        } catch (checkoutErr) {
+          console.error("Erro ao gerar checkout:", checkoutErr);
+          // Se falhar o checkout, deixamos ir para o dashboard mas logamos o erro
+        }
+      }
+
+      // 3. Se não tiver plano pendente, vai para o dashboard normal
+      navigate("/dashboard");
 
     } catch (err: any) {
       console.error(err);
-      // Tratamento de erros comuns do Django SimpleJWT
       if (err.response?.status === 401) {
         setError("E-mail ou senha incorretos.");
       } else {

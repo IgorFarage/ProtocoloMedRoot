@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,8 +9,10 @@ import { useToast } from "@/hooks/use-toast"; // Verifique se o caminho do hook 
 import api from "@/lib/api";
 import { useAuth } from "@/auth/AuthProvider";
 
+
 export default function Register() {
     const navigate = useNavigate();
+    const location = useLocation();
     const { login } = useAuth(); // Opcional: se quiser já logar o usuário automaticamente
     const { toast } = useToast();
 
@@ -91,7 +93,8 @@ export default function Register() {
                     </CardContent>
 
                     <CardFooter className="flex flex-col gap-3 pt-2">
-                        <Link to="/login" className="w-full">
+                        {/* --- ALTERAÇÃO AQUI: Passamos o state com o plano para o Login --- */}
+                        <Link to="/login" state={location.state} className="w-full">
                             <Button size="lg" className="w-full text-base font-semibold group">
                                 Acessar meu Painel
                                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
