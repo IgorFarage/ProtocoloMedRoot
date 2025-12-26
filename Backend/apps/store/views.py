@@ -12,6 +12,7 @@ class ProductCatalogView(APIView):
     Pública (AllowAny) para que possa ser vista na Home sem login.
     """
     permission_classes = [AllowAny]
+    authentication_classes = [] # Evita 401 se vier token inválido
 
     def get(self, request):
         products = BitrixService.get_product_catalog()

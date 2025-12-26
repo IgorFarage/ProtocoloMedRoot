@@ -35,6 +35,8 @@ import PlanSelection from "./pages/Plans/PlanSelection";
 
 const queryClient = new QueryClient();
 
+import PaymentSuccess from "./pages/Plans/PaymentSuccess";
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -57,6 +59,7 @@ const App = () => (
             <Route path="/sobre-nos" element={<AboutUs />} />
             <Route path="/contato" element={<Contact />} />
             <Route path="/planos" element={<PlanSelection />} />
+            <Route path="/pagamento/sucesso" element={<PaymentSuccess />} />
 
             {/* Rotas Protegidas - PACIENTE */}
             <Route

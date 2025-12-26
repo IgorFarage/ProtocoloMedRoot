@@ -18,6 +18,13 @@ class Transaction(models.Model):
         MONTHLY = 'monthly', 'Mensal'
         QUARTERLY = 'quarterly', 'Trimestral'
 
+    class PaymentType(models.TextChoices):
+        CREDIT_CARD = 'credit_card', 'Cartão de Crédito'
+        TICKET = 'ticket', 'Boleto'
+        PIX = 'bank_transfer', 'Pix'
+        STARTUP_CREDIT = 'wallet_purchase', 'Crédito MP'
+        UNKNOWN = 'unknown', 'Desconhecido'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, 
@@ -30,7 +37,8 @@ class Transaction(models.Model):
     
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     cycle = models.CharField(max_length=20, choices=Cycle.choices, default=Cycle.MONTHLY)
-    
+    payment_type = models.CharField(max_length=20, choices=PaymentType.choices, default=PaymentType.UNKNOWN)
+
     # Integração
     mercado_pago_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     external_reference = models.CharField(max_length=100, unique=True)

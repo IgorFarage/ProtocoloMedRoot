@@ -72,7 +72,11 @@ const PlanSelection = () => {
         }
 
         try {
-            const response = await api.post("/api/financial/checkout/", {
+            console.log("🚀 [DEBUG] Iniciando Checkout...");
+            console.log("Token:", token);
+            console.log("Payload:", { plan_id: planId, billing_cycle: billingCycle, products: products });
+
+            const response = await api.post("/financial/checkout/", {
                 plan_id: planId,
                 billing_cycle: billingCycle,
                 products: products
@@ -84,8 +88,30 @@ const PlanSelection = () => {
                 window.location.href = checkout_url;
             }
 
-        } catch (error) {
+        } catch (error: any) {
             console.error("Erro no checkout:", error);
+
+            if (error.response?.status === 401) {
+                toast({
+                    variant: "destructive",
+                    title: "Sessão Expirada",
+                    description: "Por favor, faça login novamente.",
+                });
+                // Limpa token inválido
+                localStorage.removeItem('access_token');
+
+                // Redireciona para Login mantendo o estado (para retomar a compra)
+                navigate("/login", {
+                    state: {
+                        selectedPlan: planId,
+                        billingCycle,
+                        products,
+                        total_price
+                    }
+                });
+                return;
+            }
+
             toast({
                 variant: "destructive",
                 title: "Erro ao iniciar pagamento",

@@ -38,7 +38,8 @@ const Login = () => {
 
           const checkoutRes = await api.post("/financial/checkout/", {
             plan_id: location.state.selectedPlan,
-            billing_cycle: location.state.billingCycle || 'monthly'
+            billing_cycle: location.state.billingCycle || 'monthly',
+            products: location.state.products || []
           });
 
           if (checkoutRes.data.checkout_url) {

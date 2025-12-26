@@ -102,6 +102,9 @@ class SubscribeView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 class RecommendationView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = [] # Evita 401 se vier token inválido
+
     def post(self, request):
         answers = request.data.get('answers', {})
         result = BitrixService.generate_protocol(answers)
