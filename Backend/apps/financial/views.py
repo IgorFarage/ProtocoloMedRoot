@@ -25,71 +25,78 @@ class CreateCheckoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        print("🔍 [DEBUG] CreateCheckoutView ACESSADA")
         user = request.user
         data = request.data
         
-        plan_id = data.get('plan_id')
+        plan_id = data.get('plan_id') # 'standard' ou 'plus'
         billing_cycle = data.get('billing_cycle', 'monthly')
         products = data.get('products', []) 
         
         if not products:
             return Response({"error": "Nenhum produto encontrado."}, status=400)
 
-        # 1. Cálculos
+        # 1. Soma dos Medicamentos
         try:
             medication_total = sum(float(p.get('price', 0)) for p in products)
         except ValueError:
             return Response({"error": "Erro no valor dos produtos."}, status=400)
         
-        service_price = 150.00 if plan_id == 'plus' else 0.00
+        # 2. Busca Preço do Plano no Bitrix (Dinâmico)
+        plan_item = None
+        service_price = 0.0
+        
+        if BitrixService:
+            plan_item = BitrixService.get_plan_details(plan_id)
+            if plan_item:
+                service_price = plan_item['price']
+                print(f"💰 Preço do {plan_id} vindo do Bitrix: R$ {service_price}")
+            else:
+                # Fallback de segurança se o Bitrix cair
+                print(f"⚠️ Falha ao buscar plano {plan_id} no Bitrix. Usando fallback.")
+                service_price = 150.00 if plan_id == 'plus' else 0.00
+        
         base_total = medication_total + service_price
         
-        # 2. Definição da Frequência e Título
+        # 3. Cálculo Final (Desconto Trimestral)
         if billing_cycle == 'quarterly':
              final_amount = (base_total * 3) * 0.90
-             frequency_months = 3
              plan_title = f"ProtocoloMed - {plan_id.capitalize()} (Trimestral)"
         else:
              final_amount = base_total
-             frequency_months = 1
              plan_title = f"ProtocoloMed - {plan_id.capitalize()} (Mensal)"
 
-        # 3. Bitrix (Mantemos o log não fatal)
+        # 4. Atualiza Bitrix (Deal)
         if BitrixService:
             try:
                 final_products = list(products)
-                if service_price > 0:
-                    final_products.append({"id": "264", "name": "Taxa Plus", "price": service_price})
+                # Adiciona o item do plano na lista de produtos do CRM
+                if plan_item:
+                    final_products.append(plan_item)
+                elif service_price > 0:
+                     final_products.append({"id": "264", "name": "Taxa Plus (Fallback)", "price": service_price})
+
                 BitrixService.prepare_deal_payment(user, final_products, plan_title, final_amount)
             except Exception as e:
                 print(f"⚠️ Erro Bitrix (Ignorado): {e}")
 
-        # 4. Criação da Transação Local (O MAIS IMPORTANTE)
-        # Removemos a chamada do financial_service.create_subscription aqui para evitar o Erro 500
-        # O pagamento real será processado na próxima rota (process-payment) usando o token do cartão.
-        
+        # 5. Cria Transação Local
         try:
             transaction = Transaction.objects.create(
                 user=user,
                 plan_type=plan_id,
                 amount=final_amount,
                 cycle=billing_cycle,
-                external_reference=str(uuid.uuid4()), # ID Único gerado aqui
+                external_reference=str(uuid.uuid4()),
                 status=Transaction.Status.PENDING
             )
             
-            print(f"✅ Transação Criada: {transaction.external_reference} - R$ {transaction.amount}")
-
-            # RETORNO PARA O FRONTEND
             return Response({
-                "checkout_url": "", # Não é necessário para Checkout Transparente
+                "checkout_url": "",
                 "external_reference": transaction.external_reference,
                 "amount": float(transaction.amount)
             }, status=200)
             
         except Exception as e:
-            print(f"❌ Erro ao criar transação no banco: {e}")
             return Response({"error": "Erro interno ao criar pedido."}, status=500)
 
 class WebhookView(APIView):
@@ -221,7 +228,6 @@ class CompletePurchaseView(APIView):
         data = request.data
         
         # 1. Validação Prévia dos Dados de Cadastro
-        # Isso impede de tentar cobrar se o e-mail já existir ou senha for fraca
         register_serializer = RegisterSerializer(data=data)
         if not register_serializer.is_valid():
             return Response(register_serializer.errors, status=400)
@@ -238,7 +244,6 @@ class CompletePurchaseView(APIView):
         answers = data.get('questionnaire_data', {})
 
         # 2. TENTATIVA DE PAGAMENTO (Mercado Pago)
-        # Cobramos ANTES de salvar qualquer coisa no banco
         
         # Identifica nome/sobrenome para o MP
         full_name = data.get('full_name', '').split()
@@ -270,12 +275,11 @@ class CompletePurchaseView(APIView):
 
         # 3. VERIFICAÇÃO DO PAGAMENTO
         if not payment_result or payment_result.get('status') != 'approved':
-            # Se falhou, retorna erro IMEDIATAMENTE. Nada foi salvo.
             error_msg = payment_result.get('status_detail') if payment_result else "Erro desconhecido"
             return Response({"error": "Pagamento Recusado", "detail": error_msg}, status=400)
 
         # ==========================================================
-        # SE CHEGOU AQUI, O PAGAMENTO FOI APROVADO. AGORA SALVAMOS.
+        # 4. SALVAMENTO (PAGAMENTO APROVADO)
         # ==========================================================
 
         try:
@@ -289,27 +293,44 @@ class CompletePurchaseView(APIView):
                     plan_type=plan_id,
                     amount=total_price,
                     cycle=billing_cycle,
-                    external_reference=external_ref, # ID de Idempotência
+                    external_reference=external_ref,
                     status=Transaction.Status.APPROVED,
                     mercado_pago_id=str(payment_result.get('id'))
                 )
 
-                # C. Envia para o Bitrix (Lead + Endereço)
+                # C. Integração com Bitrix
                 try:
-                    bitrix_id = BitrixService.create_lead(user, answers, address_data)
+                    # 1. Cria o Lead (Juntando respostas + endereço para não dar erro de argumentos)
+                    full_crm_data = {**answers, **address_data}
+                    bitrix_id = BitrixService.create_lead(user, full_crm_data)
+                    
                     if bitrix_id:
                         user.id_bitrix = str(bitrix_id)
                         user.save()
                         
-                        # D. Prepara o Negócio no Bitrix (Produtos)
+                        # 2. Prepara o Negócio
                         products = data.get('products', [])
+                        final_products_bitrix = list(products) # Cópia da lista
+                        
+                        # --- ALTERAÇÃO SOLICITADA ---
+                        # Busca o item do Plano no Bitrix (Standard/Plus).
+                        # NÃO usamos valores fixos no código. Se o Bitrix não retornar, não adicionamos nada.
+                        if hasattr(BitrixService, 'get_plan_details'):
+                            plan_item = BitrixService.get_plan_details(plan_id)
+                            if plan_item:
+                                final_products_bitrix.append(plan_item)
+                            else:
+                                print(f"⚠️ AVISO: Plano '{plan_id}' não encontrado no Bitrix. Registrando apenas medicamentos.")
+                        
                         plan_title = f"ProtocoloMed - {plan_id} ({billing_cycle})"
-                        BitrixService.prepare_deal_payment(user, products, plan_title, total_price)
+                        
+                        # Envia para o Bitrix
+                        BitrixService.prepare_deal_payment(user, final_products_bitrix, plan_title, total_price)
                         
                 except Exception as e:
                     print(f"⚠️ Erro Bitrix (Não fatal): {e}")
 
-                # E. Gera Token de Login (Para o frontend logar automático)
+                # E. Gera Token e Retorna Sucesso
                 refresh = RefreshToken.for_user(user)
                 
                 return Response({
@@ -325,7 +346,5 @@ class CompletePurchaseView(APIView):
                 }, status=201)
 
         except Exception as e:
-            # Se der erro ao salvar no banco, precisamos estornar o pagamento (cenário raro)
-            # Idealmente, implementaria um reembolso aqui.
             print(f"❌ Erro Crítico pós-pagamento: {e}")
             return Response({"error": "Erro ao finalizar pedido. Contate o suporte."}, status=500)

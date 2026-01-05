@@ -3,6 +3,10 @@ export interface Product {
     name: string;
     price: number;
     description: string;
-    image_id?: string | number | null; // O ID que vem do Bitrix
-    image_url?: string; // Caso o backend já devolva a URL tratada
+    category_id?: string | number;
+    image_url?: string | null; // <--- O Campo NOVO e Importante
+}
+
+export interface CartItem extends Product {
+    quantity: number;
 }

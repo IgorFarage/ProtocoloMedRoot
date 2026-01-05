@@ -1,49 +1,51 @@
 import { useState, useEffect } from "react";
 import { Product } from "@/types/store";
 import { getLocalImage } from "@/lib/imageMapper";
-import placeholderImg from "@/assets/Produtos/MinoxidilSpray.png";
+import { cn } from "@/lib/utils";
 
-const API_BASE_URL = "http://localhost:8000/api";
-
-interface ProductImageProps {
+interface ProductImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
     product: Product;
-    className?: string;
 }
 
-export function ProductImage({ product, className }: ProductImageProps) {
-    const [imgSrc, setImgSrc] = useState<string>("");
+export function ProductImage({ product, className, ...props }: ProductImageProps) {
+    const [src, setSrc] = useState<string>("");
 
     useEffect(() => {
-        let newSrc = placeholderImg;
-
-        // 1. PRIORIDADE TOTAL: URL direta do Bitrix (CDN)
+        // 1. PRIORIDADE: URL direta do Bitrix
         if (product.image_url) {
-            newSrc = product.image_url;
-        }
-        // 2. Se não tiver URL, tenta ID (Legacy/Proxy)
-        else if (product.image_id) {
-            newSrc = `${API_BASE_URL}/store/image/${product.id}/`;
-        }
-        // 3. Se não tiver nada do Bitrix, tenta Imagem Local (Fallback)
-        else {
-            const local = getLocalImage(product.name);
-            if (local) newSrc = local;
+            setSrc(product.image_url);
+            return;
         }
 
-        setImgSrc(newSrc);
+        // 2. FALLBACK 1: Imagem Local (baseada no nome)
+        const local = getLocalImage(product.name);
+        if (local) {
+            setSrc(local);
+            return;
+        }
+
+        // 3. FALLBACK FINAL: Placeholder genérico (na pasta public)
+        setSrc("/placeholder.svg");
     }, [product]);
 
     return (
         <img
-            src={imgSrc}
+            src={src}
             alt={product.name}
-            className={className}
-            onError={() => {
-                // Se a URL do Bitrix falhar (404/403), cai para a imagem local
-                console.log(`Falha ao carregar imagem externa para ${product.name}, usando local.`);
+            className={cn("object-contain transition-opacity duration-300", className)}
+            loading="lazy"
+            onError={(e) => {
+                // Se a URL do Bitrix falhar (404), tenta a local
+                const target = e.currentTarget;
                 const local = getLocalImage(product.name);
-                setImgSrc(local || placeholderImg);
+
+                if (target.src !== local && local) {
+                    target.src = local;
+                } else if (target.src !== "/placeholder.svg") {
+                    target.src = "/placeholder.svg";
+                }
             }}
+            {...props}
         />
     );
 }
