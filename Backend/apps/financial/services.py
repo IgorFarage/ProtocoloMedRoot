@@ -1,44 +1,39 @@
 import mercadopago
 import os
-import datetime
+from django.conf import settings
 
 class FinancialService:
     def __init__(self):
-        token = os.getenv('MERCADO_PAGO_ACCESS_TOKEN')
-        if not token:
-            print("⚠️ AVISO: MERCADOPAGO_ACCESS_TOKEN não encontrado no .env")
-        self.sdk = mercadopago.SDK(token)
+        # Garante que o SDK seja iniciado com o ACCESS_TOKEN do .env
+        self.sdk = mercadopago.SDK(os.getenv("MERCADO_PAGO_ACCESS_TOKEN"))
 
     def create_subscription(self, title, price, user_email, external_reference, frequency=1):
-        """
-        Gera um link de ASSINATURA (Recorrente) no Mercado Pago.
-        frequency: 1 (Mensal) ou 3 (Trimestral)
-        """
-        # URL de retorno (Frontend)
-        back_url = "http://localhost:5173/pagamento/sucesso"
+        # ... (mantenha seu código de assinatura aqui como já estava) ...
+        # Apenas para referência, não apague o que já existe.
+        pass 
 
-        # Dados da Assinatura (Preapproval)
-        subscription_data = {
-            "reason": title,
-            "external_reference": str(external_reference),
-            "payer_email": user_email,
-            "auto_recurring": {
-                "frequency": frequency,
-                "frequency_type": "months",
-                "transaction_amount": float(price),
-                "currency_id": "BRL"
-            },
-            "back_url": back_url,
-            "status": "authorized"
-        }
-
+    # --- ADICIONE ESTE NOVO MÉTODO ---
+    def process_direct_payment(self, payment_data):
+        """
+        Processa pagamento transparente via Cartão usando o SDK.
+        """
         try:
-            # Cria a assinatura (endpoint /preapproval)
-            response = self.sdk.preapproval().create(subscription_data)
-            response_data = response.get("response", {})
+            # O método .create() do SDK faz o POST para a API de pagamentos
+            request_options = mercadopago.config.RequestOptions()
+            request_options.custom_headers = {
+                'x-idempotency-key': payment_data.get('external_reference')
+            }
             
-            # O link para o usuário assinar é o 'init_point'
-            return response_data.get("init_point") 
+            payment_response = self.sdk.payment().create(payment_data, request_options)
+            
+            if payment_response["status"] == 201 or payment_response["status"] == 200:
+                return payment_response["response"]
+            else:
+                print("❌ Erro MP:", payment_response)
+                return {
+                    "status": "rejected",
+                    "status_detail": payment_response.get("response", {}).get("message", "Erro desconhecido")
+                }
         except Exception as e:
-            print(f"Erro ao criar assinatura MP: {e}")
+            print(f"❌ Exceção no SDK: {e}")
             return None

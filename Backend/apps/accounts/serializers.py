@@ -29,7 +29,9 @@ class UserQuestionnaireSerializer(serializers.ModelSerializer):
         fields = ['answers', 'created_at', 'is_latest']
 
 class RegisterSerializer(serializers.ModelSerializer):
-    questionnaire_data = serializers.JSONField(write_only=True)
+    # ALTERAÇÃO 1: Adicionei 'required=False' e 'allow_null=True'
+    # Isso impede o erro 400 se o dado não vier.
+    questionnaire_data = serializers.JSONField(write_only=True, required=False, allow_null=True)
     password = serializers.CharField(write_only=True, min_length=8)
 
     class Meta:
@@ -42,13 +44,13 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        questionnaire_answers = validated_data.pop('questionnaire_data')
+        # ALTERAÇÃO 2: Usamos .pop(..., None) para não quebrar se não tiver dados
+        questionnaire_answers = validated_data.pop('questionnaire_data', None)
         password = validated_data.pop('password')
         email = validated_data['email']
         
         with transaction.atomic():
-            # CORREÇÃO CRÍTICA AQUI:
-            # Removemos 'username=email' porque seu model User não tem o campo username.
+            # 1. Criação do Usuário (Sua lógica original)
             user = User.objects.create_user(
                 email=email,
                 full_name=validated_data.get('full_name', ''),
@@ -56,71 +58,33 @@ class RegisterSerializer(serializers.ModelSerializer):
                 role='patient'
             )
             
-            # 2. Salva o Primeiro Questionário
-            UserQuestionnaire.objects.create(
-                user=user,
-                answers=questionnaire_answers,
-                is_latest=True
-            )
-            
-            # 3. Integração Bitrix
-            print(f"🔄 Tentando registrar no Bitrix para o user ID: {user.id}")
-            
-            try:
-                bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
+            # Só tentamos salvar o questionário e mandar pro Bitrix SE houver respostas
+            if questionnaire_answers:
+                # 2. Salva o Primeiro Questionário
+                UserQuestionnaire.objects.create(
+                    user=user,
+                    answers=questionnaire_answers,
+                    is_latest=True
+                )
                 
-                if bitrix_id:
-                    user.id_bitrix = str(bitrix_id)
-                    user.save(update_fields=['id_bitrix'])
-                    print(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
-                else:
-                    print("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
-            except Exception as e:
-                print(f"⚠️ Erro não fatal na integração com Bitrix: {e}")
-            
-        return user
-
-class RegisterSerializer(serializers.ModelSerializer):
-    questionnaire_data = serializers.JSONField(write_only=True)
-    address_data = serializers.JSONField(write_only=True, required=False) # Novo campo
-    password = serializers.CharField(write_only=True, min_length=8)
-
-    class Meta:
-        model = User
-        fields = ['email', 'full_name', 'password', 'questionnaire_data', 'address_data']
-
-    def create(self, validated_data):
-        questionnaire_answers = validated_data.pop('questionnaire_data')
-        address_info = validated_data.pop('address_data', {}) # Extrai endereço
-        password = validated_data.pop('password')
-        email = validated_data['email']
-        
-        with transaction.atomic():
-            user = User.objects.create_user(
-                email=email,
-                full_name=validated_data.get('full_name', ''),
-                password=password,
-                role='patient'
-            )
-            
-            UserQuestionnaire.objects.create(
-                user=user,
-                answers=questionnaire_answers,
-                is_latest=True
-            )
-            
-            # Atualiza Bitrix com Endereço
-            try:
-                # Modifique seu BitrixService.create_lead para aceitar address_info
-                # Ou combine os dados:
-                full_data = {**questionnaire_answers, **address_info}
+                # 3. Integração Bitrix (Sua lógica original preservada)
+                print(f"🔄 Tentando registrar no Bitrix para o user ID: {user.id}")
                 
-                bitrix_id = BitrixService.create_lead(user, full_data)
-                
-                if bitrix_id:
-                    user.id_bitrix = str(bitrix_id)
-                    user.save(update_fields=['id_bitrix'])
-            except Exception as e:
-                print(f"Erro Bitrix: {e}")
+                try:
+                    bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
+                    
+                    if bitrix_id:
+                        user.id_bitrix = str(bitrix_id)
+                        user.save(update_fields=['id_bitrix'])
+                        print(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
+                    else:
+                        print("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
+                except Exception as e:
+                    print(f"⚠️ Erro não fatal na integração com Bitrix: {e}")
+            
+            else:
+                # Caso opcional: Se quiser criar Lead no Bitrix apenas com Nome/Email mesmo sem respostas
+                # você pode colocar uma lógica aqui. Por enquanto, deixei passando direto para não dar erro.
+                print(f"ℹ️ Usuário {user.id} criado sem dados de questionário inicial.")
             
         return user

@@ -19,6 +19,8 @@ class MyTokenObtainPairView(TokenObtainPairView):
     authentication_classes = []
 
 # 2. View de Registro (Cria User + Questionário Inicial)
+# Backend/apps/accounts/views.py
+
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = (AllowAny,)
@@ -26,27 +28,40 @@ class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
 
     def post(self, request, *args, **kwargs):
+        print("📝 Iniciando Registro de Usuário...")
         serializer = self.get_serializer(data=request.data)
+        
         if serializer.is_valid():
             try:
+                # 1. Salva no Banco Local
                 user = serializer.save()
+                print(f"✅ Usuário Local Criado: {user.email}")
+
+                # 2. Envia para o Bitrix
+                try:
+                    answers = request.data.get('questionnaire_data', {})
+                    address_data = request.data.get('address_data', {}) # <--- CAPTURA O ENDEREÇO
+                    
+                    print("🚀 Enviando dados (Lead + Endereço) para o Bitrix...")
+                    
+                    # Passamos o endereço para a função create_lead
+                    bitrix_id = BitrixService.create_lead(user, answers, address_data)
+                    
+                    if bitrix_id:
+                        user.id_bitrix = str(bitrix_id)
+                        user.save()
+                        print(f"✅ Bitrix Vinculado! ID: {bitrix_id}")
+                    
+                except Exception as e_bitrix:
+                    print(f"❌ Erro Bitrix: {e_bitrix}")
+
                 return Response({
-                    "message": "Usuário e questionário registrados com sucesso!",
-                    "user": {
-                        "email": user.email,
-                        "full_name": user.full_name
-                    }
+                    "message": "Sucesso",
+                    "user": {"id": user.id, "email": user.email}
                 }, status=status.HTTP_201_CREATED)
+
             except Exception as e:
-                # Captura erros que acontecem DURANTE o salvamento (ex: erro no create do Serializer)
-                print(f"❌ ERRO NO SAVE: {e}")
                 return Response({"erro_interno": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-        # --- AQUI ESTÁ O SEGREDO ---
-        # Se os dados forem inválidos, imprimimos o motivo no terminal
-        print("\n🛑 ERRO DE VALIDAÇÃO (400):")
-        print(serializer.errors)  # <--- Isso vai mostrar o que está errado (Ex: E-mail já existe)
-        print("-" * 30)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

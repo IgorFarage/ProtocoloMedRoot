@@ -1,247 +1,274 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import { Check, Shield, Star, Zap, AlertCircle, ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
-import { useToast } from "@/hooks/use-toast";
+import { useLocation, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { CheckCircle, Loader2, CreditCard, MapPin, User, ArrowLeft, Lock } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const PlanSelection = () => {
-    const navigate = useNavigate();
     const location = useLocation();
+    const navigate = useNavigate();
     const { toast } = useToast();
 
+    const { total_price, products, answers } = location.state || {};
+
+    const [step, setStep] = useState<1 | 2>(1);
+    const [selectedPlan, setSelectedPlan] = useState<"standard" | "plus">("plus");
     const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly">("monthly");
-    const [loading, setLoading] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
 
-    // 1. RECUPERA DADOS (Tenta pegar do state ou do sessionStorage se o state falhar)
-    const { total_price, products } = location.state || {};
+    // Estado Unificado com ENDEREÇO COMPLETO
+    const [formData, setFormData] = useState({
+        // Pessoais
+        full_name: "", email: "", password: "", confirmPassword: "", cpf: "",
+        // Entrega
+        cep: "", address: "", number: "", neighborhood: "", complement: "", city: "", state: "",
+        // Cartão
+        cardName: "", cardNumber: "", cardMonth: "", cardYear: "", cardCvv: ""
+    });
 
-    // Redirecionamento de segurança (Se o usuário tentar acessar direto sem ter feito o quiz)
     useEffect(() => {
-        if (!products || total_price === undefined) {
-            // toast({
-            //   variant: "destructive",
-            //   title: "Dados não encontrados",
-            //   description: "Redirecionando para o questionário...",
-            // });
-
-            // --- CORREÇÃO AQUI: A rota no seu App.tsx é /questionario (PT), não /questionnaire ---
-            navigate("/questionario");
+        if (products) {
+            localStorage.removeItem("access_token");
         }
-    }, [products, total_price, navigate, toast]);
+    }, [products]);
 
-    // Se não tiver dados, mostra um loading ou volta (evita renderizar o resto e quebrar)
-    if (!products || total_price === undefined) {
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setFormData({ ...formData, [e.target.id]: e.target.value });
+    };
+
+    const getPrice = (plan: "standard" | "plus") => {
+        if (!total_price) return "0.00";
+        let base = parseFloat(total_price);
+        if (plan === "plus") base += 150;
+        if (billingCycle === "quarterly") base = base * 3 * 0.90;
+        return base.toFixed(2);
+    };
+
+    // --- LÓGICA DE CEP AUTOMÁTICO (Opcional, mas melhora UX) ---
+    const handleCepBlur = async () => {
+        const cep = formData.cep.replace(/\D/g, '');
+        if (cep.length === 8) {
+            try {
+                const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+                const data = await res.json();
+                if (!data.erro) {
+                    setFormData(prev => ({
+                        ...prev,
+                        address: data.logradouro,
+                        neighborhood: data.bairro,
+                        city: data.localidade,
+                        state: data.uf
+                    }));
+                }
+            } catch (error) {
+                console.log("Erro ao buscar CEP");
+            }
+        }
+    };
+
+    const handleFinalizeCheckout = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+
+        try {
+            // 1. Validações Locais
+            if (formData.password.length < 6) throw new Error("Senha muito curta.");
+            if (formData.password !== formData.confirmPassword) throw new Error("As senhas não conferem.");
+
+            const mpKey = import.meta.env.VITE_MERCADO_PAGO_PUBLIC_KEY;
+
+            // 2. Gera Token do Cartão
+            // @ts-ignore
+            const mp = new window.MercadoPago(mpKey);
+            let cardToken;
+            try {
+                cardToken = await mp.createCardToken({
+                    cardNumber: formData.cardNumber.replace(/\s/g, ""),
+                    cardholderName: formData.cardName,
+                    cardExpirationMonth: formData.cardMonth,
+                    cardExpirationYear: "20" + formData.cardYear,
+                    securityCode: formData.cardCvv,
+                    identificationType: "CPF",
+                    identificationNumber: formData.cpf.replace(/\D/g, "")
+                });
+            } catch (err) {
+                throw new Error("Dados do cartão inválidos. Verifique os números.");
+            }
+
+            // 3. Detecta Bandeira
+            const firstDigit = formData.cardNumber.replace(/\s/g, "")[0];
+            const detectedMethod = firstDigit === "5" ? "master" : "visa";
+
+            // 4. CHAMADA ÚNICA AO BACKEND (Super Rota)
+            // Enviamos TUDO: Cadastro, Endereço, Respostas e Dados de Pagamento
+            const payload = {
+                // Dados Cadastro
+                full_name: formData.full_name,
+                email: formData.email,
+                password: formData.password,
+                cpf: formData.cpf,
+
+                // Dados Endereço
+                address_data: {
+                    cep: formData.cep,
+                    street: formData.address,
+                    number: formData.number,
+                    neighborhood: formData.neighborhood,
+                    complement: formData.complement,
+                    city: formData.city,
+                    state: formData.state
+                },
+
+                // Dados Quiz
+                questionnaire_data: answers || {},
+
+                // Dados Pagamento
+                token: cardToken.id,
+                payment_method_id: detectedMethod,
+                plan_id: selectedPlan,
+                billing_cycle: billingCycle,
+                total_price: total_price,
+                products: products || []
+            };
+
+            console.log("🚀 Enviando pedido completo...");
+            const response = await api.post("/financial/purchase/", payload);
+
+            // 5. Sucesso
+            if (response.data.status === "success") {
+                // Salva token para logar o usuário automaticamente
+                localStorage.setItem("access_token", response.data.access);
+                toast({ title: "Bem-vindo!", description: "Compra aprovada com sucesso." });
+                navigate("/pagamento/sucesso");
+            }
+
+        } catch (error: any) {
+            console.error(error);
+            const msg = error.response?.data?.detail || error.response?.data?.error || "Erro ao processar.";
+
+            // Tratamento especial para erros de validação (ex: email já existe)
+            if (error.response?.data?.email) {
+                toast({ variant: "destructive", title: "Erro", description: "Este e-mail já está cadastrado." });
+            } else {
+                toast({ variant: "destructive", title: "Pagamento Recusado", description: msg });
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (step === 1) {
         return (
-            <div className="min-h-screen flex flex-col items-center justify-center gap-4">
-                <p>Carregando plano...</p>
-                <Button variant="outline" onClick={() => navigate("/questionario")}>
-                    <ArrowLeft className="mr-2 h-4 w-4" /> Voltar ao Início
-                </Button>
+            <div className="min-h-screen bg-gray-50 py-12 px-4">
+                <div className="max-w-5xl mx-auto space-y-8">
+                    <div className="text-center">
+                        <h1 className="text-3xl font-bold">Escolha seu Plano</h1>
+                        <p className="text-gray-600">Selecione a melhor opção para o seu tratamento.</p>
+                    </div>
+                    <div className="flex justify-center gap-4 mb-8">
+                        <Button variant={billingCycle === "monthly" ? "default" : "outline"} onClick={() => setBillingCycle("monthly")}>Mensal</Button>
+                        <Button variant={billingCycle === "quarterly" ? "default" : "outline"} onClick={() => setBillingCycle("quarterly")}>Trimestral (-10%)</Button>
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-8">
+                        {/* CARD STANDARD */}
+                        <Card className={`cursor-pointer ${selectedPlan === 'standard' ? 'border-2 border-blue-600 shadow-xl' : ''}`} onClick={() => setSelectedPlan("standard")}>
+                            <CardHeader><CardTitle>Standard</CardTitle><CardDescription>Apenas Medicamentos</CardDescription></CardHeader>
+                            <CardContent><p className="text-3xl font-bold">R$ {getPrice("standard")}</p></CardContent>
+                            <CardFooter><Button className="w-full" variant="outline" onClick={() => { setSelectedPlan("standard"); setStep(2); }}>Selecionar</Button></CardFooter>
+                        </Card>
+                        {/* CARD PLUS */}
+                        <Card className={`cursor-pointer ${selectedPlan === 'plus' ? 'border-2 border-green-600 shadow-xl' : ''}`} onClick={() => setSelectedPlan("plus")}>
+                            <CardHeader><CardTitle>Plus</CardTitle><CardDescription>Medicamentos + Médico</CardDescription></CardHeader>
+                            <CardContent><p className="text-3xl font-bold">R$ {getPrice("plus")}</p></CardContent>
+                            <CardFooter><Button className="w-full bg-green-600 hover:bg-green-700" onClick={() => { setSelectedPlan("plus"); setStep(2); }}>Selecionar</Button></CardFooter>
+                        </Card>
+                    </div>
+                </div>
             </div>
         );
     }
 
-    // 2. CÁLCULO DOS PREÇOS
-    const medicationBase = parseFloat(total_price);
-    const serviceFeePlus = 150.00;
-
-    const prices = {
-        standard: {
-            monthly: medicationBase,
-            quarterly: medicationBase * 3 * 0.90
-        },
-        plus: {
-            monthly: medicationBase + serviceFeePlus,
-            quarterly: (medicationBase + serviceFeePlus) * 3 * 0.90
-        }
-    };
-
-    const handleSubscribe = async (planId: "standard" | "plus") => {
-        setLoading(planId);
-
-        const token = localStorage.getItem('access_token');
-
-        if (!token) {
-            navigate("/cadastro", {
-                state: { selectedPlan: planId, billingCycle, products, total_price }
-            });
-            return;
-        }
-
-        try {
-            console.log("🚀 [DEBUG] Iniciando Checkout...");
-            console.log("Token:", token);
-            console.log("Payload:", { plan_id: planId, billing_cycle: billingCycle, products: products });
-
-            const response = await api.post("/financial/checkout/", {
-                plan_id: planId,
-                billing_cycle: billingCycle,
-                products: products
-            });
-
-            const { checkout_url } = response.data;
-
-            if (checkout_url) {
-                window.location.href = checkout_url;
-            }
-
-        } catch (error: any) {
-            console.error("Erro no checkout:", error);
-
-            if (error.response?.status === 401) {
-                toast({
-                    variant: "destructive",
-                    title: "Sessão Expirada",
-                    description: "Por favor, faça login novamente.",
-                });
-                // Limpa token inválido
-                localStorage.removeItem('access_token');
-
-                // Redireciona para Login mantendo o estado (para retomar a compra)
-                navigate("/login", {
-                    state: {
-                        selectedPlan: planId,
-                        billingCycle,
-                        products,
-                        total_price
-                    }
-                });
-                return;
-            }
-
-            toast({
-                variant: "destructive",
-                title: "Erro ao iniciar pagamento",
-                description: "Tente novamente mais tarde.",
-            });
-            setLoading(null);
-        }
-    };
-
     return (
-        <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-            <div className="max-w-7xl mx-auto space-y-12">
-
-                <div className="text-center space-y-4">
-                    <h1 className="text-4xl font-extrabold text-gray-900 sm:text-5xl">
-                        Seu Tratamento Personalizado
-                    </h1>
-                    <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-                        Baseado na sua avaliação, selecionamos os melhores ativos para você.
-                    </p>
-                </div>
-
-                <div className="flex justify-center items-center space-x-4">
-                    <span className={`text-sm font-medium ${billingCycle === 'monthly' ? 'text-gray-900' : 'text-gray-500'}`}>
-                        Mensal
-                    </span>
-                    <Switch
-                        checked={billingCycle === "quarterly"}
-                        onCheckedChange={(checked) => setBillingCycle(checked ? "quarterly" : "monthly")}
-                    />
-                    <span className={`text-sm font-medium ${billingCycle === 'quarterly' ? 'text-gray-900' : 'text-gray-500'}`}>
-                        Trimestral <span className="text-green-600 font-bold ml-1">(-10%)</span>
-                    </span>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
-
-                    {/* STANDARD */}
-                    <Card className="border-2 border-gray-200 shadow-sm hover:shadow-md transition-shadow bg-white">
-                        <CardHeader>
-                            <CardTitle className="flex items-center justify-between">
-                                <span className="text-2xl font-bold">Standard</span>
-                                <Shield className="h-8 w-8 text-blue-500" />
-                            </CardTitle>
-                            <CardDescription>Apenas os medicamentos do seu protocolo.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            <div className="flex items-baseline">
-                                <span className="text-4xl font-extrabold">
-                                    R$ {billingCycle === 'monthly' ? prices.standard.monthly.toFixed(2) : prices.standard.quarterly.toFixed(2)}
-                                </span>
-                                <span className="text-gray-500 ml-2">
-                                    /{billingCycle === 'monthly' ? 'mês' : 'trimestre'}
-                                </span>
+        <div className="min-h-screen bg-gray-50 py-8 px-4">
+            <div className="max-w-3xl mx-auto">
+                <Button variant="ghost" onClick={() => setStep(1)} className="mb-4"><ArrowLeft className="mr-2 h-4 w-4" /> Voltar</Button>
+                <Card className="border-t-4 border-t-green-600 shadow-lg">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2"><Lock className="w-6 h-6 text-green-600" /> Finalizar Compra</CardTitle>
+                        <CardDescription>Plano: <strong>{selectedPlan.toUpperCase()}</strong> | Total: <strong>R$ {getPrice(selectedPlan)}</strong></CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <form onSubmit={handleFinalizeCheckout} className="space-y-8">
+                            {/* DADOS PESSOAIS */}
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold flex items-center gap-2"><User className="w-5 h-5" /> Seus Dados</h3>
+                                <div className="grid md:grid-cols-2 gap-4">
+                                    <div className="space-y-2"><Label>Nome Completo</Label><Input id="full_name" onChange={handleInputChange} required /></div>
+                                    <div className="space-y-2"><Label>CPF</Label><Input id="cpf" placeholder="000.000.000-00" onChange={handleInputChange} required /></div>
+                                    <div className="space-y-2 md:col-span-2"><Label>E-mail</Label><Input id="email" type="email" onChange={handleInputChange} required /></div>
+                                    <div className="space-y-2"><Label>Senha</Label><Input id="password" type="password" onChange={handleInputChange} required /></div>
+                                    <div className="space-y-2"><Label>Confirmar Senha</Label><Input id="confirmPassword" type="password" onChange={handleInputChange} required /></div>
+                                </div>
                             </div>
-                            <ul className="space-y-3">
-                                <li className="flex items-center text-sm text-gray-600 bg-gray-100 p-2 rounded">
-                                    <AlertCircle className="h-4 w-4 mr-2" />
-                                    Valor exato dos medicamentos (Sem Taxa de Serviço)
-                                </li>
-                                {products.map((p: any) => (
-                                    <li key={p.id} className="flex items-center text-sm">
-                                        <Check className="h-4 w-4 text-green-500 mr-2" />
-                                        {p.name}
-                                    </li>
-                                ))}
-                            </ul>
-                        </CardContent>
-                        <CardFooter>
-                            <Button
-                                className="w-full"
-                                size="lg"
-                                variant="outline"
-                                onClick={() => handleSubscribe("standard")}
-                                disabled={loading === "standard"}
-                            >
-                                {loading === "standard" ? "Processando..." : "Assinar Standard"}
-                            </Button>
-                        </CardFooter>
-                    </Card>
-
-                    {/* PLUS */}
-                    <Card className="border-2 border-primary shadow-lg relative overflow-hidden bg-white">
-                        <div className="absolute top-0 right-0 bg-primary text-white px-3 py-1 text-xs font-bold rounded-bl-lg">
-                            MAIS COMPLETO
-                        </div>
-                        <CardHeader>
-                            <CardTitle className="flex items-center justify-between">
-                                <span className="text-2xl font-bold text-primary">Plus</span>
-                                <Star className="h-8 w-8 text-primary" />
-                            </CardTitle>
-                            <CardDescription>Tratamento + Acompanhamento + Entrega.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            <div className="flex items-baseline">
-                                <span className="text-4xl font-extrabold">
-                                    R$ {billingCycle === 'monthly' ? prices.plus.monthly.toFixed(2) : prices.plus.quarterly.toFixed(2)}
-                                </span>
-                                <span className="text-gray-500 ml-2">
-                                    /{billingCycle === 'monthly' ? 'mês' : 'trimestre'}
-                                </span>
+                            <hr />
+                            {/* ENDEREÇO COMPLETO */}
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold flex items-center gap-2"><MapPin className="w-5 h-5" /> Endereço de Entrega</h3>
+                                <div className="grid grid-cols-4 gap-4">
+                                    <div className="col-span-1 space-y-2">
+                                        <Label>CEP</Label>
+                                        <Input id="cep" placeholder="00000-000" onChange={handleInputChange} onBlur={handleCepBlur} required />
+                                    </div>
+                                    <div className="col-span-2 space-y-2">
+                                        <Label>Rua</Label>
+                                        <Input id="address" value={formData.address} onChange={handleInputChange} required />
+                                    </div>
+                                    <div className="col-span-1 space-y-2">
+                                        <Label>Número</Label>
+                                        <Input id="number" onChange={handleInputChange} required />
+                                    </div>
+                                    <div className="col-span-2 space-y-2">
+                                        <Label>Bairro</Label>
+                                        <Input id="neighborhood" value={formData.neighborhood} onChange={handleInputChange} required />
+                                    </div>
+                                    <div className="col-span-2 space-y-2">
+                                        <Label>Complemento</Label>
+                                        <Input id="complement" placeholder="Apto, Bloco..." onChange={handleInputChange} />
+                                    </div>
+                                    <div className="col-span-3 space-y-2">
+                                        <Label>Cidade</Label>
+                                        <Input id="city" value={formData.city} onChange={handleInputChange} required />
+                                    </div>
+                                    <div className="col-span-1 space-y-2">
+                                        <Label>UF</Label>
+                                        <Input id="state" value={formData.state} maxLength={2} onChange={handleInputChange} required />
+                                    </div>
+                                </div>
                             </div>
-                            <ul className="space-y-3">
-                                <li className="flex items-center font-medium">
-                                    <Check className="h-5 w-5 text-primary mr-2" />
-                                    Todos os medicamentos do Standard
-                                </li>
-                                <li className="flex items-center">
-                                    <Zap className="h-5 w-5 text-yellow-500 mr-2" />
-                                    <span className="font-bold">Entrega Grátis em Casa</span>
-                                </li>
-                                <li className="flex items-center">
-                                    <Check className="h-5 w-5 text-primary mr-2" />
-                                    <span>Acompanhamento Médico Prioritário</span>
-                                </li>
-                            </ul>
-                        </CardContent>
-                        <CardFooter>
-                            <Button
-                                className="w-full bg-primary hover:bg-primary/90"
-                                size="lg"
-                                onClick={() => handleSubscribe("plus")}
-                                disabled={loading === "plus"}
-                            >
-                                {loading === "plus" ? "Processando..." : "Assinar Plus"}
+                            <hr />
+                            {/* PAGAMENTO */}
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold flex items-center gap-2"><CreditCard className="w-5 h-5" /> Pagamento</h3>
+                                <div className="space-y-4 bg-gray-50 p-4 rounded-md border">
+                                    <div className="space-y-2"><Label>Número do Cartão</Label><Input id="cardNumber" placeholder="0000 0000 0000 0000" onChange={handleInputChange} required /></div>
+                                    <div className="space-y-2"><Label>Nome no Cartão</Label><Input id="cardName" onChange={handleInputChange} required /></div>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        <div className="space-y-2"><Label>Mês</Label><Input id="cardMonth" placeholder="MM" maxLength={2} onChange={handleInputChange} required /></div>
+                                        <div className="space-y-2"><Label>Ano</Label><Input id="cardYear" placeholder="AA" maxLength={2} onChange={handleInputChange} required /></div>
+                                        <div className="space-y-2"><Label>CVV</Label><Input id="cardCvv" placeholder="123" maxLength={4} onChange={handleInputChange} required /></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <Button type="submit" className="w-full h-12 text-lg bg-green-600 hover:bg-green-700" disabled={loading}>
+                                {loading ? <Loader2 className="animate-spin mr-2" /> : `Pagar e Finalizar (R$ ${getPrice(selectedPlan)})`}
                             </Button>
-                        </CardFooter>
-                    </Card>
-
-                </div>
+                        </form>
+                    </CardContent>
+                </Card>
             </div>
         </div>
     );

@@ -59,7 +59,11 @@ const App = () => (
             <Route path="/sobre-nos" element={<AboutUs />} />
             <Route path="/contato" element={<Contact />} />
             <Route path="/planos" element={<PlanSelection />} />
-            <Route path="/pagamento/sucesso" element={<PaymentSuccess />} />
+            <Route path="/pagamento/sucesso" element={
+              <ProtectedRoute>
+                <PaymentSuccess />
+              </ProtectedRoute>
+            } />
 
             {/* Rotas Protegidas - PACIENTE */}
             <Route

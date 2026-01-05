@@ -20,6 +20,7 @@ class Transaction(models.Model):
 
     class PaymentType(models.TextChoices):
         CREDIT_CARD = 'credit_card', 'Cartão de Crédito'
+        DEBIT_CARD = 'debit_card', 'Cartão de Débito' # Adicionado
         TICKET = 'ticket', 'Boleto'
         PIX = 'bank_transfer', 'Pix'
         STARTUP_CREDIT = 'wallet_purchase', 'Crédito MP'
