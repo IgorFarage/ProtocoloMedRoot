@@ -222,129 +222,130 @@ class ProcessTransparentPaymentView(APIView):
             }, status=400)
 
 class CompletePurchaseView(APIView):
-    permission_classes = [AllowAny] # Aberto para quem ainda não tem conta
+    permission_classes = [AllowAny]
 
     def post(self, request):
         data = request.data
         
-        # 1. Validação Prévia dos Dados de Cadastro
+        # 1. Validação do Cadastro
         register_serializer = RegisterSerializer(data=data)
         if not register_serializer.is_valid():
             return Response(register_serializer.errors, status=400)
 
-        # Dados para pagamento
-        card_token = data.get('token')
-        payment_method_id = data.get('payment_method_id')
+        # Dados Gerais
         plan_id = data.get('plan_id')
         total_price = float(data.get('total_price', 0))
         billing_cycle = data.get('billing_cycle', 'monthly')
+        payment_method = data.get('payment_method_id') # 'pix' ou 'master', 'visa'...
         
-        # Dados para o User/Bitrix
+        # Bitrix Data
         address_data = data.get('address_data', {})
         answers = data.get('questionnaire_data', {})
 
-        # 2. TENTATIVA DE PAGAMENTO (Mercado Pago)
-        
-        # Identifica nome/sobrenome para o MP
+        # Identificação
         full_name = data.get('full_name', '').split()
         first_name = full_name[0]
         last_name = " ".join(full_name[1:]) if len(full_name) > 1 else "Client"
-
         external_ref = str(uuid.uuid4())
+        email = data.get('email')
+        cpf = data.get('cpf', '').replace('.', '').replace('-', '')
 
+        # 2. CONFIGURAÇÃO DO PAYLOAD (Diferença Cartão vs PIX)
         payment_payload = {
             "transaction_amount": total_price,
-            "token": card_token,
             "description": f"ProtocoloMed - {plan_id}",
-            "installments": 1,
-            "payment_method_id": payment_method_id,
+            "payment_method_id": payment_method,
             "payer": {
-                "email": data.get('email'),
+                "email": email,
                 "first_name": first_name,
                 "last_name": last_name,
-                "identification": {
-                    "type": "CPF",
-                    "number": data.get('cpf', '').replace('.', '').replace('-', '')
-                }
+                "identification": {"type": "CPF", "number": cpf}
             },
             "external_reference": external_ref
         }
 
+        # Lógica Específica
+        if payment_method == 'pix':
+            # PIX não tem token nem parcelas
+            pass 
+        else:
+            # Cartão exige token e parcelas
+            payment_payload["token"] = data.get('token')
+            payment_payload["installments"] = 1
+
+        # 3. PROCESSA PAGAMENTO
         financial_service = FinancialService()
         payment_result = financial_service.process_direct_payment(payment_payload)
 
-        # 3. VERIFICAÇÃO DO PAGAMENTO
-        if not payment_result or payment_result.get('status') != 'approved':
+        # Validação: 
+        # Cartão -> status='approved'
+        # PIX -> status='pending' (QR Code gerado)
+        is_success = False
+        if payment_result:
+            status_mp = payment_result.get('status')
+            if status_mp == 'approved': is_success = True
+            if payment_method == 'pix' and status_mp == 'pending': is_success = True
+
+        if not is_success:
             error_msg = payment_result.get('status_detail') if payment_result else "Erro desconhecido"
-            return Response({"error": "Pagamento Recusado", "detail": error_msg}, status=400)
+            return Response({"error": "Pagamento não realizado", "detail": error_msg}, status=400)
 
-        # ==========================================================
-        # 4. SALVAMENTO (PAGAMENTO APROVADO)
-        # ==========================================================
-
+        # 4. SALVAMENTO NO BANCO
         try:
             with db_transaction.atomic():
-                # A. Cria Usuário Local
                 user = register_serializer.save()
                 
-                # B. Cria Transação Local
                 Transaction.objects.create(
                     user=user,
                     plan_type=plan_id,
                     amount=total_price,
                     cycle=billing_cycle,
                     external_reference=external_ref,
-                    status=Transaction.Status.APPROVED,
+                    status=Transaction.Status.APPROVED if payment_result.get('status') == 'approved' else Transaction.Status.PENDING,
+                    payment_type=Transaction.PaymentType.PIX if payment_method == 'pix' else Transaction.PaymentType.CREDIT_CARD,
                     mercado_pago_id=str(payment_result.get('id'))
                 )
 
-                # C. Integração com Bitrix
+                # Bitrix
                 try:
-                    # 1. Cria o Lead (Juntando respostas + endereço para não dar erro de argumentos)
                     full_crm_data = {**answers, **address_data}
-                    bitrix_id = BitrixService.create_lead(user, full_crm_data)
+                    bitrix_id = BitrixService.create_lead(user, full_crm_data) # Usa versão simplificada que corrigimos antes
                     
                     if bitrix_id:
                         user.id_bitrix = str(bitrix_id)
                         user.save()
                         
-                        # 2. Prepara o Negócio
+                        # Produtos
                         products = data.get('products', [])
-                        final_products_bitrix = list(products) # Cópia da lista
-                        
-                        # --- ALTERAÇÃO SOLICITADA ---
-                        # Busca o item do Plano no Bitrix (Standard/Plus).
-                        # NÃO usamos valores fixos no código. Se o Bitrix não retornar, não adicionamos nada.
+                        final_products = list(products)
                         if hasattr(BitrixService, 'get_plan_details'):
                             plan_item = BitrixService.get_plan_details(plan_id)
-                            if plan_item:
-                                final_products_bitrix.append(plan_item)
-                            else:
-                                print(f"⚠️ AVISO: Plano '{plan_id}' não encontrado no Bitrix. Registrando apenas medicamentos.")
+                            if plan_item: final_products.append(plan_item)
                         
                         plan_title = f"ProtocoloMed - {plan_id} ({billing_cycle})"
-                        
-                        # Envia para o Bitrix
-                        BitrixService.prepare_deal_payment(user, final_products_bitrix, plan_title, total_price)
-                        
+                        BitrixService.prepare_deal_payment(user, final_products, plan_title, total_price)
                 except Exception as e:
-                    print(f"⚠️ Erro Bitrix (Não fatal): {e}")
+                    print(f"⚠️ Erro Bitrix: {e}")
 
-                # E. Gera Token e Retorna Sucesso
                 refresh = RefreshToken.for_user(user)
                 
-                return Response({
+                response_data = {
                     "status": "success",
-                    "message": "Compra realizada com sucesso!",
                     "access": str(refresh.access_token),
-                    "refresh": str(refresh),
-                    "user": {
-                        "id": user.id,
-                        "email": user.email,
-                        "full_name": user.full_name
+                    "user": {"id": user.id, "email": user.email}
+                }
+
+                # SE FOR PIX: Adiciona dados do QR Code na resposta
+                if payment_method == 'pix':
+                    poi = payment_result.get('point_of_interaction', {}).get('transaction_data', {})
+                    response_data['pix_data'] = {
+                        "qr_code": poi.get('qr_code'),
+                        "qr_code_base64": poi.get('qr_code_base64'),
+                        "ticket_url": poi.get('ticket_url')
                     }
-                }, status=201)
+
+                return Response(response_data, status=201)
 
         except Exception as e:
-            print(f"❌ Erro Crítico pós-pagamento: {e}")
-            return Response({"error": "Erro ao finalizar pedido. Contate o suporte."}, status=500)
+            print(f"❌ Erro Crítico: {e}")
+            return Response({"error": "Erro interno."}, status=500)

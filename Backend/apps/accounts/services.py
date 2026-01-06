@@ -679,6 +679,7 @@ class BitrixService:
             return None
     
 
+
     @staticmethod
     def get_plan_details(plan_slug):
         """

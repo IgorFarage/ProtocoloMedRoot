@@ -12,21 +12,24 @@ class FinancialService:
         # Apenas para referência, não apague o que já existe.
         pass 
 
-    # --- ADICIONE ESTE NOVO MÉTODO ---
+
     def process_direct_payment(self, payment_data):
         """
-        Processa pagamento transparente via Cartão usando o SDK.
+        Processa pagamento transparente via Cartão ou PIX usando o SDK.
         """
         try:
-            # O método .create() do SDK faz o POST para a API de pagamentos
+            # Configuração de Idempotência (Evita duplicidade)
             request_options = mercadopago.config.RequestOptions()
             request_options.custom_headers = {
                 'x-idempotency-key': payment_data.get('external_reference')
             }
             
+            # Chama a API do Mercado Pago
+            # Se for PIX, o payment_data já deve ter vindo sem 'token' e com method 'pix'
             payment_response = self.sdk.payment().create(payment_data, request_options)
             
-            if payment_response["status"] == 201 or payment_response["status"] == 200:
+            # Status 201 (Created) ou 200 (OK)
+            if payment_response["status"] in [200, 201]:
                 return payment_response["response"]
             else:
                 print("❌ Erro MP:", payment_response)
