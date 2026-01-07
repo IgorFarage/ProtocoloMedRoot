@@ -128,3 +128,30 @@ class RecommendationView(APIView):
             return Response({"error": "Erro ao gerar protocolo"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
         return Response(result)
+
+class UpdateAddressView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        address_data = request.data.get('address_data')
+
+        print(f"📍 Atualizando endereço para usuário {user.email}...")
+
+        if not address_data:
+            return Response({"error": "Dados de endereço obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # 1. Atualiza no Bitrix se houver vínculo
+            if user.id_bitrix:
+                BitrixService.update_contact_address(user.id_bitrix, address_data)
+            else:
+                print("⚠️ Usuário sem ID Bitrix, endereço não sincronizado.")
+
+            # 2. (Opcional) Poderíamos salvar localmente se tivéssemos modelo de endereço
+            
+            return Response({"message": "Endereço atualizado com sucesso."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"❌ Erro UpdateAddressView: {e}")
+            return Response({"error": "Erro interno."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

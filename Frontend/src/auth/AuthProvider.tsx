@@ -13,6 +13,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
+  loginWithToken: (token: string, userData: User) => void;
   logout: () => void;
   loading: boolean;
 }
@@ -69,8 +70,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(null);
   };
 
+  // 4. Função de Login Manual (Pós-Checkout)
+  const loginWithToken = (token: string, userData: User) => {
+    localStorage.setItem('access_token', token);
+    setUser(userData);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, loginWithToken }}>
       {!loading && children}
     </AuthContext.Provider>
   );

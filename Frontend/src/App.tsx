@@ -36,6 +36,8 @@ import PlanSelection from "./pages/Plans/PlanSelection";
 const queryClient = new QueryClient();
 
 import PaymentSuccess from "./pages/Plans/PaymentSuccess";
+import PaymentPending from "./pages/Plans/PaymentPending";
+import PaymentFailure from "./pages/Plans/PaymentFailure";
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -64,6 +66,8 @@ const App = () => (
                 <PaymentSuccess />
               </ProtectedRoute>
             } />
+            <Route path="/pagamento/pendente" element={<PaymentPending />} />
+            <Route path="/pagamento/erro" element={<PaymentFailure />} />
 
             {/* Rotas Protegidas - PACIENTE */}
             <Route

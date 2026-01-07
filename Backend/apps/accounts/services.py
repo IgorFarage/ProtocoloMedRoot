@@ -127,7 +127,33 @@ class BitrixService:
             })
         
         try:
-            print(f"📤 Criando Lead no Bitrix para {user.email}...")
+            print(f"Checking existence in Bitrix for {user.email}...")
+            
+            # 1. Busca Contato Existente
+            contact_check = requests.get(f"{base_url}crm.contact.list.json", params={
+                "filter[EMAIL]": user.email,
+                "select[]": ["ID"]
+            }, timeout=5)
+            contacts = contact_check.json().get('result', [])
+            if contacts:
+                contact_id = contacts[0]['ID']
+                print(f"✅ Contato já existe no Bitrix: {contact_id}")
+                return contact_id
+
+            # 2. Busca Lead em Aberto
+            lead_check = requests.get(f"{base_url}crm.lead.list.json", params={
+                "filter[EMAIL]": user.email,
+                "filter[STATUS_ID]": "NEW", # Ou outros status abertos
+                "select[]": ["ID"]
+            }, timeout=5)
+            leads = lead_check.json().get('result', [])
+            if leads:
+                lead_id = leads[0]['ID']
+                print(f"✅ Lead já existe no Bitrix: {lead_id}")
+                return lead_id
+
+            # 3. Cria Novo Lead
+            print(f"📤 Criando NOVO Lead no Bitrix para {user.email}...")
             response = requests.post(endpoint_add, json=payload, timeout=10)
             result = response.json()
             
@@ -154,7 +180,7 @@ class BitrixService:
             return None
 
     @staticmethod
-    def prepare_deal_payment(user, products_list, plan_title, total_amount, answers=None):
+    def prepare_deal_payment(user, products_list, plan_title, total_amount, answers=None, payment_data=None):
         """
         Cria/Atualiza Negócio.
         Aqui salvamos o JSON das respostas no campo UF_CRM_1767644484.
@@ -173,20 +199,42 @@ class BitrixService:
 
         try:
             deal_id = None
+            contact_id_to_use = user.id_bitrix
+
+            # 0. Self-Healing: Verifica se o ID é de um Lead convertido em Contato
+            try:
+                # Tenta buscar como Lead
+                lead_check = requests.get(f"{base_url}crm.lead.get.json?id={user.id_bitrix}", timeout=5)
+                lead_data = lead_check.json().get('result')
+                
+                # Se for um Lead e tiver CONTACT_ID, significa que converteu!
+                if lead_data and lead_data.get('CONTACT_ID'):
+                    real_contact_id = lead_data.get('CONTACT_ID')
+                    print(f"🔄 Self-Healing: Lead {user.id_bitrix} convertido para Contato {real_contact_id}. Atualizando...")
+                    user.id_bitrix = str(real_contact_id)
+                    user.save()
+                    contact_id_to_use = str(real_contact_id)
+            except Exception as e_healing:
+                print(f"⚠️ Erro Self-Healing Bitrix: {e_healing}")
+
+            # 1. Tenta encontrar Negócio ABERTO (não ganho/perdido)
+            # Filtra por user ID (seja contact ou lead) + Stages semanticos 'P' (Processing)
             
-            # 2. Tenta encontrar Negócio aberto (Por Contato)
+            # Busca por CONTACT_ID
             deal_resp = requests.get(f"{base_url}crm.deal.list.json", params={
-                "filter[CONTACT_ID]": user.id_bitrix,
+                "filter[CONTACT_ID]": contact_id_to_use,
+                "filter[CLOSED]": "N", # Apenas negócios em aberto
                 "order[ID]": "DESC",
                 "select[]": ["ID"]
             })
             deals = deal_resp.json().get('result', [])
             if deals: deal_id = deals[0]['ID']
             
-            # Se não achou, tenta por Lead ID (caso user.id_bitrix seja Lead)
+            # Se não achou, e o ID original ainda pode ser Lead (ou se o healing falhou), tenta por Lead ID
             if not deal_id:
                 deal_resp_lead = requests.get(f"{base_url}crm.deal.list.json", params={
-                    "filter[LEAD_ID]": user.id_bitrix,
+                    "filter[LEAD_ID]": user.id_bitrix, # Usa o ID original/atual
+                    "filter[CLOSED]": "N",
                     "order[ID]": "DESC",
                     "select[]": ["ID"]
                 })
@@ -204,9 +252,33 @@ class BitrixService:
             if answers_json_string:
                 fields_to_save["UF_CRM_1767644484"] = answers_json_string
 
+            # INSERE DADOS DE PAGAMENTO (Se fornecidos)
+            if payment_data:
+                # UF_CRM_1767806427 -> ID do Mercado Pago
+                if payment_data.get('id'):
+                    fields_to_save["UF_CRM_1767806427"] = str(payment_data.get('id'))
+                
+                # UF_CRM_1767806112 -> Data Criacao (ISO)
+                if payment_data.get('date_created'):
+                    fields_to_save["UF_CRM_1767806112"] = str(payment_data.get('date_created'))
+                
+                # UF_CRM_1767806168 -> Status (Traduzido)
+                if payment_data.get('status'):
+                    status_map = {
+                        "approved": "Aprovado",
+                        "in_process": "Em análise",
+                        "pending": "Pendente",
+                        "rejected": "Recusado",
+                        "cancelled": "Cancelado",
+                        "refunded": "Reembolsado",
+                        "charged_back": "Estornado"
+                    }
+                    raw_status = str(payment_data.get('status'))
+                    fields_to_save["UF_CRM_1767806168"] = status_map.get(raw_status, raw_status)
+
             if not deal_id:
                 # Criar Novo Negócio
-                fields_to_save["CONTACT_ID"] = user.id_bitrix # Assume vínculo
+                fields_to_save["CONTACT_ID"] = contact_id_to_use # Vincula ao ID correto (Lead ou Contact)
                 add_resp = requests.post(f"{base_url}crm.deal.add.json", json={"fields": fields_to_save})
                 result = add_resp.json()
                 if 'result' in result:
@@ -215,7 +287,7 @@ class BitrixService:
             else:
                 # Atualizar Negócio Existente
                 requests.post(f"{base_url}crm.deal.update.json", json={"id": deal_id, "fields": fields_to_save})
-                print(f"✅ Negócio {deal_id} atualizado.")
+                print(f"✅ Negócio {deal_id} atualizado (Evitou Duplicata).")
 
             # 4. Insere Produtos
             if deal_id and products_list:
@@ -234,6 +306,70 @@ class BitrixService:
         except Exception as e:
             print(f"❌ Erro prepare_deal_payment: {e}")
             return None
+
+    @staticmethod
+    def update_contact_data(user_bitrix_id, cpf=None, phone=None):
+        """
+        Atualiza CPF e Telefone no contato do Bitrix.
+        """
+        base_url = os.getenv('BITRIX_WEBHOOK_URL')
+        if not base_url or not user_bitrix_id: return False
+        if not base_url.endswith('/'): base_url += '/'
+
+        fields_to_update = {}
+
+        # CPF -> UF_CRM_CONTACT_1767453262601
+        if cpf:
+            fields_to_update["UF_CRM_CONTACT_1767453262601"] = cpf
+        
+        # Telefone
+        if phone:
+            # Formata para padrão +55 se necessário, mas o Bitrix aceita string
+            fields_to_update["PHONE"] = [{"VALUE": phone, "VALUE_TYPE": "WORK"}]
+
+        if not fields_to_update: return False
+
+        try:
+            requests.post(f"{base_url}crm.contact.update.json", json={
+                "id": user_bitrix_id,
+                "fields": fields_to_update
+            })
+            print(f"✅ Contato {user_bitrix_id} atualizado com CPF/Telefone.")
+            return True
+        except Exception as e:
+            print(f"❌ Erro update_contact_data: {e}")
+            return False
+
+    @staticmethod
+    def update_contact_address(user_bitrix_id, address_data):
+        """
+        Atualiza apenas os campos de endereço no Contato Bitrix.
+        """
+        base_url = os.getenv('BITRIX_WEBHOOK_URL')
+        if not base_url or not user_bitrix_id: return False
+        if not base_url.endswith('/'): base_url += '/'
+
+        if not address_data: return False
+
+        fields_to_update = {
+            "ADDRESS": f"{address_data.get('street', '')}, {address_data.get('number', '')}",
+            "ADDRESS_2": f"{address_data.get('neighborhood', '')} - {address_data.get('complement', '')}",
+            "ADDRESS_CITY": address_data.get('city', ''),
+            "ADDRESS_POSTAL_CODE": address_data.get('cep', ''),
+            "ADDRESS_PROVINCE": address_data.get('state', ''),
+            "ADDRESS_COUNTRY": "Brasil"
+        }
+
+        try:
+            requests.post(f"{base_url}crm.contact.update.json", json={
+                "id": user_bitrix_id,
+                "fields": fields_to_update
+            })
+            print(f"✅ Endereço do Contato {user_bitrix_id} atualizado.")
+            return True
+        except Exception as e:
+            print(f"❌ Erro update_contact_address: {e}")
+            return False
 
     @staticmethod
     def process_subscription(user, address_data, cart_items, total_price):

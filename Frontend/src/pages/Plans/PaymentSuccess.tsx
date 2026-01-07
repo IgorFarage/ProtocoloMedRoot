@@ -1,11 +1,14 @@
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { CheckCircle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
 const PaymentSuccess = () => {
     const navigate = useNavigate();
+    const location = useLocation();
+
+    const { orderId, status } = (location.state as any) || {};
 
     useEffect(() => {
         // Limpa estados de compra anteriores para evitar loops
@@ -20,15 +23,19 @@ const PaymentSuccess = () => {
                         <CheckCircle className="w-10 h-10 text-green-600" />
                     </div>
                     <CardTitle className="text-2xl font-bold text-gray-900">
-                        Pagamento em Processamento!
+                        Pedido Realizado!
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <p className="text-gray-600">
-                        Recebemos sua solicitação de assinatura. Em alguns instantes, o Mercado Pago confirmará a transação e seu acesso será liberado automaticamente.
+                        Recebemos sua solicitação de assinatura.
+                        {orderId && <span className="block font-mono text-sm mt-2 text-gray-500">Pedido #{orderId}</span>}
                     </p>
                     <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800 text-left border border-blue-100">
-                        <p className="font-semibold mb-1">O que acontece agora?</p>
+                        <p className="font-semibold mb-1">Status da Transação:</p>
+                        <p className="mb-2">{status === 'approved' ? 'Pagamento Aprovado' : 'Em processamento'}</p>
+
+                        <p className="font-semibold mb-1">Próximos Passos:</p>
                         <ul className="list-disc list-inside space-y-1">
                             <li>Seu médico será notificado.</li>
                             <li>A farmácia iniciará a manipulação.</li>

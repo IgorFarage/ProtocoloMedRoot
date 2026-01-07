@@ -8,6 +8,7 @@ class FinancialService:
         if not token:
             print("⚠️ AVISO: MERCADO_PAGO_ACCESS_TOKEN não configurado no .env")
         self.sdk = mercadopago.SDK(token)
+        print(f"🔑 SDK Iniciado com Token: {token[:10]}... (Verifique se é TEST-...)")
 
     def process_direct_payment(self, payment_data):
         """
