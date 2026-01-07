@@ -293,22 +293,30 @@ const Questionnaire = () => {
                                         Já tenho conta
                                     </Button>
 
-                                    {/* --- CORREÇÃO PRINCIPAL: BOTÃO AGORA ENVIA OS DADOS --- */}
+                                    {/* --- BOTÃO CORRIGIDO --- */}
                                     <Button
                                         size="lg"
                                         className="w-full sm:w-auto bg-primary hover:bg-primary/90"
                                         onClick={() => {
+                                            // 1. Salva no localStorage para garantir persistência (Blindagem)
+                                            localStorage.setItem('checkout_answers', JSON.stringify(answers));
+                                            localStorage.setItem('checkout_products', JSON.stringify(protocolData.products));
+                                            localStorage.setItem('checkout_total_price', protocolData.total_price);
+
+                                            // 2. Navega enviando 'answers' explicitamente
+                                            // Verifique no seu App.tsx se a rota é "/planos" ou "/plans" e ajuste abaixo se necessário
                                             navigate("/planos", {
                                                 state: {
                                                     products: protocolData.products,
-                                                    total_price: protocolData.total_price
+                                                    total_price: protocolData.total_price,
+                                                    answers: answers // <--- O QUE FALTAVA!
                                                 }
                                             });
                                         }}
                                     >
                                         Ver Planos e Cadastrar
                                     </Button>
-                                    {/* ----------------------------------------------------- */}
+                                    {/* ----------------------- */}
                                 </div>
                             </div>
                         </CardContent>

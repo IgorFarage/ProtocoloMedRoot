@@ -1,42 +1,53 @@
 import mercadopago
 import os
-from django.conf import settings
+import json
 
 class FinancialService:
     def __init__(self):
-        # Garante que o SDK seja iniciado com o ACCESS_TOKEN do .env
-        self.sdk = mercadopago.SDK(os.getenv("MERCADO_PAGO_ACCESS_TOKEN"))
-
-    def create_subscription(self, title, price, user_email, external_reference, frequency=1):
-        # ... (mantenha seu código de assinatura aqui como já estava) ...
-        # Apenas para referência, não apague o que já existe.
-        pass 
-
+        token = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
+        if not token:
+            print("⚠️ AVISO: MERCADO_PAGO_ACCESS_TOKEN não configurado no .env")
+        self.sdk = mercadopago.SDK(token)
 
     def process_direct_payment(self, payment_data):
         """
-        Processa pagamento transparente via Cartão ou PIX usando o SDK.
+        Envia o pagamento para o Mercado Pago.
         """
         try:
-            # Configuração de Idempotência (Evita duplicidade)
-            request_options = mercadopago.config.RequestOptions()
-            request_options.custom_headers = {
-                'x-idempotency-key': payment_data.get('external_reference')
-            }
+            # REMOVIDO: Configuração manual de Idempotência que causava erro no PIX
+            # O SDK já gerencia isso ou não é estritamente necessário para este fluxo agora.
             
-            # Chama a API do Mercado Pago
-            # Se for PIX, o payment_data já deve ter vindo sem 'token' e com method 'pix'
-            payment_response = self.sdk.payment().create(payment_data, request_options)
+            # Chamada Simples ao SDK
+            payment_response = self.sdk.payment().create(payment_data)
             
-            # Status 201 (Created) ou 200 (OK)
-            if payment_response["status"] in [200, 201]:
-                return payment_response["response"]
-            else:
-                print("❌ Erro MP:", payment_response)
-                return {
-                    "status": "rejected",
-                    "status_detail": payment_response.get("response", {}).get("message", "Erro desconhecido")
-                }
+            # Verifica se houve resposta válida
+            if "response" in payment_response:
+                response_content = payment_response["response"]
+                status = response_content.get("status")
+                
+                # Se deu erro (400/401/etc), o status não será 'approved' nem 'pending'
+                # Mas o MP retorna 200/201 com status 'rejected' ou retorna 400 na requisição
+                if payment_response.get("status") == 400:
+                    print(f"❌ Erro 400 do Mercado Pago. Detalhes: {json.dumps(response_content, indent=2)}")
+                
+                return response_content
+            
+            print("❌ Erro Crítico MP (Sem response):", payment_response)
+            return None
+
         except Exception as e:
-            print(f"❌ Exceção no SDK: {e}")
+            print(f"❌ Exceção no SDK Mercado Pago: {e}")
+            return None
+
+    def get_payment_info(self, payment_id):
+        """
+        Busca detalhes de uma transação pelo ID (usado no Webhook).
+        """
+        try:
+            payment_response = self.sdk.payment().get(payment_id)
+            if "response" in payment_response:
+                return payment_response["response"]
+            return None
+        except Exception as e:
+            print(f"❌ Erro ao buscar pagamento {payment_id}: {e}")
             return None

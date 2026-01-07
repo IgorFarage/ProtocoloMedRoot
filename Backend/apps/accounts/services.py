@@ -6,82 +6,102 @@ import time
 class BitrixService:
     
     # =========================================================================
-    # 1. MAPEAMENTO E CRIAÇÃO DE LEADS
+    # 1. MAPEAMENTOS (Configuração)
     # =========================================================================
 
     @staticmethod
     def _map_answers_to_bitrix(answers):
         """
-        Traduz o JSON de respostas do Front para os campos UF_CRM do Bitrix.
+        Traduz o JSON de respostas do Front para o formato JSON exigido (Q1_Genero...).
         """
-        mapping_config = {
-            "F1_Q1_gender":        {"field": "UF_CRM_1766075085", "type": "str"},
-            "F1_Q2_stage":         {"field": "UF_CRM_1766077694", "type": "str"},
-            "F1_Q3_speed":         {"field": "UF_CRM_1766077843", "type": "str"}, 
-            "F1_Q4_scalp":         {"field": "UF_CRM_1766077899", "type": "str"},
-            "F1_Q5_family":        {"field": "UF_CRM_1766078081", "type": "str"}, 
-            "F1_Q6_goal":          {"field": "UF_CRM_1766078173", "type": "str"},
-            "F2_Q7_irritation":    {"field": "UF_CRM_1766078258", "type": "bool"},
-            "F2_Q8_symptom":       {"field": "UF_CRM_1766078470", "type": "multi"},
-            "F2_Q9_consult":       {"field": "UF_CRM_1766078579", "type": "bool"},
-            "F2_Q10_steroids":     {"field": "UF_CRM_1766078717", "type": "bool"},
-            "F2_Q11_prev_treat":   {"field": "UF_CRM_1766078844", "type": "bool"},
-            "F2_Q12_substance":    {"field": "UF_CRM_1766078952", "type": "multi"},
-            "F2_Q13_results":      {"field": "UF_CRM_1766079016", "type": "str"},
-            "F2_Q14_health_cond":  {"field": "UF_CRM_1766079104", "type": "multi"},
-            "F2_Q15_allergy":      {"field": "UF_CRM_1766079153", "type": "multi"},
-            "F2_Q16_intervention": {"field": "UF_CRM_1766079234", "type": "str"},
-            "F2_Q17_minox_format": {"field": "UF_CRM_1766079294", "type": "str"},
-            "F2_Q18_pets":         {"field": "UF_CRM_1766079353", "type": "bool"},
-            "F2_Q19_priority":     {"field": "UF_CRM_1766079420", "type": "str"},
+        KEY_MAP = {
+            "F1_Q1_gender": "Q1_Genero",
+            "F1_Q2_stage": "Q2_Estagio",
+            "F1_Q3_speed": "Q3_Velocodade_Queda",
+            "F1_Q4_scalp": "Q4_Couro_Cabeludo",
+            "F1_Q5_family": "Q5_Historico_Familiar",
+            "F1_Q6_goal": "Q6_Objetivo",
+            "F2_Q7_irritation": "Q7_Irritação_Pele",
+            "F2_Q8_symptom": "Q8_Sintoma",
+            "F2_Q9_consult": "Q9_Consulta_Anterior",
+            "F2_Q10_steroids": "Q10_Esteroides",
+            "F2_Q11_prev_treat": "Q11_Tratamento_Prévio",
+            "F2_Q12_substance": "Q12_Subistancia_Previa",
+            "F2_Q13_results": "Q13_Resultados_Previa",
+            "F2_Q14_health_cond": "Q14_Condição_Saúde",
+            "F2_Q15_allergy": "Q15_Alergia",
+            "F2_Q16_intervention": "Q16_Nivel_Intervenção",
+            "F2_Q17_minox_format": "Q17_Minox_Formato",
+            "F2_Q18_pets": "Q18_Possui_Pet",
+            "F2_Q19_priority": "Q19_Rotina_Diaria"
         }
 
-        bitrix_payload = {}
+        json_data = {}
 
-        for question_id, user_answer in answers.items():
-            if question_id in mapping_config:
-                config = mapping_config[question_id]
-                field_code = config['field']
-                field_type = config['type']
-                
-                # Regra Y/N (Sim/Não)
-                if field_type == 'bool':
-                    val_lower = str(user_answer).lower()
-                    if val_lower == 'sim':
-                        bitrix_payload[field_code] = 'Y'
-                    elif val_lower == 'nao' or val_lower == 'não':
-                        bitrix_payload[field_code] = 'N'
-                    else:
-                        bitrix_payload[field_code] = user_answer 
-
-                # Regra Multi (Lista)
-                elif field_type == 'multi':
-                    if isinstance(user_answer, str):
-                        items = [x.strip() for x in user_answer.split(',') if x.strip()]
-                        bitrix_payload[field_code] = items
-                    else:
-                        bitrix_payload[field_code] = user_answer
-
-                # Regra String (Padrão)
+        for user_key, user_value in answers.items():
+            new_key = KEY_MAP.get(user_key)
+            if new_key:
+                # Garante que seja string ou Sim/Não
+                if isinstance(user_value, list):
+                    json_data[new_key] = ", ".join(user_value)
+                elif isinstance(user_value, bool) or str(user_value).lower() in ['true', 'false']:
+                    json_data[new_key] = "Sim" if str(user_value).lower() == 'true' else "Não"
                 else:
-                    bitrix_payload[field_code] = user_answer
+                    json_data[new_key] = str(user_value)
         
-        return bitrix_payload
+        return json_data
+        
+    @staticmethod
+    def _process_answers(answers):
+        """
+        Processa as respostas e retorna DOIS dicionários:
+        1. fields_payload: Para salvar nos campos nativos UF_CRM_...
+        2. json_payload: O dicionário formatado para virar JSON.
+        """
+        field_map = BitrixService._get_bitrix_field_map()
+        json_map = BitrixService._get_json_key_map()
+        
+        fields_payload = {}
+        json_payload = {}
+
+        for user_key, user_value in answers.items():
+            # Tratamento de valor (Lista -> String, Bool -> Sim/Não)
+            final_value = str(user_value)
+            if isinstance(user_value, list):
+                final_value = ", ".join(user_value)
+            elif isinstance(user_value, bool) or str(user_value).lower() in ['true', 'false']:
+                final_value = "Sim" if str(user_value).lower() == 'true' else "Não"
+
+            # 1. Popula Campos Individuais (UF_CRM_...)
+            bitrix_field = field_map.get(user_key)
+            if bitrix_field:
+                fields_payload[bitrix_field] = final_value
+            
+            # 2. Popula Chaves do JSON (Q1_Genero...)
+            json_key = json_map.get(user_key)
+            if json_key:
+                json_payload[json_key] = final_value
+                
+        return fields_payload, json_payload
+
+    # =========================================================================
+    # 2. CRIAÇÃO DE LEADS E NEGÓCIOS
+    # =========================================================================
 
     @staticmethod
-    def create_lead(user, answers):
+    def create_lead(user, answers=None, address_data=None):
         """
-        1. Cria Lead -> 2. Aguarda Conversão -> 3. Atualiza CONTATO -> 4. Atualiza NEGÓCIO
+        Cria o Lead.
+        NOTA: 'answers' é recebido mas NÃO usado aqui, pois os campos foram deletados do Lead.
+        As respostas serão salvas no NEGÓCIO posteriormente.
         """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
-        if not base_url:
-            print("ERRO: BITRIX_WEBHOOK_URL não encontrada no .env")
-            return None
+        if not base_url: return None
         if not base_url.endswith('/'): base_url += '/'
         
-        # --- 1. CRIAÇÃO DO LEAD ---
         endpoint_add = f"{base_url}crm.lead.add.json"
         
+        # Payload Básico (Sem campos UF_CRM_ de perguntas)
         payload = {
             "fields": {
                 "TITLE": f"Lead - {user.full_name}",
@@ -90,164 +110,141 @@ class BitrixService:
                 "STATUS_ID": "NEW",
                 "OPENED": "Y",
                 "SOURCE_ID": "WEB",
-                "COMMENTS": f"Respostas JSON: {json.dumps(answers, ensure_ascii=False)}"
             },
             "params": {"REGISTER_SONET_EVENT": "Y"}
         }
+
+        # Injeta Endereço
+        if address_data:
+            payload["fields"].update({
+                "ADDRESS": f"{address_data.get('street', '')}, {address_data.get('number', '')}",
+                "ADDRESS_2": f"{address_data.get('neighborhood', '')} {address_data.get('complement', '')}",
+                "ADDRESS_CITY": address_data.get('city', ''),
+                "ADDRESS_POSTAL_CODE": address_data.get('cep', ''),
+                "ADDRESS_PROVINCE": address_data.get('state', ''),
+                "ADDRESS_COUNTRY": "Brasil",
+                "COMMENTS": f"Endereço de Entrega: {address_data.get('street')}, {address_data.get('number')} - {address_data.get('neighborhood')} - {address_data.get('city')}/{address_data.get('state')}"
+            })
         
         try:
+            print(f"📤 Criando Lead no Bitrix para {user.email}...")
             response = requests.post(endpoint_add, json=payload, timeout=10)
             result = response.json()
             
             if response.status_code == 200 and 'result' in result:
                 lead_id = result['result']
-                print(f"✅ [1/4] Lead criado com ID: {lead_id}")
+                print(f"✅ Lead criado com ID: {lead_id}")
                 
-                # --- 2. VERIFICAÇÃO DE CONVERSÃO ---
-                final_id_para_banco = lead_id 
-                
+                # Verifica se houve conversão automática para Contato
+                time.sleep(1.0) 
                 try:
-                    time.sleep(2.0) 
-                    
-                    get_resp = requests.get(f"{base_url}crm.lead.get.json?id={lead_id}")
-                    lead_data = get_resp.json().get('result', {})
-                    
-                    contact_id = lead_data.get('CONTACT_ID')
-                    deal_id = lead_data.get('DEAL_ID')
-                    
-                    # --- 3. ATUALIZAÇÃO DO CONTATO (ID Local) ---
+                    check = requests.get(f"{base_url}crm.lead.get.json?id={lead_id}")
+                    contact_id = check.json().get('result', {}).get('CONTACT_ID')
                     if contact_id:
-                        print(f"🔄 [2/4] Lead virou CONTATO {contact_id}")
-                        final_id_para_banco = contact_id
-                        
-                        requests.post(f"{base_url}crm.contact.update.json", json={
-                            "id": contact_id,
-                            "fields": { "UF_CRM_ID_LOCAL": str(user.id) }
-                        })
-                        print(f"🤝 [3/4] ID Local vinculado ao Contato {contact_id}")
-                        
-                        # --- 4. ATUALIZAÇÃO DO NEGÓCIO (Respostas Mapeadas) ---
-                        if not deal_id:
-                            print("🔎 Buscando Negócio via Contato...")
-                            deal_resp = requests.get(f"{base_url}crm.deal.list.json", params={
-                                "filter[CONTACT_ID]": contact_id,
-                                "order[ID]": "DESC",
-                                "select[]": ["ID"]
-                            })
-                            deals = deal_resp.json().get('result', [])
-                            if deals: deal_id = deals[0]['ID']
-                        
-                        if deal_id:
-                            print(f"💰 [4/4] Atualizando Negócio {deal_id} com Respostas Detalhadas...")
-                            
-                            # Prepara os campos mapeados
-                            campos_respostas = BitrixService._map_answers_to_bitrix(answers)
-
-                            requests.post(f"{base_url}crm.deal.update.json", json={
-                                "id": deal_id,
-                                "fields": campos_respostas
-                            })
-                            print(f"✅ Respostas mapeadas enviadas com sucesso para o Negócio {deal_id}")
-                        else:
-                            print("⚠️ Aviso: Negócio não encontrado para salvar as respostas.")
-
-                    else:
-                        print("ℹ️ Lead não gerou contato. Mantendo como Lead.")
-
-                except Exception as e:
-                    print(f"⚠️ Erro no processo de conversão: {e}")
+                        print(f"🔄 Lead convertido para Contato ID: {contact_id}")
+                        return contact_id
+                except: pass
                 
-                return final_id_para_banco
+                return lead_id
             
+            print(f"⚠️ Erro ao criar Lead: {result}")
             return None
         except Exception as e:
-            print(f"❌ Erro crítico: {str(e)}")
+            print(f"❌ Exceção create_lead: {e}")
             return None
 
-    # =========================================================================
-    # 2. ASSINATURA E PROTOCOLO DO CLIENTE
-    # =========================================================================
-
     @staticmethod
-    def prepare_deal_payment(user, products_list, plan_title, total_amount):
+    def prepare_deal_payment(user, products_list, plan_title, total_amount, answers=None):
         """
-        Atualiza o Negócio no Bitrix com os produtos e valores ANTES do pagamento.
-        Retorna o ID do Negócio para ser usado como referência externa.
+        Cria/Atualiza Negócio.
+        Aqui salvamos o JSON das respostas no campo UF_CRM_1767644484.
         """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url or not user.id_bitrix: return None
         if not base_url.endswith('/'): base_url += '/'
 
+        # 1. Gera o JSON das respostas
+        answers_json_string = None
+        if answers:
+            mapped_data = BitrixService._map_answers_to_bitrix(answers)
+            if mapped_data:
+                answers_json_string = json.dumps(mapped_data, ensure_ascii=False)
+                print(f"📋 JSON de respostas gerado (Tamanho: {len(answers_json_string)} chars)")
+
         try:
-            # 1. Busca Negócio Aberto
+            deal_id = None
+            
+            # 2. Tenta encontrar Negócio aberto (Por Contato)
             deal_resp = requests.get(f"{base_url}crm.deal.list.json", params={
                 "filter[CONTACT_ID]": user.id_bitrix,
                 "order[ID]": "DESC",
                 "select[]": ["ID"]
             })
             deals = deal_resp.json().get('result', [])
+            if deals: deal_id = deals[0]['ID']
             
-            deal_id = None
-            if deals:
-                deal_id = deals[0]['ID']
-                # Atualiza título e valor
-                requests.post(f"{base_url}crm.deal.update.json", json={
-                    "id": deal_id,
-                    "fields": {
-                        "TITLE": plan_title,
-                        "OPPORTUNITY": total_amount,
-                        "CURRENCY_ID": "BRL"
-                    }
+            # Se não achou, tenta por Lead ID (caso user.id_bitrix seja Lead)
+            if not deal_id:
+                deal_resp_lead = requests.get(f"{base_url}crm.deal.list.json", params={
+                    "filter[LEAD_ID]": user.id_bitrix,
+                    "order[ID]": "DESC",
+                    "select[]": ["ID"]
                 })
-            else:
-                # Cria novo se não existir
-                add_resp = requests.post(f"{base_url}crm.deal.add.json", json={
-                    "fields": {
-                        "TITLE": plan_title,
-                        "CONTACT_ID": user.id_bitrix,
-                        "OPPORTUNITY": total_amount,
-                        "CURRENCY_ID": "BRL"
-                    }
-                })
-                deal_id = add_resp.json().get('result')
+                deals_lead = deal_resp_lead.json().get('result', [])
+                if deals_lead: deal_id = deals_lead[0]['ID']
 
-            # 2. Insere os Produtos (Product Rows)
+            # 3. Prepara campos para salvar (Valor + JSON)
+            fields_to_save = {
+                "TITLE": plan_title,
+                "OPPORTUNITY": total_amount,
+                "CURRENCY_ID": "BRL"
+            }
+            
+            # INSERE O JSON SE EXISTIR
+            if answers_json_string:
+                fields_to_save["UF_CRM_1767644484"] = answers_json_string
+
+            if not deal_id:
+                # Criar Novo Negócio
+                fields_to_save["CONTACT_ID"] = user.id_bitrix # Assume vínculo
+                add_resp = requests.post(f"{base_url}crm.deal.add.json", json={"fields": fields_to_save})
+                result = add_resp.json()
+                if 'result' in result:
+                    deal_id = result['result']
+                    print(f"✅ Novo Negócio criado: {deal_id}")
+            else:
+                # Atualizar Negócio Existente
+                requests.post(f"{base_url}crm.deal.update.json", json={"id": deal_id, "fields": fields_to_save})
+                print(f"✅ Negócio {deal_id} atualizado.")
+
+            # 4. Insere Produtos
             if deal_id and products_list:
                 rows = []
                 for p in products_list:
                     rows.append({
-                        "PRODUCT_ID": p.get('id', 0), # ID do produto no catálogo do Bitrix (se tiver)
+                        "PRODUCT_ID": p.get('id', 0),
                         "PRODUCT_NAME": p.get('name'),
                         "PRICE": p.get('price'),
                         "QUANTITY": 1
                     })
-                
-                requests.post(f"{base_url}crm.deal.productrows.set.json", json={
-                    "id": deal_id,
-                    "rows": rows
-                })
+                requests.post(f"{base_url}crm.deal.productrows.set.json", json={"id": deal_id, "rows": rows})
             
             return deal_id
 
         except Exception as e:
-            print(f"Erro ao preparar negócio no Bitrix: {e}")
+            print(f"❌ Erro prepare_deal_payment: {e}")
             return None
 
     @staticmethod
     def process_subscription(user, address_data, cart_items, total_price):
-        """
-        Atualiza Endereço no Contato e Valor no Negócio (Chamado após sucesso se necessário).
-        """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url: return False
         if not base_url.endswith('/'): base_url += '/'
-
-        if not user.id_bitrix:
-            return False
+        if not user.id_bitrix: return False
 
         lista_produtos = "\n".join([f"- {item['name']} (R$ {item['price']})" for item in cart_items])
         comentarios = f"🛒 PEDIDO ASSINATURA\nItens:\n{lista_produtos}\nTotal: R$ {total_price}"
-
+        
         dados_endereco = {
             "ADDRESS": f"{address_data.get('street', '')}, {address_data.get('number', '')}",
             "ADDRESS_2": f"{address_data.get('neighborhood', '')} - {address_data.get('complement', '')}",
@@ -256,42 +253,25 @@ class BitrixService:
             "ADDRESS_PROVINCE": address_data.get('state', ''),
             "ADDRESS_COUNTRY": "Brasil"
         }
-        
-        dados_financeiros = {
-            "OPPORTUNITY": total_price,
-            "CURRENCY_ID": "BRL",
-            "COMMENTS": comentarios
-        }
 
         try:
-            print(f"🔍 Processando dados pós-assinatura para ID: {user.id_bitrix}")
-            
-            # 1. Atualiza Endereço
             requests.post(f"{base_url}crm.contact.update.json", json={
                 "id": user.id_bitrix,
                 "fields": dados_endereco
             })
-            
             return True
-
         except Exception as e:
             print(f"❌ Erro no process_subscription: {e}")
             return False
 
     @staticmethod
     def get_client_protocol(user):
-        """
-        Busca o último negócio e retorna os itens da ABA DE PRODUTOS.
-        """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url: return None
         if not base_url.endswith('/'): base_url += '/'
-
-        if not user.id_bitrix:
-            return {"error": "Usuário não vinculado ao Bitrix"}
+        if not user.id_bitrix: return {"error": "Usuário não vinculado ao Bitrix"}
 
         try:
-            # 1. Busca Negócio (Deal)
             response = requests.get(f"{base_url}crm.deal.list.json", params={
                 "filter[CONTACT_ID]": user.id_bitrix,
                 "order[ID]": "DESC",
@@ -299,17 +279,13 @@ class BitrixService:
             })
             deals = response.json().get('result', [])
             
-            if not deals:
-                return {"status": "no_deal", "message": "Nenhum protocolo encontrado."}
+            if not deals: return {"status": "no_deal", "message": "Nenhum protocolo encontrado."}
 
             latest_deal = deals[0]
             deal_id = latest_deal.get("ID")
-
-            # 2. Busca os Produtos do Negócio (Product Rows)
             rows_response = requests.get(f"{base_url}crm.deal.productrows.get.json", params={"id": deal_id})
             product_rows = rows_response.json().get('result', [])
 
-            # 3. Formata para o Front
             products_formatted = []
             for row in product_rows:
                 products_formatted.append({
@@ -323,24 +299,16 @@ class BitrixService:
                 "stage": latest_deal.get("STAGE_ID"),
                 "products": products_formatted,
             }
-
         except Exception as e:
             print(f"❌ Erro ao buscar rows no Bitrix: {e}")
             return {"error": "Erro de conexão com o CRM"}
 
-    
-    
     @staticmethod
     def update_deal_products(user, product_data_list):
-        """
-        Recebe lista de objetos com preço e adiciona no Negócio do Bitrix.
-        """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url: return False
         if not base_url.endswith('/'): base_url += '/'
-
-        if not user.id_bitrix:
-            return False
+        if not user.id_bitrix: return False
 
         try:
             response = requests.get(f"{base_url}crm.deal.list.json", params={
@@ -352,7 +320,6 @@ class BitrixService:
             
             if deals:
                 deal_id = deals[0]['ID']
-                
                 rows_payload = []
                 for item in product_data_list:
                     rows_payload.append({
@@ -362,14 +329,12 @@ class BitrixService:
                         "MEASURE_CODE": 796,
                         "MEASURE_NAME": "un"
                     })
-                
                 requests.post(f"{base_url}crm.deal.productrows.set.json", json={
                     "id": deal_id,
                     "rows": rows_payload
                 })
                 return True
             return False
-
         except Exception as e:
             print(f"❌ Erro ao setar productrows no Bitrix: {e}")
             return False
@@ -378,108 +343,66 @@ class BitrixService:
     # 3. LOJA / CATÁLOGO / IMAGENS
     # =========================================================================
 
-    # ... (imports mantidos)
-
     @staticmethod
     def _fetch_best_image(base_url, product_id):
-        """
-        Retorna a URL pública da imagem (CDN) do Bitrix.
-        Prioridade: Galeria -> Capa (Detail) -> Preview
-        """
-        # 1. TENTATIVA: Galeria (catalog.productImage.list)
         try:
-            # print(f"🔍 Buscando galeria para produto {product_id}...") # Debug opcional
-            img_res = requests.get(
-                f"{base_url}catalog.productImage.list.json", 
-                params={"productId": product_id}, 
-                timeout=5 # Aumentei um pouco o timeout
-            )
+            img_res = requests.get(f"{base_url}catalog.productImage.list.json", params={"productId": product_id}, timeout=3)
             img_data = img_res.json()
-            
             if "result" in img_data:
                 res_obj = img_data["result"]
                 if "productImages" in res_obj and len(res_obj["productImages"]) > 0:
                     first = res_obj["productImages"][0]
-                    url = first.get("detailUrl") or first.get("downloadUrl")
-                    if url:
-                        # print(f"✅ Imagem encontrada na galeria: {url}")
-                        return url
-        except Exception as e:
-            print(f"⚠️ Erro ao buscar galeria do produto {product_id}: {e}")
+                    return first.get("detailUrl") or first.get("downloadUrl")
+        except: pass
 
-        # 2. TENTATIVA: Imagem de Capa/Preview (crm.product.get)
         try:
-            prod_res = requests.get(
-                f"{base_url}crm.product.get.json", 
-                params={"id": product_id}, 
-                timeout=5
-            )
+            prod_res = requests.get(f"{base_url}crm.product.get.json", params={"id": product_id}, timeout=3)
             prod_data = prod_res.json()
-            
             if "result" in prod_data:
                 prod = prod_data["result"]
-                
-                # Prioridade: DETAIL_PICTURE
                 detail = prod.get("DETAIL_PICTURE")
                 if isinstance(detail, dict):
-                    url = detail.get("showUrl") or detail.get("downloadUrl")
-                    if url: return url
-                
-                # Fallback: PREVIEW_PICTURE
+                    return detail.get("showUrl") or detail.get("downloadUrl")
                 preview = prod.get("PREVIEW_PICTURE")
                 if isinstance(preview, dict):
-                    url = preview.get("showUrl") or preview.get("downloadUrl")
-                    if url: return url
-        except Exception as e:
-            print(f"⚠️ Erro ao buscar capa do produto {product_id}: {e}")
-        
+                    return preview.get("showUrl") or preview.get("downloadUrl")
+        except: pass
         return None
 
     @staticmethod
     def get_product_catalog():
-        """
-        Lista produtos e anexa a URL da imagem (CDN) diretamente.
-        """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
-        if not base_url: 
-            print("❌ ERRO: BITRIX_WEBHOOK_URL não configurada.")
-            return []
+        if not base_url: return []
         if not base_url.endswith('/'): base_url += '/'
         
         try:
-            target_ids = [16, 18, 20, 22, 24, 32] # Ajuste conforme seus IDs
-            
+            target_ids = [16, 18, 20, 22, 24, 32]
             payload = {
                 "filter": { "SECTION_ID": target_ids },
                 "select": ["ID", "NAME", "PRICE", "DESCRIPTION", "SECTION_ID"] 
             }
-            
-            print("🔄 Buscando catálogo no Bitrix...")
             response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=10)
             data = response.json()
             
             catalog = []
             if "result" in data:
-                print(f"📦 Encontrados {len(data['result'])} produtos. Buscando imagens...")
                 for p in data["result"]:
-                    # Busca URL pública
                     img_url = BitrixService._fetch_best_image(base_url, p["ID"])
-                    
                     catalog.append({
                         "id": p.get("ID"),
                         "name": p.get("NAME"),
                         "price": float(p.get("PRICE") or 0),
                         "description": p.get("DESCRIPTION", ""),
-                        "image_url": img_url, # Frontend vai receber a URL direta (CDN)
+                        "image_url": img_url, 
                         "category_id": p.get("SECTION_ID")
                     })
             return catalog
         except Exception as e:
-            print(f"❌ Erro crítico no catálogo: {e}")
+            print(f"❌ Erro catálogo: {e}")
             return []
 
     # =========================================================================
-    # 4. GERAÇÃO DE PROTOCOLO (IA / MATCHING)
+    # 4. GERAÇÃO DE PROTOCOLO
     # =========================================================================
 
     @staticmethod
@@ -488,7 +411,6 @@ class BitrixService:
         if not base_url: return None
         if not base_url.endswith('/'): base_url += '/'
 
-        # 1. Definição de Matchers
         MATCHERS = {
             "dutasterida_oral":   ["Dutasterida"],
             "finasterida_oral":   ["Finasterida"],
@@ -500,7 +422,6 @@ class BitrixService:
             "biotina":            ["Biotina"]
         }
 
-        # 2. Busca Catálogo no Bitrix
         catalog_cache = []
         try:
             target_ids = [16, 18, 20, 22, 24]
@@ -509,17 +430,12 @@ class BitrixService:
             if "result" in resp.json(): catalog_cache = resp.json()["result"]
         except: return {"error": "Erro CRM"}
 
-        # Função auxiliar de busca
         def find_product(role_key):
             keywords = [k.lower() for k in MATCHERS.get(role_key, [])]
-            
-            # Prioridade Tópico na Pasta 20 (ajuste se suas pastas forem diferentes)
             if "topico" in role_key:
                 for p in catalog_cache:
                     if str(p.get('SECTION_ID')) == '20' and all(k in p.get("NAME", "").lower() for k in keywords):
                         return p
-            
-            # Busca Geral
             for p in catalog_cache:
                 name = p.get("NAME", "").lower()
                 if all(k in name for k in keywords):
@@ -528,7 +444,6 @@ class BitrixService:
                     return p
             return None
 
-        # 3. Lógica de Seleção (Baseada nas respostas)
         gender = answers.get("F1_Q1_gender", "masculino")
         def clean_list(key): 
             val = answers.get(key, "")
@@ -543,8 +458,6 @@ class BitrixService:
         block_minox_top = (pets or "psoriase" in clean_list("F2_Q8_symptom") or "cardiaca" in health)
 
         selected = []
-        
-        # Seleção Oral
         oral = None
         if gender == "masculino":
             if not block_horm: oral = "finasterida_oral"
@@ -554,7 +467,6 @@ class BitrixService:
             oral = "minoxidil_oral" if not block_minox_or else "saw_palmetto_oral"
         if oral: selected.append(oral)
 
-        # Seleção Tópica
         topical = None
         if not block_minox_top: topical = "minoxidil_topico"
         if (not topical or block_minox_top) and gender == "masculino" and not block_horm:
@@ -563,7 +475,6 @@ class BitrixService:
         
         selected.extend(["shampoo", "biotina"])
 
-        # 4. Montagem Final e CÁLCULO DE PREÇO
         final_products = []
         total_accumulator = 0.0
 
@@ -573,13 +484,9 @@ class BitrixService:
                 img_url = BitrixService._fetch_best_image(base_url, p["ID"])
                 price = float(p.get("PRICE") or 0)
                 total_accumulator += price
-
                 final_products.append({
-                    "id": p["ID"], 
-                    "name": p["NAME"], 
-                    "price": price,
-                    "sub": "Protocolo Personalizado", 
-                    "img": img_url
+                    "id": p["ID"], "name": p["NAME"], "price": price,
+                    "sub": "Protocolo Personalizado", "img": img_url
                 })
 
         return {
@@ -592,9 +499,6 @@ class BitrixService:
 
     @staticmethod
     def get_product_image_content(product_id):
-        """
-        [Debug/Proxy] Baixa o conteúdo da imagem caso precise servir via Proxy
-        """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url: return None, None
         if not base_url.endswith('/'): base_url += '/'
@@ -602,39 +506,26 @@ class BitrixService:
         try:
             info_response = requests.get(f"{base_url}crm.product.get.json", params={"id": product_id})
             info_data = info_response.json()
-            
             file_id = None
             field_code = "DETAIL_PICTURE"
 
             if "result" in info_data:
                 product = info_data["result"]
                 raw_detail = product.get("DETAIL_PICTURE")
-                
                 if isinstance(raw_detail, dict):
-                    if raw_detail.get("downloadUrl"):
-                        return BitrixService._download_from_url(raw_detail["downloadUrl"])
+                    if raw_detail.get("downloadUrl"): return BitrixService._download_from_url(raw_detail["downloadUrl"])
                     file_id = raw_detail.get("id")
-                elif raw_detail: 
-                    file_id = raw_detail
+                elif raw_detail: file_id = raw_detail
 
             if not file_id: return None, None
 
-            download_payload = {
-                "fields": {
-                    "productId": product_id,
-                    "fileId": file_id,
-                    "fieldName": field_code 
-                }
-            }
-            
+            download_payload = { "fields": { "productId": product_id, "fileId": file_id, "fieldName": field_code } }
             download_response = requests.post(f"{base_url}catalog.product.download", json=download_payload)
             content_type = download_response.headers.get('Content-Type', '')
 
             if download_response.status_code == 200 and 'image' in content_type:
                 return download_response.content, content_type
-            
             return None, None
-
         except Exception as e:
             print(f"❌ Erro imagem: {e}")
             return None, None
@@ -650,22 +541,13 @@ class BitrixService:
 
     @staticmethod
     def get_product_detail(product_id):
-        """
-        Busca detalhes (Nome e Preço) de um produto/serviço específico pelo ID.
-        Usado para pegar o valor atualizado da Taxa do Plano (ex: 262 ou 264).
-        """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url: return None
         if not base_url.endswith('/'): base_url += '/'
-
         try:
-            payload = {
-                "filter": { "ID": product_id },
-                "select": ["ID", "NAME", "PRICE"] 
-            }
+            payload = { "filter": { "ID": product_id }, "select": ["ID", "NAME", "PRICE"] }
             response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=5)
             data = response.json()
-            
             if "result" in data and len(data["result"]) > 0:
                 item = data["result"][0]
                 return {
@@ -678,43 +560,19 @@ class BitrixService:
             print(f"❌ Erro ao buscar serviço {product_id}: {e}")
             return None
     
-
-
     @staticmethod
     def get_plan_details(plan_slug):
-        """
-        Busca os detalhes (Preço/Nome) do produto do plano no Bitrix.
-        Mapeamento: Standard -> 262, Plus -> 264.
-        """
         base_url = os.getenv('BITRIX_WEBHOOK_URL')
         if not base_url: return None
         if not base_url.endswith('/'): base_url += '/'
-
-        # IDs dos Planos no Bitrix (Você pode mover isso para .env se quiser total desacoplamento)
-        PLAN_IDS = {
-            'standard': 262,
-            'plus': 264
-        }
-        
+        PLAN_IDS = {'standard': 262, 'plus': 264}
         bitrix_id = PLAN_IDS.get(plan_slug)
-        if not bitrix_id:
-            return None
-
+        if not bitrix_id: return None
         try:
-            # Busca o produto no Bitrix para pegar o preço REAL atualizado
             response = requests.get(f"{base_url}crm.product.get.json?id={bitrix_id}")
             data = response.json()
-            
             if "result" in data:
                 product = data["result"]
-                return {
-                    "id": str(product.get("ID")),
-                    "name": product.get("NAME"), # Ex: "Plano Plus (Serviço + Entrega)"
-                    "price": float(product.get("PRICE") or 0) # Ex: 150.00 ou 0.00
-                }
-        except Exception as e:
-            print(f"⚠️ Erro ao buscar plano {plan_slug} no Bitrix: {e}")
-        
+                return {"id": str(product.get("ID")), "name": product.get("NAME"), "price": float(product.get("PRICE") or 0)}
+        except: pass
         return None
-
- 
