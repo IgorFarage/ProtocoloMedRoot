@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-    baseURL: 'http://localhost:8000/api', // Ajuste para a porta do seu Django
+    baseURL: '/api', // Usa o proxy do Vite (configurado em vite.config.ts)
 });
 
 // Interceptor para adicionar o token JWT em cada requisição

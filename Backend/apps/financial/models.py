@@ -42,6 +42,7 @@ class Transaction(models.Model):
 
     # Integração
     mercado_pago_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    subscription_id = models.CharField(max_length=100, null=True, blank=True, help_text="ID da Assinatura (Preapproval) no MP")
     external_reference = models.CharField(max_length=100, unique=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     

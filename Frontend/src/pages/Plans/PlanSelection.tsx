@@ -228,7 +228,21 @@ const PlanSelection = () => {
                 total_price: getPrice(selectedPlan),
                 products: products || [],
                 cpf: formData.cpf, // Importante para o Pagamento
-                phone: formData.phone // Update contact
+                phone: formData.phone, // Update contact
+
+                // Mapeamento Completo para PurchaseSerializer
+                full_name: formData.full_name,
+                email: formData.email,
+                address_data: {
+                    cep: formData.cep,
+                    street: formData.address,
+                    number: formData.number,
+                    neighborhood: formData.neighborhood,
+                    complement: formData.complement,
+                    city: formData.city,
+                    state: formData.state
+                },
+                questionnaire_data: answers || {}
             };
 
             const mpKey = import.meta.env.VITE_MERCADO_PAGO_PUBLIC_KEY;

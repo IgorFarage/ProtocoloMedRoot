@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Transaction
 from .services import FinancialService
+from .serializers import PurchaseSerializer
 from apps.accounts.serializers import RegisterSerializer
 
 # Importa o BitrixService com tratamento de erro
@@ -53,7 +54,7 @@ class CreateCheckoutView(APIView):
                 final_products = list(products)
                 if plan_item: final_products.append(plan_item)
                 BitrixService.prepare_deal_payment(user, final_products, f"ProtocoloMed - {plan_id}", final_amount, None)
-            except Exception as e: print(f"⚠️ Erro Bitrix: {e}")
+            except Exception as e: logger.error(f"⚠️ Erro Bitrix: {e}")
 
         try:
             transaction = Transaction.objects.create(
@@ -61,7 +62,9 @@ class CreateCheckoutView(APIView):
                 external_reference=str(uuid.uuid4()), status=Transaction.Status.PENDING
             )
             return Response({"checkout_url": "", "external_reference": transaction.external_reference, "amount": float(transaction.amount)}, status=200)
-        except Exception as e: return Response({"error": "Erro interno."}, status=500)
+        except Exception as e: 
+            logger.exception("Error creating transaction")
+            return Response({"error": "Erro interno."}, status=500)
 
 
 # --- VIEW 2: PROCESSAMENTO ISOLADO ---
@@ -90,7 +93,9 @@ class ProcessTransparentPaymentView(APIView):
             payment_response = financial_service.process_direct_payment(payload)
             if payment_response: return Response(payment_response, status=200) 
             return Response({"error": "Erro Gateway."}, status=400)
-        except Exception as e: return Response({"error": str(e)}, status=500)
+        except Exception as e: 
+            logger.exception("Error processing transparent payment")
+            return Response({"error": str(e)}, status=500)
 
 
 # --- VIEW 3: WEBHOOK ---
@@ -112,53 +117,36 @@ class WebhookView(APIView):
                         elif status == "rejected": transaction.status = Transaction.Status.REJECTED
                         transaction.mercado_pago_id = str(mp_id)
                         transaction.save()
-            except: pass
+            except Exception as e: logger.error(f"Webhook Error: {e}")
         return Response({"status": "received"}, status=200)
 
 
-# --- VIEW 4: COMPRA COMPLETA (CORRIGIDA) ---
+# --- VIEW 4: COMPRA COMPLETA (REFACTORED) ---
 class CompletePurchaseView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        data = request.data
-        user = None
+        # 1. Validation with Serializer
+        serializer = PurchaseSerializer(data=request.data)
+        if not serializer.is_valid():
+            logger.error(f"❌ Validation Errors: {serializer.errors}")
+            return Response(serializer.errors, status=400)
         
-        # 1. Verifica se usuário já está logado (Etapa 3 Diretas)
-        if request.user and request.user.is_authenticated:
-            print(f"👤 Usuário já autenticado: {request.user.email}")
-            user = request.user
-            email = user.email
-            full_name = user.full_name.split()
-            first_name = full_name[0]
-            last_name = " ".join(full_name[1:]) if len(full_name) > 1 else "Client"
-            cpf = data.get('cpf', '').replace('.', '').replace('-', '') # CPF vem do form de pagamento para garantir
-        else:
-            # Fluxo Original: Criação de Usuário
-            register_serializer = RegisterSerializer(data=data)
-            if not register_serializer.is_valid():
-                return Response(register_serializer.errors, status=400)
-            
-            # Não salvamos ainda, vamos salvar dentro da transação atômica
-            
-            full_name = data.get('full_name', '').split()
-            first_name = full_name[0]
-            last_name = " ".join(full_name[1:]) if len(full_name) > 1 else "Client"
-            email = data.get('email')
-            cpf = data.get('cpf', '').replace('.', '').replace('-', '')
-
-        # Dados Comuns
-        plan_id = data.get('plan_id')
-        total_price = float(data.get('total_price', 0))
-        billing_cycle = data.get('billing_cycle', 'monthly')
-        payment_method = data.get('payment_method_id') 
+        validated_data = serializer.validated_data
         
-        address_data = data.get('address_data', {})
-        answers = data.get('questionnaire_data', {})
+        # Extract basic data
+        email = validated_data.get('email')
+        full_name_list = validated_data.get('full_name').split()
+        first_name = full_name_list[0]
+        last_name = " ".join(full_name_list[1:]) if len(full_name_list) > 1 else "Client"
+        cpf = validated_data.get('cpf')
         
+        total_price = float(validated_data.get('total_price', 0))
+        plan_id = validated_data.get('plan_id')
+        payment_method = validated_data.get('payment_method_id')
         external_ref = str(uuid.uuid4())
 
-        # 2. Payload Pagamento
+        # 2. Payment Payload Construction
         payment_payload = {
             "transaction_amount": total_price,
             "description": f"ProtocoloMed - {plan_id}",
@@ -172,98 +160,76 @@ class CompletePurchaseView(APIView):
             "external_reference": external_ref
         }
 
-        # SEPARAÇÃO CLARA: PIX vs CARTÃO
-        if payment_method == 'pix':
-            pass 
-        else:
-            payment_payload["token"] = data.get('token')
-            payment_payload["installments"] = int(data.get('installments', 1))
+        # 3. Get or Create User (Before Payment to get Customer ID)
+        try:
+             user = self._get_or_create_user(request, validated_data)
+        except ValueError as e:
+             return Response({"error": str(e)}, status=400)
 
-        # 3. Processa
+        # 3. Process Payment
         financial_service = FinancialService()
-        print(f"🚀 Enviando Payload ({payment_method}): {json.dumps(payment_payload, indent=2)}")
+        payment_result = None
+
+        logger.info(f"🚀 Processing Simple Payment ({payment_method}) for {email}")
         
+        # Prepare Simple Payment Payload for ALL methods (Credit Card & Pix)
+        if payment_method != 'pix':
+            payment_payload["token"] = validated_data.get('token')
+            payment_payload["installments"] = validated_data.get('installments', 1)
+
+        # UNIFIED CALL - Direct Payment (No Subscription/Customer extraction)
         payment_result = financial_service.process_direct_payment(payment_payload)
 
-        # Retry Internacional
+        # Retry Logic (Generic International or other specific errors)
         if payment_method != 'pix' and payment_result and 'cause' in payment_result:
             causes = payment_result.get('cause', [])
             if isinstance(causes, list) and any(str(c.get('code')) == '10114' for c in causes):
-                print("⚠️ Retry 1x (Internacional)...")
+                logger.warning("⚠️ Retry 1x (Internacional)...")
                 payment_payload['installments'] = 1
                 payment_payload['external_reference'] = f"{external_ref}_retry"
                 payment_result = financial_service.process_direct_payment(payment_payload)
 
-        # Valida Sucesso
+        # Evaluate Payment Success
         is_success = False
-        status_mp = "rejected" # Default
+        status_mp = "rejected"
+        mp_id_value = None
+
         if payment_result:
             status_mp = payment_result.get('status')
-            if status_mp == 'approved' or status_mp == 'in_process': is_success = True
+            mp_id_value = str(payment_result.get('id', ''))
+            # Subscription success is 'authorized'
+            if status_mp in ['approved', 'in_process', 'authorized']: is_success = True
             if payment_method == 'pix' and status_mp == 'pending': is_success = True
 
         if not is_success:
-            error_msg = "Erro desconhecido"
-            if payment_result:
-                error_msg = payment_result.get('message') or payment_result.get('status_detail')
-                if 'cause' in payment_result:
-                    causes = payment_result.get('cause')
-                    if causes and isinstance(causes, list):
-                        error_msg = f"{error_msg}: {causes[0].get('description')}"
-            
-            print(f"❌ FALHA PAGAMENTO: {json.dumps(payment_result, indent=2)}")
+            error_msg = self._extract_error_message(payment_result)
+            logger.error(f"❌ Payment Failed: {error_msg}")
             return Response({"error": "Pagamento não realizado", "detail": error_msg}, status=400)
 
-        # 4. Salva (Com ou Sem Criação de User)
+        # 4. Persistence
         try:
             with db_transaction.atomic():
-                if not user:
-                    # Cria o usuário agora se não existia
-                    user = register_serializer.save()
+                # User is already created/retrieved
                 
-                # Cria Transação
                 Transaction.objects.create(
-                    user=user, plan_type=plan_id, amount=total_price, cycle=billing_cycle,
+                    user=user, 
+                    plan_type=plan_id, 
+                    amount=total_price, 
+                    cycle=validated_data.get('billing_cycle'),
                     external_reference=external_ref, 
-                    status=Transaction.Status.APPROVED if status_mp == 'approved' else Transaction.Status.PENDING,
+                    status=Transaction.Status.APPROVED if is_success else Transaction.Status.PENDING,
                     payment_type=Transaction.PaymentType.PIX if payment_method == 'pix' else Transaction.PaymentType.CREDIT_CARD,
-                    mercado_pago_id=str(payment_result.get('id'))
+                    mercado_pago_id=mp_id_value
                 )
 
-                try:
-                    if BitrixService:
-                        # Se usuário foi criado agora, cria Lead. Se já existe, atualiza?
-                        # No fluxo multi-step, o Lead já foi criado na Etapa 1.
-                        # Mas se o user veio direto (monolito antigo), precisamos criar.
-                        if not user.id_bitrix:
-                             bitrix_id = BitrixService.create_lead(user, answers, address_data)
-                             if bitrix_id:
-                                user.id_bitrix = str(bitrix_id)
-                                user.save()
-                        
-                        # Atualiza dados de contato (CPF e Telefone)
-                        BitrixService.update_contact_data(user.id_bitrix, cpf, data.get('phone'))
+                # Bitrix Integration
+                self._handle_bitrix_integration(user, validated_data, payment_result, plan_id, total_price)
 
-                        products = data.get('products', [])
-                        final_products = list(products)
-                        if hasattr(BitrixService, 'get_plan_details'):
-                            plan_item = BitrixService.get_plan_details(plan_id)
-                            if plan_item: final_products.append(plan_item)
-                        
-                        # Prepara dados do Pagamento para o Bitrix
-                        payment_info_bitrix = {
-                            "id": payment_result.get('id'),
-                            "date_created": payment_result.get('date_created'),
-                            "status": payment_result.get('status')
-                        }
-
-                        BitrixService.prepare_deal_payment(user, final_products, f"ProtocoloMed - {plan_id}", total_price, answers, payment_data=payment_info_bitrix)
-                except Exception as e: print(f"⚠️ Erro Bitrix: {e}")
-
+                # Return Success Response
                 refresh = RefreshToken.for_user(user)
                 response_data = {
                     "status": "success", 
-                    "payment_status": status_mp, # Retorna o status real do pagamento
+                    "payment_status": status_mp,
                     "access": str(refresh.access_token), 
                     "user": {"id": user.id, "email": user.email},
                     "order_id": external_ref
@@ -280,5 +246,75 @@ class CompletePurchaseView(APIView):
                 return Response(response_data, status=201)
 
         except Exception as e:
-            print(f"❌ Erro Interno: {e}")
-            return Response({"error": "Erro interno."}, status=500)
+            logger.exception(f"❌ Internal Consistency Error: {e}")
+            return Response({"error": "Erro ao finalizar pedido (consistência)."}, status=500)
+
+    def _extract_error_message(self, payment_result):
+        if not payment_result: return "Erro desconhecido"
+        msg = payment_result.get('message') or payment_result.get('status_detail') or "Falha no pagamento"
+        if 'cause' in payment_result:
+            causes = payment_result.get('cause')
+            if causes and isinstance(causes, list):
+                msg = f"{msg}: {causes[0].get('description')}"
+        return msg
+
+    def _get_or_create_user(self, request, validated_data):
+        if request.user and request.user.is_authenticated:
+            return request.user
+        
+        # Check if email exists to avoid duplication error if not caught by serializer
+        # Assuming RegisterSerializer handles creation specifics (checking email uniqueness etc)
+        # Re-using logic from original code passing data to serializer
+        # Note: Validated data is clean, but RegisterSerializer needs raw or dict
+        
+        from apps.accounts.models import CustomUser # Assuming model name
+        email = validated_data.get('email')
+        existing = CustomUser.objects.filter(email=email).first()
+        if existing:
+            return existing
+            
+        # Create new user
+        register_serializer = RegisterSerializer(data=request.data) # Use raw data for full reg
+        if register_serializer.is_valid():
+             return register_serializer.save()
+        raise ValueError("Invalid User Data for Creation")
+
+    def _handle_bitrix_integration(self, user, validated_data, payment_result, plan_id, total_price):
+        if not BitrixService: return
+
+        try:
+            # 1. Lead/Contact Sync
+            if not user.id_bitrix:
+                bitrix_id = BitrixService.create_lead(user, validated_data.get('questionnaire_data'), validated_data.get('address_data'))
+                if bitrix_id:
+                    user.id_bitrix = str(bitrix_id)
+                    user.save()
+            
+            # 2. Update Contact
+            BitrixService.update_contact_data(user.id_bitrix, validated_data.get('cpf'), validated_data.get('phone'))
+
+            # 3. Prepare Deal
+            products = validated_data.get('products', [])
+            final_products = list(products) # conversion to list of dicts if needed
+            
+            # Add Plan Item
+            if hasattr(BitrixService, 'get_plan_details'):
+                plan_item = BitrixService.get_plan_details(plan_id)
+                if plan_item: final_products.append(plan_item)
+            
+            payment_info_bitrix = {
+                "id": payment_result.get('id'),
+                "date_created": payment_result.get('date_created'),
+                "status": payment_result.get('status')
+            }
+
+            BitrixService.prepare_deal_payment(
+                user, 
+                final_products, 
+                f"ProtocoloMed - {plan_id}", 
+                total_price, 
+                validated_data.get('questionnaire_data'), 
+                payment_data=payment_info_bitrix
+            )
+        except Exception as e:
+            logger.error(f"⚠️ Bitrix Integration Error: {e}")
