@@ -8,6 +8,8 @@ interface User {
   email: string;
   full_name: string;
   role: 'doctor' | 'patient';
+  // [NOVO] Adicionado suporte ao plano
+  plan?: 'standard' | 'plus' | 'none';
 }
 
 interface AuthContextType {
@@ -36,7 +38,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           id: decoded.user_id,
           email: decoded.email || '',
           full_name: decoded.full_name || '',
-          role: decoded.role || 'patient'
+          role: decoded.role || 'patient',
+          plan: decoded.current_plan || 'none' // [NOVO] Lê do token
         });
       } catch (err) {
         logout();

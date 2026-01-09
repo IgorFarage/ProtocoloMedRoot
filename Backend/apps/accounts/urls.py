@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView, RecommendationView, UpdateAddressView
+from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView, RecommendationView, UpdateAddressView, UserProfileView, UserProtocolView
 
 urlpatterns = [
     # Rota de Cadastro
@@ -19,4 +19,10 @@ urlpatterns = [
     
     # Atualização de Endereço (Etapa 2 Checkout)
     path('update_address/', UpdateAddressView.as_view(), name='update_address'),
+    
+    # Perfil Completo (Bitrix)
+    path('profile/', UserProfileView.as_view(), name='user_profile'),
+
+    # Protocolo (Bitrix Deal)
+    path('protocol/', UserProtocolView.as_view(), name='user_protocol'),
 ]

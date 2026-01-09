@@ -16,10 +16,12 @@ import AboutUs from "./pages/AboutUs";
 import Contact from "./pages/Contact";
 
 // Área do Cliente
-import ClientDashboard from "./pages/Client/ClientDashboard";
+import ClientLayout from "./pages/Client/ClientLayout";
+import ClientOverview from "./pages/Client/ClientOverview";
 import ClientProfile from "./pages/Client/ClientProfile";
 import ClientProtocol from "./pages/Client/ClientProtocol";
 import ClientSchedule from "./pages/Client/ClientSchedule";
+import { ClientDataProvider } from "@/hooks/useClientData";
 
 // Área do Médico
 import DoctorDashboard from "./pages/Doctor/DoctorDashboard";
@@ -70,46 +72,19 @@ const App = () => (
             <Route path="/pagamento/erro" element={<PaymentFailure />} />
 
             {/* Rotas Protegidas - PACIENTE */}
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute requireRole="patient">
-                  <ClientDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/perfil"
-              element={
-                <ProtectedRoute requireRole="patient">
-                  <ClientProfile />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/agendamento"
-              element={
-                <ProtectedRoute requireRole="patient">
-                  <ClientSchedule />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/SeuProtocolo"
-              element={
-                <ProtectedRoute requireRole="patient">
-                  <ClientProtocol />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/PerfilMedico"
-              element={
-                <ProtectedRoute requireRole="patient">
-                  <DoctorProfile />
-                </ProtectedRoute>
-              }
-            />
+            <Route path="/" element={
+              <ProtectedRoute requireRole="patient">
+                <ClientDataProvider>
+                  <ClientLayout />
+                </ClientDataProvider>
+              </ProtectedRoute>
+            }>
+              <Route path="dashboard" element={<ClientOverview />} />
+              <Route path="perfil" element={<ClientProfile />} />
+              <Route path="agendamento" element={<ClientSchedule />} />
+              <Route path="SeuProtocolo" element={<ClientProtocol />} />
+              {/* <Route path="PerfilMedico" element={<DoctorProfile />} /> */}
+            </Route>
 
             {/* Rotas Protegidas - MÉDICO */}
             <Route

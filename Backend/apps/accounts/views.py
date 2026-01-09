@@ -155,3 +155,48 @@ class UpdateAddressView(APIView):
         except Exception as e:
             print(f"❌ Erro UpdateAddressView: {e}")
             return Response({"error": "Erro interno."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class UserProfileView(APIView):
+    """
+    Retorna o perfil completo do usuário, incluindo dados do Bitrix.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        
+        # 1. Dados Básicos do Usuário
+        profile_data = {
+            "name": user.full_name,
+            "email": user.email,
+            "role": user.role,
+            "plan": user.current_plan,
+        }
+
+        # 2. Buscar dados enriquecidos do Bitrix (Telefone, Endereço)
+        try:
+            bitrix_data = BitrixService.get_contact_data(user)
+            profile_data.update(bitrix_data) # Mescla phone e address no JSON
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
+            # Não falha o request, apenas vai sem os dados extras
+
+        return Response(profile_data, status=status.HTTP_200_OK)
+
+class UserProtocolView(APIView):
+    """
+    Retorna o protocolo ativo do usuário (negócio no Bitrix).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        
+        # Chama o serviço que já busca produtos e Opportunity (Total)
+        result = BitrixService.get_client_protocol(user)
+        
+        if not result or "error" in result:
+             # Fallback ou erro silencioso
+             return Response(result or {"error": "Erro ao buscar protocolo"}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(result, status=status.HTTP_200_OK)

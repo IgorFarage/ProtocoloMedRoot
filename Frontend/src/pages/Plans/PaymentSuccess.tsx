@@ -48,7 +48,7 @@ const PaymentSuccess = () => {
                         className="w-full bg-green-600 hover:bg-green-700 h-12 text-lg"
                         onClick={() => navigate("/dashboard")}
                     >
-                        Ir para meu Dashboard <ArrowRight className="ml-2 h-5 w-5" />
+                        Ir para Meus Pedidos <ArrowRight className="ml-2 h-5 w-5" />
                     </Button>
                 </CardFooter>
             </Card>

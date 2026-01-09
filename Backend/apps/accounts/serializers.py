@@ -5,21 +5,36 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .services import BitrixService
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
+
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
         token['full_name'] = user.full_name
         token['role'] = user.role
         token['email'] = user.email
+        token['current_plan'] = user.current_plan
         return token
 
     def validate(self, attrs):
         data = super().validate(attrs)
+        
+        # [NOVO] Sincronizar plano com Bitrix no login
+        try:
+            from apps.accounts.services import BitrixService
+            # Chama o serviço para atualizar o user.current_plan se necessário
+            new_plan = BitrixService.check_and_update_user_plan(self.user)
+            # Atualiza o dado retornado na resposta para refletir a mudança imediata
+            self.user.refresh_from_db()
+        except Exception as e:
+            # Não bloquear login se falhar sync
+            print(f"Erro sync Bitrix login: {e}")
+
         data['user'] = {
             'id': self.user.id,
             'full_name': self.user.full_name,
             'role': self.user.role,
             'email': self.user.email,
+            'current_plan': self.user.current_plan,
         }
         return data
 

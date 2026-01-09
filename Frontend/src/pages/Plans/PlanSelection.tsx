@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, CreditCard, MapPin, User, ArrowLeft, Lock, QrCode, Copy, Check } from "lucide-react";
+import { Loader2, CreditCard, MapPin, User, ArrowLeft, Lock, QrCode, Copy, Check, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/auth/AuthProvider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -55,7 +55,7 @@ const PlanSelection = () => {
     // 2: Endereço
     // 3: Pagamento
 
-    const [currentStep, setCurrentStep] = useState<0 | 1 | 2 | 3>(0);
+    const [currentStep, setCurrentStep] = useState<0 | 1 | 2 | 3>(getStateOrLocal('step') || 0);
     const [acceptedTerms, setAcceptedTerms] = useState(false);
     const [acceptedContract, setAcceptedContract] = useState(false);
     // Verifica login ao carregar
@@ -68,8 +68,8 @@ const PlanSelection = () => {
     }, [currentStep]);
 
 
-    const [selectedPlan, setSelectedPlan] = useState<"standard" | "plus">("plus");
-    const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly">("monthly");
+    const [selectedPlan, setSelectedPlan] = useState<"standard" | "plus">(getStateOrLocal('planId') || "plus");
+    const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly">(getStateOrLocal('billingCycle') || "monthly");
     const [loading, setLoading] = useState(false);
 
     const [formData, setFormData] = useState({
@@ -81,6 +81,49 @@ const PlanSelection = () => {
     useEffect(() => {
         if (products) localStorage.removeItem("access_token");
     }, [products]);
+
+    // --- LÓGICA DE CUSTOMIZAÇÃO DO PROTOCOLO ---
+    const [activeProductIds, setActiveProductIds] = useState<string[]>([]);
+
+    // Inicializa todos os produtos como ativos ao carregar
+    useEffect(() => {
+        if (products && products.length > 0) {
+            setActiveProductIds(products.map((p: any) => p.id));
+        }
+    }, [products]);
+
+    const toggleProduct = (productId: string) => {
+        setActiveProductIds(prev =>
+            prev.includes(productId)
+                ? prev.filter(id => id !== productId) // Remove
+                : [...prev, productId] // Adiciona
+        );
+    };
+
+    // Calcula o total dos produtos ativos
+    const productsTotal = useMemo(() => {
+        if (!products) return 0;
+        return products
+            .filter((p: any) => activeProductIds.includes(p.id))
+            .reduce((sum: number, p: any) => sum + (parseFloat(p.price) || 0), 0);
+    }, [products, activeProductIds]);
+
+    // Preço Base dos Planos (Serviço)
+    const PLAN_BASE_PRICE = {
+        standard: 0,   // Apenas produtos
+        plus: 150.00   // Produtos + R$ 150 serviço
+    };
+
+    const getPrice = (plan: "standard" | "plus") => {
+        let base = productsTotal + PLAN_BASE_PRICE[plan];
+
+        // Desconto Trimestral (10%)
+        if (billingCycle === "quarterly") {
+            base = (base * 3) * 0.90;
+        }
+
+        return base.toFixed(2);
+    };
 
     const formatCPF = (value: string) => {
         return value
@@ -114,14 +157,6 @@ const PlanSelection = () => {
         setFormData({ ...formData, [e.target.id]: value });
     };
 
-    const getPrice = (plan: "standard" | "plus") => {
-        if (!total_price) return "0.00";
-        let base = parseFloat(total_price);
-        if (plan === "plus") base += 150;
-        if (billingCycle === "quarterly") base = base * 3 * 0.90;
-        return base.toFixed(2);
-    };
-
     const handleCepBlur = async () => {
         const cep = formData.cep.replace(/\D/g, '');
         if (cep.length === 8) {
@@ -136,7 +171,6 @@ const PlanSelection = () => {
             } catch (error) { console.log("Erro CEP"); }
         }
     };
-
 
     // --- FUNÇÕES DE HANDLER POR ETAPA ---
 
@@ -220,13 +254,22 @@ const PlanSelection = () => {
             return;
         }
 
+        // Filtra apenas produtos ativos
+        const finalProducts = products.filter((p: any) => activeProductIds.includes(p.id));
+
+        if (finalProducts.length === 0) {
+            toast({ variant: "destructive", title: "Atenção", description: "Selecione pelo menos um produto para continuar." });
+            setLoading(false);
+            return;
+        }
+
         try {
             let payload: any = {
                 // Enviamos dados básicos caso precise (mas backend usa user logado)
                 plan_id: selectedPlan,
                 billing_cycle: billingCycle,
-                total_price: getPrice(selectedPlan),
-                products: products || [],
+                total_price: getPrice(selectedPlan), // Preço já recalculado
+                products: finalProducts, // Lista filtrada
                 cpf: formData.cpf, // Importante para o Pagamento
                 phone: formData.phone, // Update contact
 
@@ -314,7 +357,21 @@ const PlanSelection = () => {
         } catch (error: any) {
             console.error(error);
             const msg = error.response?.data?.detail || error.response?.data?.error || error.message;
-            toast({ variant: "destructive", title: "Erro no Pagamento", description: msg });
+            // Redireciona para tela de erro
+            navigate("/pagamento/erro", {
+                state: {
+                    message: msg,
+                    retryData: {
+                        shouldRetry: true,
+                        planId: selectedPlan,
+                        billingCycle: billingCycle,
+                        products: finalProducts, // Usa lista atualizada
+                        answers: answers,
+                        total_price: getPrice(selectedPlan), // Usa preço atualizado
+                        step: 3 // Volta para o pagamento
+                    }
+                }
+            });
         } finally {
             setLoading(false);
         }
@@ -327,22 +384,119 @@ const PlanSelection = () => {
                 <div className="max-w-5xl mx-auto space-y-8">
                     <div className="text-center">
                         <h1 className="text-3xl font-bold">Escolha seu Plano</h1>
-                        <p className="text-gray-600">Selecione a melhor opção para o seu tratamento.</p>
+                        <p className="text-gray-600">Personalize seu tratamento e selecione a melhor opção.</p>
                     </div>
+
+                    {/* --- ÁREA DE CUSTOMIZAÇÃO DO PROTOCOLO --- */}
+                    <Card className="border-none shadow-sm bg-white overflow-hidden">
+                        <CardHeader className="bg-blue-50/50 pb-4">
+                            <CardTitle className="flex items-center gap-2 text-xl text-blue-900">
+                                <span className="bg-blue-100 p-2 rounded-full"><QrCode className="w-5 h-5 text-blue-600" /></span>
+                                Personalize seu Protocolo
+                            </CardTitle>
+                            <CardDescription>
+                                Você pode remover itens se desejar. O preço do plano será ajustado automaticamente.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                            <div className="divide-y divide-gray-100">
+                                {products?.map((product: any) => {
+                                    const isActive = activeProductIds.includes(product.id);
+                                    return (
+                                        <div
+                                            key={product.id}
+                                            className={`flex items-center justify-between p-4 transition-all duration-300 ${!isActive ? 'bg-gray-50 opacity-60 grayscale' : 'hover:bg-gray-50'}`}
+                                        >
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-16 h-16 bg-white border border-gray-100 rounded-lg flex items-center justify-center p-1">
+                                                    {product.image_url ? (
+                                                        <img src={product.image_url} alt={product.name} className="max-w-full max-h-full object-contain" />
+                                                    ) : (
+                                                        <span className="text-xs text-gray-300">Sem img</span>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <h4 className={`font-semibold text-gray-900 ${!isActive && 'text-gray-500 line-through'}`}>{product.name}</h4>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-6">
+                                                <div className="text-right hidden sm:block">
+                                                    <p className={`font-bold ${!isActive ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                                                        R$ {parseFloat(product.price).toFixed(2)}
+                                                    </p>
+                                                </div>
+                                                <Button
+                                                    size="sm"
+                                                    variant={isActive ? "outline" : "default"}
+                                                    className={isActive ? "text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700" : "bg-green-600 hover:bg-green-700 text-white"}
+                                                    onClick={() => toggleProduct(product.id)}
+                                                >
+                                                    {isActive ? "Remover" : "Adicionar"}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Resumo do Valor dos Produtos */}
+                            <div className="p-4 bg-gray-50 text-right border-t border-gray-100">
+                                <p className="text-sm text-gray-500">Valor total dos produtos selecionados</p>
+                                <p className="text-xl font-bold text-gray-900">R$ {productsTotal.toFixed(2)}</p>
+                            </div>
+                        </CardContent>
+                    </Card>
+
                     <div className="flex justify-center gap-4 mb-8">
                         <Button variant={billingCycle === "monthly" ? "default" : "outline"} onClick={() => setBillingCycle("monthly")}>Mensal</Button>
                         <Button variant={billingCycle === "quarterly" ? "default" : "outline"} onClick={() => setBillingCycle("quarterly")}>Trimestral (-10%)</Button>
                     </div>
                     <div className="grid md:grid-cols-2 gap-8">
-                        <Card className={`cursor-pointer hover:shadow-lg ${selectedPlan === 'standard' ? 'border-2 border-blue-600 shadow-xl' : ''}`} onClick={() => setSelectedPlan("standard")}>
-                            <CardHeader><CardTitle>Standard</CardTitle><CardDescription>Apenas Medicamentos</CardDescription></CardHeader>
-                            <CardContent><p className="text-3xl font-bold">R$ {getPrice("standard")}</p></CardContent>
-                            <CardFooter><Button className="w-full" variant={selectedPlan === 'standard' ? "default" : "outline"} onClick={() => { setSelectedPlan("standard"); setCurrentStep(1); }}>Selecionar</Button></CardFooter>
+                        <Card className={`cursor-pointer transition-all duration-300 ${selectedPlan === 'standard' ? 'border-2 border-blue-600 shadow-xl scale-[1.02]' : 'hover:shadow-lg border-transparent'}`} onClick={() => setSelectedPlan("standard")}>
+                            <CardHeader>
+                                <CardTitle className="text-2xl">Standard</CardTitle>
+                                <CardDescription>Apenas Medicamentos</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="text-center py-4">
+                                    <p className="text-sm text-gray-500 mb-1">Total Estimado</p>
+                                    <p className="text-4xl font-bold text-blue-900">R$ {getPrice("standard")}</p>
+                                    <p className="text-sm text-green-600 font-medium mt-2">
+                                        {billingCycle === 'quarterly' ? 'Cobrado a cada 3 meses' : 'Cobrado mensalmente'}
+                                    </p>
+                                </div>
+                                <ul className="space-y-2 text-sm text-gray-600">
+                                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Todos os produtos selecionados</li>
+                                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Entrega Grátis</li>
+                                    <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-300" /> Acompanhamento Médico</li>
+                                </ul>
+                            </CardContent>
+                            <CardFooter><Button className="w-full h-12 text-lg" variant={selectedPlan === 'standard' ? "default" : "outline"} onClick={() => { setSelectedPlan("standard"); setCurrentStep(1); }}>Selecionar Standard</Button></CardFooter>
                         </Card>
-                        <Card className={`cursor-pointer hover:shadow-lg ${selectedPlan === 'plus' ? 'border-2 border-green-600 shadow-xl' : ''}`} onClick={() => setSelectedPlan("plus")}>
-                            <CardHeader><CardTitle>Plus</CardTitle><CardDescription>Medicamentos + Médico</CardDescription></CardHeader>
-                            <CardContent><p className="text-3xl font-bold">R$ {getPrice("plus")}</p></CardContent>
-                            <CardFooter><Button className="w-full bg-green-600 hover:bg-green-700" onClick={() => { setSelectedPlan("plus"); setCurrentStep(1); }}>Selecionar</Button></CardFooter>
+
+                        <Card className={`cursor-pointer transition-all duration-300 relative overflow-hidden ${selectedPlan === 'plus' ? 'border-2 border-green-600 shadow-xl scale-[1.02]' : 'hover:shadow-lg border-transparent'}`} onClick={() => setSelectedPlan("plus")}>
+                            {selectedPlan === 'plus' && <div className="absolute top-0 right-0 bg-green-600 text-white text-xs px-3 py-1 rounded-bl-lg font-bold">RECOMENDADO</div>}
+                            <CardHeader>
+                                <CardTitle className="text-2xl">Plus <span className="text-sm font-normal text-muted-foreground ml-2">(Mais Popular)</span></CardTitle>
+                                <CardDescription>Medicamentos + Médico</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="text-center py-4">
+                                    <p className="text-sm text-gray-500 mb-1">Total Estimado</p>
+                                    <p className="text-4xl font-bold text-green-700">R$ {getPrice("plus")}</p>
+                                    <p className="text-sm text-green-600 font-medium mt-2">
+                                        {billingCycle === 'quarterly' ? 'Cobrado a cada 3 meses' : 'Cobrado mensalmente'}
+                                    </p>
+                                </div>
+                                <ul className="space-y-2 text-sm text-gray-600">
+                                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Todos os produtos selecionados</li>
+                                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Entrega Grátis</li>
+                                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> <strong>Acompanhamento Médico Contínuo</strong></li>
+                                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Ajustes de dosagem ilimitados</li>
+                                </ul>
+                            </CardContent>
+                            <CardFooter><Button className="w-full h-12 text-lg bg-green-600 hover:bg-green-700" onClick={() => { setSelectedPlan("plus"); setCurrentStep(1); }}>Selecionar Plus</Button></CardFooter>
                         </Card>
                     </div>
                 </div>

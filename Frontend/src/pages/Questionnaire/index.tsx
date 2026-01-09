@@ -11,6 +11,10 @@ import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ProductCard } from "@/components/store/ProductCard";
+import { ProductImage } from "@/components/store/ProductImage";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { X } from "lucide-react";
 
 // API e Utils
 import api from "@/lib/api";
@@ -30,6 +34,7 @@ const Questionnaire = () => {
     // Estados de API
     const [loadingRec, setLoadingRec] = useState(false);
     const [protocolData, setProtocolData] = useState<any>(null); // Dados vindos do Bitrix
+    const [selectedProduct, setSelectedProduct] = useState<any | null>(null); // Estado do Modal
 
     const navigate = useNavigate();
 
@@ -220,8 +225,18 @@ const Questionnaire = () => {
                 </div>
             );
         }
-
         // EXIBIÇÃO DO PROTOCOLO APROVADO
+
+        // Map Backend Data to Store Product Interface
+        const displayProducts = protocolData.products?.map((p: any, idx: number) => ({
+            id: p.id || `rec-${idx}`,
+            name: p.name,
+            price: p.price || 0,
+            description: p.description || p.sub || "Protocolo Personalizado",
+            image_url: p.img,
+            category_id: "protocol"
+        })) || [];
+
         return (
             <div className="min-h-screen bg-background">
                 <Header />
@@ -241,35 +256,14 @@ const Questionnaire = () => {
                                 </p>
                             </div>
 
-                            {/* GRID DE PRODUTOS REAIS (BITRIX) */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6 mt-8">
-                                {protocolData.products?.map((prod: any, index: number) => (
-                                    <div
-                                        key={index}
-                                        className="group relative h-80 bg-secondary/20 rounded-xl border border-border overflow-hidden hover:shadow-2xl transition-all duration-500"
-                                    >
-                                        {/* Imagem */}
-                                        <div className="absolute inset-2 bottom-24 bg-white rounded-lg flex items-center justify-center p-1 transition-all duration-500 ease-in-out group-hover:inset-0 group-hover:bottom-0 group-hover:bg-white group-hover:z-10">
-                                            {prod.img ? (
-                                                <img
-                                                    src={prod.img}
-                                                    alt={prod.name}
-                                                    className="w-full h-full object-contain mix-blend-multiply transition-transform duration-500 ease-in-out group-hover:scale-110"
-                                                />
-                                            ) : (
-                                                <div className="text-muted-foreground text-xs p-2">Imagem indisponível</div>
-                                            )}
-                                        </div>
-                                        {/* Texto */}
-                                        <div className="absolute bottom-0 left-0 right-0 h-24 flex flex-col items-center justify-center p-4 transition-all duration-300 group-hover:opacity-0 group-hover:translate-y-4">
-                                            <h3 className="font-bold text-sm md:text-base text-foreground mb-1 text-center leading-tight">
-                                                {prod.name}
-                                            </h3>
-                                            <span className="text-xs text-muted-foreground text-center">
-                                                {prod.sub}
-                                            </span>
-                                        </div>
-                                    </div>
+                            {/* GRID DE PRODUTOS REAIS (BITRIX) - REFACTOR to ProductCard */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mt-8">
+                                {displayProducts.map((product: any) => (
+                                    <ProductCard
+                                        key={product.id}
+                                        product={product}
+                                        onClick={(p) => setSelectedProduct(p)}
+                                    />
                                 ))}
                             </div>
 
@@ -293,34 +287,65 @@ const Questionnaire = () => {
                                         Já tenho conta
                                     </Button>
 
-                                    {/* --- BOTÃO CORRIGIDO --- */}
                                     <Button
                                         size="lg"
                                         className="w-full sm:w-auto bg-primary hover:bg-primary/90"
                                         onClick={() => {
-                                            // 1. Salva no localStorage para garantir persistência (Blindagem)
                                             localStorage.setItem('checkout_answers', JSON.stringify(answers));
                                             localStorage.setItem('checkout_products', JSON.stringify(protocolData.products));
                                             localStorage.setItem('checkout_total_price', protocolData.total_price);
 
-                                            // 2. Navega enviando 'answers' explicitamente
-                                            // Verifique no seu App.tsx se a rota é "/planos" ou "/plans" e ajuste abaixo se necessário
                                             navigate("/planos", {
                                                 state: {
                                                     products: protocolData.products,
                                                     total_price: protocolData.total_price,
-                                                    answers: answers // <--- O QUE FALTAVA!
+                                                    answers: answers
                                                 }
                                             });
                                         }}
                                     >
                                         Ver Planos e Cadastrar
                                     </Button>
-                                    {/* ----------------------- */}
                                 </div>
                             </div>
                         </CardContent>
                     </Card>
+
+                    {/* PRODUCT DETAIL MODAL */}
+                    <Dialog open={!!selectedProduct} onOpenChange={(open) => !open && setSelectedProduct(null)}>
+                        <DialogContent className="max-w-xl w-full p-0 overflow-hidden bg-white rounded-xl flex flex-col">
+
+                            {/* Imagem Centralizada */}
+                            <div className="bg-gray-50 w-full flex items-center justify-center p-8 h-[300px]">
+                                {selectedProduct && (
+                                    <ProductImage
+                                        product={selectedProduct}
+                                        className="object-contain w-full h-full mix-blend-multiply"
+                                    />
+                                )}
+                            </div>
+
+                            {/* Informações Abaixo */}
+                            <div className="w-full p-6 flex flex-col">
+                                <DialogHeader className="mb-4 text-center sm:text-center">
+                                    <DialogTitle className="text-2xl font-bold text-gray-900">
+                                        {selectedProduct?.name}
+                                    </DialogTitle>
+                                    <div className="text-xl font-semibold text-primary mt-2">
+                                        {selectedProduct && (selectedProduct.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                    </div>
+                                </DialogHeader>
+
+                                <div className="flex-1 overflow-y-auto max-h-[200px] pr-2 border border-gray-100 rounded-md p-3 bg-gray-50/50">
+                                    <div className="text-base text-gray-600 leading-relaxed whitespace-pre-wrap text-center">
+                                        <div dangerouslySetInnerHTML={{
+                                            __html: selectedProduct?.description || "Sem descrição detalhada."
+                                        }} />
+                                    </div>
+                                </div>
+                            </div>
+                        </DialogContent>
+                    </Dialog>
                 </div>
             </div>
         );
