@@ -21,7 +21,7 @@ import ClientOverview from "./pages/Client/ClientOverview";
 import ClientProfile from "./pages/Client/ClientProfile";
 import ClientProtocol from "./pages/Client/ClientProtocol";
 import ClientSchedule from "./pages/Client/ClientSchedule";
-import ClientHistory from "./pages/Client/ClientHistory";
+import ClientHistory from "@/pages/Client/ClientHistory";
 import { ClientDataProvider } from "@/hooks/useClientData";
 
 // Área do Médico
@@ -36,12 +36,12 @@ import DoctorProfile from "./pages/Doctor/DoctorProfile";
 import ProductCatalog from "./pages/Products/ProductCatalog";
 import PlanSelection from "./pages/Plans/PlanSelection";
 
-const queryClient = new QueryClient();
-
+// Pagamento
 import PaymentSuccess from "./pages/Plans/PaymentSuccess";
 import PaymentPending from "./pages/Plans/PaymentPending";
 import PaymentFailure from "./pages/Plans/PaymentFailure";
-import ChatWidget from "./components/chat/ChatWidget";
+
+const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -50,7 +50,6 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <ChatWidget />
           <Routes>
             {/* Rotas Públicas */}
             <Route path="/" element={<Index />} />

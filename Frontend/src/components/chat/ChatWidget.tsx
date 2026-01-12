@@ -14,7 +14,7 @@ interface Message {
 export default function ChatWidget() {
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
-        { id: '1', text: 'Olá! Eu sou o assistente virtual do ProtocoloMed. Como posso ajudar você hoje?', sender: 'bot' }
+        { id: '1', text: 'Olá! Eu sou a Lisa, sua assistente virtual. Como posso ajudar você hoje?', sender: 'bot' }
     ]);
     const [inputValue, setInputValue] = useState("");
     const bottomRef = useRef<HTMLDivElement>(null);
@@ -64,7 +64,7 @@ export default function ChatWidget() {
                     <CardHeader className="bg-primary text-primary-foreground p-4 rounded-t-lg flex flex-row items-center justify-between space-y-0">
                         <div className="flex items-center gap-2">
                             <Bot className="w-6 h-6" />
-                            <CardTitle className="text-base font-bold">Assistente Virtual</CardTitle>
+                            <CardTitle className="text-base font-bold">Lisa - Assistente Virtual</CardTitle>
                         </div>
                         <Button
                             variant="ghost"

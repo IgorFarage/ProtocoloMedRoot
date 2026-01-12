@@ -4,6 +4,7 @@ import { Outlet, Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Logo from "@/assets/Images/LOGO-removebg.png";
+import ChatWidget from "@/components/chat/ChatWidget";
 
 export default function ClientLayout() {
     const { user, loading, logout } = useAuth();
@@ -74,9 +75,12 @@ export default function ClientLayout() {
             </aside>
 
             {/* MAIN CONTENT AREA */}
-            <main className="flex-1 p-8 overflow-y-auto max-h-screen">
+            <main className="flex-1 p-8 overflow-y-auto max-h-screen relative">
                 <Outlet />
             </main>
+
+            {/* Chatbot apenas para clientes logados */}
+            <ChatWidget />
         </div>
     );
 }
