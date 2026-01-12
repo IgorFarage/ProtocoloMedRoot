@@ -54,15 +54,25 @@ class AnamnesisAnswers(models.Model):
 # =============================================================================
 
 class Appointments(models.Model):
-    # FKs para os perfis específicos, conforme normalização
-    patient_profile = models.ForeignKey(PATIENT_MODEL, on_delete=models.CASCADE, related_name='appointments_as_patient') 
-    doctor_profile = models.ForeignKey(DOCTOR_MODEL, on_delete=models.CASCADE, related_name='appointments_as_doctor')
+    # FKs diretas para o User (Role-based)
+    patient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='appointments_as_patient', null=True, blank=True) 
+    doctor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments_as_doctor')
+    
     scheduled_at = models.DateTimeField()
-    status = models.CharField(max_length=20, default='scheduled')
+    status = models.CharField(max_length=20, default='scheduled', choices=[
+        ('scheduled', 'Agendado'),
+        ('completed', 'Realizado'),
+        ('cancelled', 'Cancelado')
+    ])
     meeting_link = models.CharField(max_length=255, null=True, blank=True)
+
     class Meta:
         verbose_name = 'Consulta Médica'
         ordering = ['scheduled_at']
+        # Evita conflito: Um médico não pode ter duas consultas no mesmo horário
+        constraints = [
+            models.UniqueConstraint(fields=['doctor', 'scheduled_at'], name='unique_doctor_slot')
+        ]
 
 class PatientPhotos(models.Model):
     patient = models.ForeignKey(PATIENT_MODEL, on_delete=models.CASCADE)

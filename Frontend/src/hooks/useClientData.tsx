@@ -51,28 +51,39 @@ export function ClientDataProvider({ children }: { children: ReactNode }) {
     const fetchData = async () => {
         setLoading(true);
         try {
-            // 1. Busca Histórico
-            try {
-                const historyRes = await api.get('/accounts/questionnaires/');
-                if (historyRes.data && historyRes.data.length > 0) {
-                    setFullHistory(historyRes.data);
-                    setAnswers(historyRes.data[0].answers);
-                }
-            } catch (err) { console.warn("Erro history:", err); }
+            const [historyRes, profileRes, protoRes] = await Promise.allSettled([
+                api.get('/accounts/questionnaires/'),
+                api.get('/accounts/profile/'),
+                api.get('/accounts/protocol/')
+            ]);
 
-            // 2. Busca Perfil
-            try {
-                const profileRes = await api.get('/accounts/profile/');
-                setProfile(profileRes.data);
-            } catch (pErr) { console.warn("Erro profile:", pErr); }
-
-            // 3. Busca Protocolo
-            try {
-                const protoRes = await api.get('/accounts/protocol/');
-                if (protoRes.data && !protoRes.data.error) {
-                    setActiveProtocol(protoRes.data);
+            // 1. Histórico
+            if (historyRes.status === 'fulfilled') {
+                const data = historyRes.value.data;
+                if (data && data.length > 0) {
+                    setFullHistory(data);
+                    setAnswers(data[0].answers);
                 }
-            } catch (protErr) { console.warn("Erro protocol:", protErr); }
+            } else {
+                console.warn("Erro history:", historyRes.reason);
+            }
+
+            // 2. Perfil
+            if (profileRes.status === 'fulfilled') {
+                setProfile(profileRes.value.data);
+            } else {
+                console.warn("Erro profile:", profileRes.reason);
+            }
+
+            // 3. Protocolo
+            if (protoRes.status === 'fulfilled') {
+                const data = protoRes.value.data;
+                if (data && !data.error) {
+                    setActiveProtocol(data);
+                }
+            } else {
+                console.warn("Erro protocol:", protoRes.reason);
+            }
 
         } catch (err) {
             console.error("Erro geral client data:", err);

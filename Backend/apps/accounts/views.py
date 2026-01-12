@@ -150,6 +150,10 @@ class UpdateAddressView(APIView):
 
             # 2. (Opcional) Poderíamos salvar localmente se tivéssemos modelo de endereço
             
+            # 3. Limpar Cache do Perfil
+            from django.core.cache import cache
+            cache.delete(f"user_profile_full_{user.id}")
+
             return Response({"message": "Endereço atualizado com sucesso."}, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -164,8 +168,14 @@ class UserProfileView(APIView):
 
     def get(self, request):
         user = request.user
+        cache_key = f"user_profile_full_{user.id}"
+
+        # 1. Tenta Cache
+        cached_profile = cache.get(cache_key)
+        if cached_profile:
+            return Response(cached_profile, status=status.HTTP_200_OK)
         
-        # 1. Dados Básicos do Usuário
+        # 2. Dados Básicos do Usuário
         profile_data = {
             "name": user.full_name,
             "email": user.email,
@@ -173,7 +183,7 @@ class UserProfileView(APIView):
             "plan": user.current_plan,
         }
 
-        # 2. Buscar dados enriquecidos do Bitrix (Telefone, Endereço)
+        # 3. Buscar dados enriquecidos do Bitrix (Telefone, Endereço)
         try:
             bitrix_data = BitrixService.get_contact_data(user)
             profile_data.update(bitrix_data) # Mescla phone e address no JSON
@@ -181,22 +191,38 @@ class UserProfileView(APIView):
             print(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
             # Não falha o request, apenas vai sem os dados extras
 
+        # 4. Salva Cache (5 min)
+        cache.set(cache_key, profile_data, 300)
+
         return Response(profile_data, status=status.HTTP_200_OK)
+
+from django.core.cache import cache
 
 class UserProtocolView(APIView):
     """
     Retorna o protocolo ativo do usuário (negócio no Bitrix).
+    Com Cache de 10 minutos para evitar lentidão.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
+        cache_key = f"user_protocol_{user.id}"
         
-        # Chama o serviço que já busca produtos e Opportunity (Total)
+        # 1. Tenta pegar do Cache
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data, status=status.HTTP_200_OK)
+
+        # 2. Se não tiver, busca no Bitrix (Lento)
         result = BitrixService.get_client_protocol(user)
         
         if not result or "error" in result:
-             # Fallback ou erro silencioso
+             error_msg = result.get('error') if result else 'Erro desconhecido'
+             print(f"⚠️ UserProtocolView Warning: {error_msg} for user {user.email}")
              return Response(result or {"error": "Erro ao buscar protocolo"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Salva no Cache por 10 minutos (600s)
+        cache.set(cache_key, result, 600)
 
         return Response(result, status=status.HTTP_200_OK)

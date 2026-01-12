@@ -1,5 +1,5 @@
 import { useAuth } from "@/auth/AuthProvider";
-import { Loader2, LogOut, LayoutDashboard, FileText, Calendar, User } from "lucide-react";
+import { Loader2, LogOut, LayoutDashboard, FileText, Calendar, User, MessageCircle } from "lucide-react";
 import { Outlet, Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +20,8 @@ export default function ClientLayout() {
     const navItems = [
         { label: "Visão Geral", path: "/dashboard", icon: LayoutDashboard },
         { label: "Meu Protocolo", path: "/SeuProtocolo", icon: FileText },
-        { label: "Histórico", path: "/agendamento", icon: Calendar },
+        { label: "Canal Médico", path: "/agendamento", icon: MessageCircle },
+        { label: "Histórico", path: "/historico", icon: Calendar },
         { label: "Minha Conta", path: "/perfil", icon: User },
     ];
 

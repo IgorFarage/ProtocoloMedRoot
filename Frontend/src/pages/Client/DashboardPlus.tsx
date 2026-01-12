@@ -52,21 +52,7 @@ export default function DashboardPlus() {
                     </CardContent>
                 </Card>
 
-                {/* WIDGET CANAL MÉDICO (EXCLUSIVO) */}
-                <Card className="bg-slate-900 text-white border-slate-800 shadow-xl">
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <MessageCircle className="w-5 h-5 text-green-400" /> Canal Médico
-                        </CardTitle>
-                        <CardDescription className="text-slate-400">Fale diretamente com seu especialista.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <Button className="w-full bg-green-500 hover:bg-green-600 text-slate-900 font-bold shadow-lg shadow-green-900/20">
-                            Abrir Chat Prioritário
-                        </Button>
-                        <p className="text-xs text-center mt-3 text-slate-500">Tempo médio de resposta: 15min</p>
-                    </CardContent>
-                </Card>
+
 
                 {/* WIDGET LINKS RÁPIDOS */}
                 <Card className="col-span-3 lg:col-span-1 bg-white border-slate-200 shadow-md">

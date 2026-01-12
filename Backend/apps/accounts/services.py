@@ -259,15 +259,78 @@ class BitrixService:
             return catalog
         except Exception: return []
 
+    # Cache simples em memória para evitar N+1 calls (ID -> {desc, img, timestamp})
+    _PRODUCT_CACHE = {}
+
+    @staticmethod
+    def _get_cached_product_info(base_url: str, p_id: Any) -> Dict:
+        # Verifica cache
+        cached = BitrixService._PRODUCT_CACHE.get(p_id)
+        if cached:
+            return cached
+
+        # Se não tiver no cache, busca
+        desc = ""
+        img_url = None
+        
+        try:
+            # 1. Busca Detalhes (Descrição)
+            p_info = requests.get(f"{base_url}crm.product.get.json", params={"id": p_id}, timeout=3).json().get("result", {})
+            desc = p_info.get("DESCRIPTION", "")
+        except: pass
+
+        # 2. Busca Imagem
+        img_url = BitrixService._fetch_best_image(base_url, p_id)
+        
+        # Salva no cache
+        data = {"description": desc, "img": img_url}
+        BitrixService._PRODUCT_CACHE[p_id] = data
+        return data
+
+    @staticmethod
+    def _find_bitrix_id_by_email(email: str) -> Optional[str]:
+        base_url = BitrixService._get_base_url()
+        if not base_url: return None
+        try:
+            # 1. Search Contact
+            contact_check = requests.get(f"{base_url}crm.contact.list.json", params={
+                "filter[EMAIL]": email, "select[]": ["ID"]}, timeout=5)
+            contacts = contact_check.json().get('result', [])
+            if contacts: return contacts[0]['ID']
+
+            # 2. Search Lead (if no contact)
+            lead_check = requests.get(f"{base_url}crm.lead.list.json", params={
+                "filter[EMAIL]": email, "select[]": ["ID"]}, timeout=5)
+            leads = lead_check.json().get('result', [])
+            if leads: return leads[0]['ID']
+        except: pass
+        return None
+
     @staticmethod
     def get_client_protocol(user: Any) -> Dict:
         base_url = BitrixService._get_base_url()
         if not base_url: return None
-        if not getattr(user, 'id_bitrix', None): return {"error": "Usuário não vinculado ao Bitrix"}
+
+        # Self-Healing: Se não tem ID local, tenta buscar no Bitrix pelo email
+        if not getattr(user, 'id_bitrix', None):
+            found_id = BitrixService._find_bitrix_id_by_email(user.email)
+            if found_id:
+                user.id_bitrix = str(found_id)
+                user.save()
+                logger.info(f"🔧 Self-Healing: ID Bitrix recuperado para {user.email}: {found_id}")
+            else:
+                return {"error": "Usuário não vinculado ao Bitrix (Lead não encontrado)"}
+
         try:
             resp = requests.get(f"{base_url}crm.deal.list.json", params={
                 "filter[CONTACT_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID", "STAGE_ID", "TITLE", "OPPORTUNITY"]}, timeout=5)
             deals = resp.json().get('result', [])
+            if not deals: 
+                # Tenta buscar pelo LEAD_ID caso o contato falhe
+                resp_lead = requests.get(f"{base_url}crm.deal.list.json", params={
+                    "filter[LEAD_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID", "STAGE_ID", "TITLE", "OPPORTUNITY"]}, timeout=5)
+                deals = resp_lead.json().get('result', [])
+
             if not deals: return {"status": "no_deal", "message": "Nenhum protocolo encontrado."}
             
             deal = deals[0]
@@ -279,25 +342,17 @@ class BitrixService:
             enrich_products = []
             for r in rows:
                 p_id = r.get("PRODUCT_ID")
-                desc = ""
-                img_url = None
+                product_info = {"description": "", "img": None}
                 
                 if p_id:
-                    # Tenta buscar Detalhes (Descrição)
-                    try:
-                        p_info = requests.get(f"{base_url}crm.product.get.json", params={"id": p_id}, timeout=3).json().get("result", {})
-                        desc = p_info.get("DESCRIPTION", "")
-                    except: pass
-                    
-                    # Busca Imagem
-                    img_url = BitrixService._fetch_best_image(base_url, p_id)
+                    product_info = BitrixService._get_cached_product_info(base_url, p_id)
 
                 enrich_products.append({
                     "name": r.get("PRODUCT_NAME"), 
                     "price": float(r.get("PRICE", 0)), 
                     "quantity": int(r.get("QUANTITY", 1)),
-                    "description": desc,
-                    "img": img_url,
+                    "description": product_info["description"],
+                    "img": product_info["img"],
                     "sub": "Protocolo Personalizado" # Placeholder, ou mapear se possível
                 })
             

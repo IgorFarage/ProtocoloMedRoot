@@ -19,8 +19,9 @@ class SessionAdmin(admin.ModelAdmin):
 
 @admin.register(Appointments)
 class AppointmentAdmin(admin.ModelAdmin):
-    list_display = ('patient_profile', 'doctor_profile', 'scheduled_at', 'status')
+    list_display = ('patient', 'doctor', 'scheduled_at', 'status')
     list_filter = ('status', 'scheduled_at')
+    search_fields = ('patient__email', 'doctor__email')
 
 @admin.register(PatientPhotos)
 class PhotoAdmin(admin.ModelAdmin):

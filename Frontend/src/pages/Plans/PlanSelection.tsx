@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
+import { PRODUCT_IMAGES } from "@/lib/client-constants";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2, CreditCard, MapPin, User, ArrowLeft, Lock, QrCode, Copy, Check, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/auth/AuthProvider";
+import { useClientData } from "@/hooks/useClientData";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -72,15 +74,39 @@ const PlanSelection = () => {
     const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly">(getStateOrLocal('billingCycle') || "monthly");
     const [loading, setLoading] = useState(false);
 
+    const { profile } = useClientData();
+
     const [formData, setFormData] = useState({
         full_name: "", email: "", phone: "", password: "", confirmPassword: "", cpf: "",
         cep: "", address: "", number: "", neighborhood: "", complement: "", city: "", state: "",
         cardName: "", cardNumber: "", cardMonth: "", cardYear: "", cardCvv: ""
     });
 
+    // Auto-preenchimento com dados do perfil (Caso usuário já esteja logado)
     useEffect(() => {
-        if (products) localStorage.removeItem("access_token");
-    }, [products]);
+        if (profile) {
+            setFormData(prev => ({
+                ...prev,
+                full_name: prev.full_name || profile.name || "",
+                email: prev.email || profile.email || "",
+                phone: prev.phone || profile.phone || "",
+
+                // Endereço
+                cep: prev.cep || profile.address?.zip || "",
+                address: prev.address || profile.address?.street || "",
+                city: prev.city || profile.address?.city || "",
+                state: prev.state || profile.address?.state || "",
+                neighborhood: prev.neighborhood || profile.address?.neighborhood || "",
+            }));
+
+            // Auto-advance se dados basicos ok? Melhor não forçar, mas ajuda.
+            if (profile.name && currentStep === 0) {
+                // Se já tem cadastro, talvez pudesse pular p/ step 2 ou 3, mas vamos deixar usuário decidir
+            }
+        }
+    }, [profile]);
+
+
 
     // --- LÓGICA DE CUSTOMIZAÇÃO DO PROTOCOLO ---
     const [activeProductIds, setActiveProductIds] = useState<string[]>([]);
@@ -403,17 +429,34 @@ const PlanSelection = () => {
                                 {products?.map((product: any) => {
                                     const isActive = activeProductIds.includes(product.id);
                                     return (
-                                        <div
-                                            key={product.id}
-                                            className={`flex items-center justify-between p-4 transition-all duration-300 ${!isActive ? 'bg-gray-50 opacity-60 grayscale' : 'hover:bg-gray-50'}`}
-                                        >
+                                        <div key={product.id} className={`flex items-center justify-between p-4 transition-all duration-300 ${!isActive ? 'bg-gray-50 opacity-60 grayscale' : 'hover:bg-gray-50'}`}>
                                             <div className="flex items-center gap-4">
                                                 <div className="w-16 h-16 bg-white border border-gray-100 rounded-lg flex items-center justify-center p-1">
-                                                    {product.image_url ? (
-                                                        <img src={product.image_url} alt={product.name} className="max-w-full max-h-full object-contain" />
-                                                    ) : (
-                                                        <span className="text-xs text-gray-300">Sem img</span>
-                                                    )}
+                                                    {(() => {
+                                                        const remoteImg = product.image_url || product.img;
+
+                                                        // Fallback Local (Busca Inteligente)
+                                                        let localImg = null;
+                                                        if (!remoteImg) {
+                                                            const nameLower = (product.name || "").toLowerCase();
+                                                            // Mapeamento manual de nomes vindo do Bitrix para chaves do constants
+                                                            if (nameLower.includes("minoxidil") && nameLower.includes("tópico")) localImg = PRODUCT_IMAGES["Loção Minoxidil 5%"];
+                                                            else if (nameLower.includes("minoxidil") && (nameLower.includes("oral") || nameLower.includes("cápsula"))) localImg = PRODUCT_IMAGES["Minoxidil 2.5mg"];
+                                                            else if (nameLower.includes("finasterida") && nameLower.includes("tópico")) localImg = PRODUCT_IMAGES["Loção Finasterida"];
+                                                            else if (nameLower.includes("finasterida") && (nameLower.includes("oral") || nameLower.includes("cápsula"))) localImg = PRODUCT_IMAGES["Finasterida 1mg"];
+                                                            else if (nameLower.includes("dutasterida")) localImg = PRODUCT_IMAGES["Dutasterida 0.5mg"];
+                                                            else if (nameLower.includes("shampoo")) localImg = PRODUCT_IMAGES["Shampoo Saw Palmetto"];
+                                                            else if (nameLower.includes("biotina")) localImg = PRODUCT_IMAGES["Biotina 45ug"];
+                                                        }
+
+                                                        const finalImg = remoteImg || localImg;
+
+                                                        return finalImg ? (
+                                                            <img src={finalImg} alt={product.name} className="max-w-full max-h-full object-contain" />
+                                                        ) : (
+                                                            <span className="text-xs text-gray-300">Sem img</span>
+                                                        );
+                                                    })()}
                                                 </div>
                                                 <div>
                                                     <h4 className={`font-semibold text-gray-900 ${!isActive && 'text-gray-500 line-through'}`}>{product.name}</h4>
