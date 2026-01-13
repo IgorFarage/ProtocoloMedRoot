@@ -3,16 +3,21 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { CheckCircle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { useClientData } from "@/hooks/useClientData";
 
 const PaymentSuccess = () => {
     const navigate = useNavigate();
     const location = useLocation();
+    const { refreshData } = useClientData();
 
     const { orderId, status } = (location.state as any) || {};
 
     useEffect(() => {
         // Limpa estados de compra anteriores para evitar loops
         window.history.replaceState({}, document.title);
+
+        // [FIX UPGRADE] Força atualização dos dados (Protocolo e Plano)
+        refreshData();
     }, []);
 
     return (

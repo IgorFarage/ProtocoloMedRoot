@@ -1,13 +1,21 @@
-import { useAuth } from "@/auth/AuthProvider";
+import { useClientData } from "@/hooks/useClientData";
 import DashboardPlus from "./DashboardPlus";
 import DashboardStandard from "./DashboardStandard";
 
-export default function ClientOverview() {
-    const { user } = useAuth();
+import DashboardRecovery from "./DashboardRecovery";
 
-    // Lógica simples de exibição
-    // O "Container" agora só decide qual "Home Widget" mostrar
-    if (user?.plan === 'plus') {
+export default function ClientOverview() {
+    const { profile, loading } = useClientData();
+
+    if (loading) return null; // ou um loader simples
+
+    // Se estiver sem plano (none), e não for loading -> Mostra Recuperação
+    if (!profile?.plan || profile.plan === 'none') {
+        return <DashboardRecovery />;
+    }
+
+    // Prioridade total ao perfil real vindo do Backend (Bitrix Aware)
+    if (profile?.plan === 'plus') {
         return <DashboardPlus />;
     }
 

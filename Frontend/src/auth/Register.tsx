@@ -19,6 +19,7 @@ const Register = () => {
     const [formData, setFormData] = useState({
         full_name: "",
         email: "",
+        phone: "",
         password: "",
         confirmPassword: ""
     });
@@ -42,7 +43,8 @@ const Register = () => {
             await api.post("/accounts/register/", {
                 email: formData.email,
                 password: formData.password,
-                full_name: formData.full_name
+                full_name: formData.full_name,
+                phone: formData.phone
             });
 
             // 2. Faz o Login automático para pegar o Token
@@ -96,6 +98,10 @@ const Register = () => {
                         <div className="space-y-2">
                             <Label htmlFor="email">E-mail</Label>
                             <Input id="email" type="email" placeholder="seu@email.com" required onChange={handleChange} />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="phone">Celular (WhatsApp)</Label>
+                            <Input id="phone" type="tel" placeholder="(11) 99999-9999" required onChange={handleChange} />
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="password">Senha</Label>

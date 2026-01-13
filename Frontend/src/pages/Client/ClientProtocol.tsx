@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,13 +8,13 @@ import { INSTRUCTIONS, PRICES } from "@/lib/client-constants";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from "@/components/ui/dialog";
 import { Loader2, PlusCircle, Calendar, X, Maximize2 } from "lucide-react";
 
-// ... imports
 import { ProductCard } from "@/components/store/ProductCard";
 import { ProductImage } from "@/components/store/ProductImage";
 import { Product } from "@/types/store";
 
 export default function ClientProtocol() {
-    const { loading, currentProtocol, activeProtocol, answers } = useClientData();
+    const navigate = useNavigate();
+    const { loading, currentProtocol, activeProtocol, answers, profile } = useClientData();
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
     if (loading) {
@@ -67,7 +68,6 @@ export default function ClientProtocol() {
                         key={product.id}
                         product={product}
                         onClick={(p) => {
-                            // alert(`Click funcionando: ${p.name}`); 
                             setSelectedProduct(p);
                         }}
                     />
@@ -84,9 +84,18 @@ export default function ClientProtocol() {
                         <span className="text-3xl font-bold text-green-400">
                             {totalPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                         </span>
-                        <Button size="lg" className="bg-green-500 hover:bg-green-600 text-black font-bold h-12 px-8">
-                            Assinar Protocolo
-                        </Button>
+                        {profile?.plan !== 'plus' && (
+                            <Button
+                                size="lg"
+                                className="bg-green-500 hover:bg-green-600 text-black font-bold h-12 px-8"
+                                onClick={() => {
+                                    // Se for Standard, vai para Upgrade (Diferença de Serviço). Se for None, vai para checkout full.
+                                    navigate("/planos", { state: { isUpgrade: true } });
+                                }}
+                            >
+                                Melhorar Plano (Upgrade)
+                            </Button>
+                        )}
                     </div>
                 </CardContent>
             </Card>

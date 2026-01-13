@@ -130,3 +130,23 @@ class FinancialService:
         except Exception as e:
             print(f"❌ Erro ao buscar pagamento {payment_id}: {e}")
             return None
+    def process_payment_approval(self, payment_id: str, transaction_obj):
+        """
+        Valida o pagamento e ativa a assinatura/pedido via Store Service.
+        """
+        from apps.store.services import SubscriptionService
+        
+        # 1. Update Transaction Status
+        transaction_obj.status = transaction_obj.Status.APPROVED
+        transaction_obj.mercado_pago_id = payment_id
+        transaction_obj.save()
+        
+        # 2. Trigger Store/Subscription Logic
+        try:
+            SubscriptionService.activate_subscription_from_transaction(transaction_obj)
+            logger.info(f"✅ Assinatura ativada para Transaction {transaction_obj.id}")
+        except Exception as e:
+            logger.error(f"❌ Erro ao ativar assinatura para Transaction {transaction_obj.id}: {e}")
+            # Não falhamos o request inteiro, mas logamos o erro crítico de consistência
+        
+        return True

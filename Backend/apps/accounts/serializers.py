@@ -44,7 +44,8 @@ class UserQuestionnaireSerializer(serializers.ModelSerializer):
         fields = ['answers', 'created_at', 'is_latest']
 
 class RegisterSerializer(serializers.ModelSerializer):
-    # ALTERAÇÃO 1: Adicionei 'required=False' e 'allow_null=True'
+    # ALTERAÇÃO 1: Adicionei 'required=False' e 'allow_null=True' e TELEFONE OBRIGATÓRIO
+    phone = serializers.CharField(required=True)
     # Isso impede o erro 400 se o dado não vier.
     questionnaire_data = serializers.JSONField(write_only=True, required=False, allow_null=True)
     password = serializers.CharField(write_only=True, min_length=8)

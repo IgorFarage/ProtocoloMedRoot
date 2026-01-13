@@ -5,6 +5,7 @@ import json
 import time
 import logging
 from typing import Optional, Dict, List, Any
+from .config import BitrixConfig
 
 logger = logging.getLogger(__name__)
 
@@ -25,30 +26,11 @@ class BitrixService:
 
     @staticmethod
     def _map_answers_to_bitrix(answers: Dict[str, Any]) -> Dict[str, str]:
-        KEY_MAP = {
-            "F1_Q1_gender": "Q1_Genero",
-            "F1_Q2_stage": "Q2_Estagio",
-            "F1_Q3_speed": "Q3_Velocodade_Queda",
-            "F1_Q4_scalp": "Q4_Couro_Cabeludo",
-            "F1_Q5_family": "Q5_Historico_Familiar",
-            "F1_Q6_goal": "Q6_Objetivo",
-            "F2_Q7_irritation": "Q7_Irritação_Pele",
-            "F2_Q8_symptom": "Q8_Sintoma",
-            "F2_Q9_consult": "Q9_Consulta_Anterior",
-            "F2_Q10_steroids": "Q10_Esteroides",
-            "F2_Q11_prev_treat": "Q11_Tratamento_Prévio",
-            "F2_Q12_substance": "Q12_Subistancia_Previa",
-            "F2_Q13_results": "Q13_Resultados_Previa",
-            "F2_Q14_health_cond": "Q14_Condição_Saúde",
-            "F2_Q15_allergy": "Q15_Alergia",
-            "F2_Q16_intervention": "Q16_Nivel_Intervenção",
-            "F2_Q17_minox_format": "Q17_Minox_Formato",
-            "F2_Q18_pets": "Q18_Possui_Pet",
-            "F2_Q19_priority": "Q19_Rotina_Diaria"
-        }
+        from .config import BitrixConfig
+        
         json_data = {}
         for user_key, user_value in answers.items():
-            new_key = KEY_MAP.get(user_key)
+            new_key = BitrixConfig.KEY_MAP.get(user_key)
             if new_key:
                 if isinstance(user_value, list):
                     json_data[new_key] = ", ".join(user_value)
@@ -179,14 +161,14 @@ class BitrixService:
                 "OPPORTUNITY": float(total_amount),
                 "CURRENCY_ID": "BRL"
             }
-            if answers_json_string: fields_to_save["UF_CRM_1767644484"] = answers_json_string
+            if answers_json_string: fields_to_save[BitrixConfig.DEAL_FIELDS["ANSWERS_JSON"]] = answers_json_string
             if payment_data:
-                if payment_data.get('id'): fields_to_save["UF_CRM_1767806427"] = str(payment_data.get('id'))
-                if payment_data.get('date_created'): fields_to_save["UF_CRM_1767806112"] = str(payment_data.get('date_created'))
+                if payment_data.get('id'): fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_ID"]] = str(payment_data.get('id'))
+                if payment_data.get('date_created'): fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_DATE"]] = str(payment_data.get('date_created'))
                 if payment_data.get('status'):
                     status_map = {"approved": "Aprovado", "in_process": "Em análise", "pending": "Pendente", "rejected": "Recusado"}
                     raw = str(payment_data.get('status'))
-                    fields_to_save["UF_CRM_1767806168"] = status_map.get(raw, raw)
+                    fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_STATUS"]] = status_map.get(raw, raw)
 
             if not deal_id:
                 fields_to_save["CONTACT_ID"] = contact_id_to_use
@@ -209,7 +191,7 @@ class BitrixService:
         base_url = BitrixService._get_base_url()
         if not base_url or not user_bitrix_id: return False
         fields = {}
-        if cpf: fields["UF_CRM_CONTACT_1767453262601"] = cpf
+        if cpf: fields[BitrixConfig.DEAL_FIELDS["CPF"]] = cpf
         if phone: fields["PHONE"] = [{"VALUE": phone, "VALUE_TYPE": "WORK"}]
         if not fields: return False
         try:
@@ -242,7 +224,7 @@ class BitrixService:
         base_url = BitrixService._get_base_url()
         if not base_url: return []
         try:
-            target_ids = [16, 18, 20, 22, 24, 32]
+            target_ids = BitrixConfig.SECTION_IDS
             payload = { "filter": { "SECTION_ID": target_ids }, "select": ["ID", "NAME", "PRICE", "DESCRIPTION", "SECTION_ID"] }
             response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=10)
             catalog = []
@@ -348,6 +330,7 @@ class BitrixService:
                     product_info = BitrixService._get_cached_product_info(base_url, p_id)
 
                 enrich_products.append({
+                    "id": p_id,
                     "name": r.get("PRODUCT_NAME"), 
                     "price": float(r.get("PRICE", 0)), 
                     "quantity": int(r.get("QUANTITY", 1)),
@@ -395,7 +378,7 @@ class BitrixService:
         }
         catalog_cache = []
         try:
-            payload = { "filter": { "SECTION_ID": [16, 18, 20, 22, 24] }, "select": ["ID", "NAME", "PRICE", "DESCRIPTION", "SECTION_ID"] }
+            payload = { "filter": { "SECTION_ID": BitrixConfig.SECTION_IDS }, "select": ["ID", "NAME", "PRICE", "DESCRIPTION", "SECTION_ID"] }
             catalog_cache = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=5).json().get("result", [])
         except: return {"error": "Erro CRM Communication"}
 
@@ -450,8 +433,7 @@ class BitrixService:
     def get_plan_details(plan_slug):
         base_url = BitrixService._get_base_url()
         if not base_url: return None
-        PLAN_IDS = {'standard': 262, 'plus': 264}
-        bitrix_id = PLAN_IDS.get(plan_slug)
+        bitrix_id = BitrixConfig.PLAN_IDS.get(plan_slug)
         if not bitrix_id: return None
         try:
             prod = requests.get(f"{base_url}crm.product.get.json?id={bitrix_id}").json().get("result", {})
@@ -487,16 +469,20 @@ class BitrixService:
             rows_resp = requests.get(f"{base_url}crm.deal.productrows.get.json", params={"id": deal_id}, timeout=5)
             rows = rows_resp.json().get('result', [])
             
-            # IDs conhecidos dos planos
-            # Standard: 262, Plus: 264
+            # [REF] Usando Config
+            # Inicialização Necessária!
             has_plus = False
             has_standard = False
             
+            plan_ids = BitrixConfig.PLAN_IDS
+            id_standard = plan_ids.get('standard')
+            id_plus = plan_ids.get('plus')
+
             for r in rows:
                 p_id = int(r.get("PRODUCT_ID", 0))
-                if p_id == 264:
+                if p_id == id_plus:
                     has_plus = True
-                elif p_id == 262:
+                elif p_id == id_standard:
                     has_standard = True
             
             new_plan = 'none'

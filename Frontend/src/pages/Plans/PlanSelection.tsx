@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useClientData } from "@/hooks/useClientData";
 import api from "@/lib/api";
 import { PRODUCT_IMAGES } from "@/lib/client-constants";
 import { Button } from "@/components/ui/button";
@@ -9,8 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Loader2, CreditCard, MapPin, User, ArrowLeft, Lock, QrCode, Copy, Check, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/auth/AuthProvider";
-import { useClientData } from "@/hooks/useClientData";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
 import { Checkbox } from "@/components/ui/checkbox";
 
 const PlanSelection = () => {
@@ -18,6 +19,9 @@ const PlanSelection = () => {
     const navigate = useNavigate();
     const { toast } = useToast();
     const { loginWithToken } = useAuth();
+
+    // [FIX UPGRADE] Recupera dados em tempo real se disponível
+    const { activeProtocol, answers: clientAnswers, profile: clientProfile } = useClientData();
 
     // --- LÓGICA DE RECUPERAÇÃO DE DADOS (Blindagem) ---
     const getStateOrLocal = (key: string) => {
@@ -33,20 +37,26 @@ const PlanSelection = () => {
         return null;
     };
 
-    const products = getStateOrLocal('products');
-    const total_price = getStateOrLocal('total_price');
-    const answers = getStateOrLocal('answers');
+    const isUpgrade = location.state?.isUpgrade;
+
+    // [MODIFICADO] Se for Upgrade, tenta pegar do UseClientData senão usa o padrão
+    const products = getStateOrLocal('products') || (isUpgrade && activeProtocol?.products ? activeProtocol.products : []);
+    const answers = getStateOrLocal('answers') || (isUpgrade && clientAnswers ? clientAnswers : {});
+
+    // [MODIFICADO] Total price se não vier (calculado depois anyway)
+    const total_price = getStateOrLocal('total_price') || (isUpgrade ? 150.00 : 0);
 
     // Debug no Console do Navegador
     useEffect(() => {
         console.log("📍 [DEBUG FRONTEND] Dados recuperados:");
+        console.log(" - Is Upgrade:", isUpgrade);
         console.log(" - Products:", products ? products.length : 0);
         console.log(" - Answers:", answers ? Object.keys(answers).length : 0);
 
         if (!answers || Object.keys(answers).length === 0) {
             console.warn("⚠️ ALERTA: Respostas vazias! O JSON não será gerado.");
         }
-    }, [products, answers]);
+    }, [products, answers, isUpgrade]);
 
     // --- LÓGICA DE STEPS (Multistep) ---
     // 1 (Plan Selection) -> 2 (Checkout: Register) -> 3 (Checkout: Address) -> 4 (Checkout: Payment)
@@ -57,24 +67,42 @@ const PlanSelection = () => {
     // 2: Endereço
     // 3: Pagamento
 
+    const [profile, setProfile] = useState<any>(null);
     const [currentStep, setCurrentStep] = useState<0 | 1 | 2 | 3>(getStateOrLocal('step') || 0);
     const [acceptedTerms, setAcceptedTerms] = useState(false);
     const [acceptedContract, setAcceptedContract] = useState(false);
-    // Verifica login ao carregar
-    useEffect(() => {
-        const token = localStorage.getItem("access_token");
-        if (token && currentStep === 1) {
-            // Se já tem token e estava no cadastro, pula para endereço
-            setCurrentStep(2);
-        }
-    }, [currentStep]);
+    // Verifica login via Perfil confirmado
+    // useEffect REMOVED: Não queremos pular automaticamente, para permitir edição.
+    // useEffect(() => {
+    //    if (profile && currentStep === 1) {
+    //        setCurrentStep(2);
+    //    }
+    // }, [currentStep, profile]);
 
 
     const [selectedPlan, setSelectedPlan] = useState<"standard" | "plus">(getStateOrLocal('planId') || "plus");
     const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly">(getStateOrLocal('billingCycle') || "monthly");
     const [loading, setLoading] = useState(false);
 
-    const { profile } = useClientData();
+
+
+    // Fetch profile if logged in
+    useEffect(() => {
+        const fetchProfile = async () => {
+            const token = localStorage.getItem("access_token");
+            if (token) {
+                try {
+                    const res = await api.get('/accounts/profile/');
+                    setProfile(res.data);
+                } catch (e) {
+                    console.warn("Erro ao carregar perfil (Token inválido?), limpando...", e);
+                    localStorage.removeItem("access_token");
+                    setProfile(null);
+                }
+            }
+        };
+        fetchProfile();
+    }, []);
 
     const [formData, setFormData] = useState({
         full_name: "", email: "", phone: "", password: "", confirmPassword: "", cpf: "",
@@ -85,6 +113,15 @@ const PlanSelection = () => {
     // Auto-preenchimento com dados do perfil (Caso usuário já esteja logado)
     useEffect(() => {
         if (profile) {
+            // Tentativa de extrair número do endereço se vier junto (Bitrix style: "Rua X, 123")
+            let street = profile.address?.street || "";
+            let num = "";
+            if (street.includes(",")) {
+                const parts = street.split(",");
+                street = parts[0].trim();
+                num = parts[1].trim();
+            }
+
             setFormData(prev => ({
                 ...prev,
                 full_name: prev.full_name || profile.name || "",
@@ -93,10 +130,12 @@ const PlanSelection = () => {
 
                 // Endereço
                 cep: prev.cep || profile.address?.zip || "",
-                address: prev.address || profile.address?.street || "",
+                address: prev.address || street,
                 city: prev.city || profile.address?.city || "",
                 state: prev.state || profile.address?.state || "",
                 neighborhood: prev.neighborhood || profile.address?.neighborhood || "",
+                number: prev.number || num || "S/N", // Fallback para passar na validação
+                complement: prev.complement || "",
             }));
 
             // Auto-advance se dados basicos ok? Melhor não forçar, mas ajuda.
@@ -113,7 +152,7 @@ const PlanSelection = () => {
 
     // Inicializa todos os produtos como ativos ao carregar
     useEffect(() => {
-        if (products && products.length > 0) {
+        if (products && Array.isArray(products) && products.length > 0) {
             setActiveProductIds(products.map((p: any) => p.id));
         }
     }, [products]);
@@ -128,7 +167,7 @@ const PlanSelection = () => {
 
     // Calcula o total dos produtos ativos
     const productsTotal = useMemo(() => {
-        if (!products) return 0;
+        if (!products || !Array.isArray(products)) return 0;
         return products
             .filter((p: any) => activeProductIds.includes(p.id))
             .reduce((sum: number, p: any) => sum + (parseFloat(p.price) || 0), 0);
@@ -141,6 +180,12 @@ const PlanSelection = () => {
     };
 
     const getPrice = (plan: "standard" | "plus") => {
+        // [MODIFICAÇÃO UPGRADE]
+        // Se for upgrade, ignora produtos e cobra preço fixo da diferença (R$ 150)
+        if (location.state?.isUpgrade && plan === 'plus') {
+            return "150.00";
+        }
+
         let base = productsTotal + PLAN_BASE_PRICE[plan];
 
         // Desconto Trimestral (10%)
@@ -200,12 +245,25 @@ const PlanSelection = () => {
 
     // --- FUNÇÕES DE HANDLER POR ETAPA ---
 
-    // Etapa 1: Criar Conta
+    // Etapa 1: Criar Conta / Confirmar Dados
     const handleCreateAccount = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
 
         try {
+            // Se já tem perfil logado, é uma ATUALIZAÇÃO
+            if (profile) {
+                await api.put("/accounts/profile/update/", {
+                    full_name: formData.full_name,
+                    phone: formData.phone
+                });
+                // Atualiza state local para refletir (opcional)
+                toast({ title: "Dados Confirmados!", description: "Indo para endereço." });
+                setCurrentStep(2);
+                return;
+            }
+
+            // SENÃO: CRIA CONTA NOVA
             if (formData.password.length < 6) throw new Error("Senha muito curta.");
             if (formData.password !== formData.confirmPassword) throw new Error("As senhas não conferem.");
 
@@ -496,27 +554,29 @@ const PlanSelection = () => {
                         <Button variant={billingCycle === "quarterly" ? "default" : "outline"} onClick={() => setBillingCycle("quarterly")}>Trimestral (-10%)</Button>
                     </div>
                     <div className="grid md:grid-cols-2 gap-8">
-                        <Card className={`cursor-pointer transition-all duration-300 ${selectedPlan === 'standard' ? 'border-2 border-blue-600 shadow-xl scale-[1.02]' : 'hover:shadow-lg border-transparent'}`} onClick={() => setSelectedPlan("standard")}>
-                            <CardHeader>
-                                <CardTitle className="text-2xl">Standard</CardTitle>
-                                <CardDescription>Apenas Medicamentos</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <div className="text-center py-4">
-                                    <p className="text-sm text-gray-500 mb-1">Total Estimado</p>
-                                    <p className="text-4xl font-bold text-blue-900">R$ {getPrice("standard")}</p>
-                                    <p className="text-sm text-green-600 font-medium mt-2">
-                                        {billingCycle === 'quarterly' ? 'Cobrado a cada 3 meses' : 'Cobrado mensalmente'}
-                                    </p>
-                                </div>
-                                <ul className="space-y-2 text-sm text-gray-600">
-                                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Todos os produtos selecionados</li>
-                                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Entrega Grátis</li>
-                                    <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-300" /> Acompanhamento Médico</li>
-                                </ul>
-                            </CardContent>
-                            <CardFooter><Button className="w-full h-12 text-lg" variant={selectedPlan === 'standard' ? "default" : "outline"} onClick={() => { setSelectedPlan("standard"); setCurrentStep(1); }}>Selecionar Standard</Button></CardFooter>
-                        </Card>
+                        {!location.state?.isUpgrade && (
+                            <Card className={`cursor-pointer transition-all duration-300 ${selectedPlan === 'standard' ? 'border-2 border-blue-600 shadow-xl scale-[1.02]' : 'hover:shadow-lg border-transparent'}`} onClick={() => setSelectedPlan("standard")}>
+                                <CardHeader>
+                                    <CardTitle className="text-2xl">Standard</CardTitle>
+                                    <CardDescription>Apenas Medicamentos</CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    <div className="text-center py-4">
+                                        <p className="text-sm text-gray-500 mb-1">Total Estimado</p>
+                                        <p className="text-4xl font-bold text-blue-900">R$ {getPrice("standard")}</p>
+                                        <p className="text-sm text-green-600 font-medium mt-2">
+                                            {billingCycle === 'quarterly' ? 'Cobrado a cada 3 meses' : 'Cobrado mensalmente'}
+                                        </p>
+                                    </div>
+                                    <ul className="space-y-2 text-sm text-gray-600">
+                                        <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Todos os produtos selecionados</li>
+                                        <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Entrega Grátis</li>
+                                        <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-300" /> Acompanhamento Médico</li>
+                                    </ul>
+                                </CardContent>
+                                <CardFooter><Button className="w-full h-12 text-lg" variant={selectedPlan === 'standard' ? "default" : "outline"} onClick={() => { setSelectedPlan("standard"); setCurrentStep(1); }}>Selecionar Standard</Button></CardFooter>
+                            </Card>
+                        )}
 
                         <Card className={`cursor-pointer transition-all duration-300 relative overflow-hidden ${selectedPlan === 'plus' ? 'border-2 border-green-600 shadow-xl scale-[1.02]' : 'hover:shadow-lg border-transparent'}`} onClick={() => setSelectedPlan("plus")}>
                             {selectedPlan === 'plus' && <div className="absolute top-0 right-0 bg-green-600 text-white text-xs px-3 py-1 rounded-bl-lg font-bold">RECOMENDADO</div>}
@@ -539,7 +599,11 @@ const PlanSelection = () => {
                                     <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Ajustes de dosagem ilimitados</li>
                                 </ul>
                             </CardContent>
-                            <CardFooter><Button className="w-full h-12 text-lg bg-green-600 hover:bg-green-700" onClick={() => { setSelectedPlan("plus"); setCurrentStep(1); }}>Selecionar Plus</Button></CardFooter>
+                            <CardFooter><Button className="w-full h-12 text-lg bg-green-600 hover:bg-green-700" onClick={() => {
+                                setSelectedPlan("plus");
+                                // [UPGRADE] Pula direto para Step 3 (Pagamento)
+                                setCurrentStep(location.state?.isUpgrade ? 3 : 1);
+                            }}>Selecionar Plus</Button></CardFooter>
                         </Card>
                     </div>
                 </div>
@@ -547,28 +611,46 @@ const PlanSelection = () => {
         );
     }
 
+
+
     return (
         <div className="min-h-screen bg-gray-50 py-8 px-4">
             <div className="max-w-3xl mx-auto">
-                <Button variant="ghost" onClick={() => setCurrentStep(currentStep - 1 as any)} className="mb-4" disabled={currentStep === 1}><ArrowLeft className="mr-2 h-4 w-4" /> Voltar</Button>
+                <Button
+                    variant="ghost"
+                    onClick={() => {
+                        // Se for Upgrade e estiver no Pagamento (Step 3), volta pro passo 0 (Seleção/Resumo)
+                        if (isUpgrade && currentStep === 3) {
+                            setCurrentStep(0);
+                        } else {
+                            setCurrentStep(currentStep - 1 as any);
+                        }
+                    }}
+                    className="mb-4"
+                    disabled={currentStep === 1 && !isUpgrade}
+                >
+                    <ArrowLeft className="mr-2 h-4 w-4" /> Voltar
+                </Button>
 
-                {/* Visualizador de Passos */}
-                <div className="flex justify-between mb-8 px-8">
-                    <div className={`flex flex-col items-center ${currentStep >= 1 ? 'text-green-600' : 'text-gray-400'}`}>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 mb-2 ${currentStep >= 1 ? 'border-green-600 bg-green-100' : 'border-gray-300'}`}>1</div>
-                        <span className="text-xs font-medium">Dados</span>
+                {/* Visualizador de Passos - Oculta passos intermediários se for Upgrade */}
+                {!isUpgrade && (
+                    <div className="flex justify-between mb-8 px-8">
+                        <div className={`flex flex-col items-center ${currentStep >= 1 ? 'text-green-600' : 'text-gray-400'}`}>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 mb-2 ${currentStep >= 1 ? 'border-green-600 bg-green-100' : 'border-gray-300'}`}>1</div>
+                            <span className="text-xs font-medium">Dados</span>
+                        </div>
+                        <div className={`flex-1 h-0.5 mt-4 mx-2 ${currentStep >= 2 ? 'bg-green-600' : 'bg-gray-300'}`}></div>
+                        <div className={`flex flex-col items-center ${currentStep >= 2 ? 'text-green-600' : 'text-gray-400'}`}>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 mb-2 ${currentStep >= 2 ? 'border-green-600 bg-green-100' : 'border-gray-300'}`}>2</div>
+                            <span className="text-xs font-medium">Endereço</span>
+                        </div>
+                        <div className={`flex-1 h-0.5 mt-4 mx-2 ${currentStep >= 3 ? 'bg-green-600' : 'bg-gray-300'}`}></div>
+                        <div className={`flex flex-col items-center ${currentStep >= 3 ? 'text-green-600' : 'text-gray-400'}`}>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 mb-2 ${currentStep >= 3 ? 'border-green-600 bg-green-100' : 'border-gray-300'}`}>3</div>
+                            <span className="text-xs font-medium">Pagamento</span>
+                        </div>
                     </div>
-                    <div className={`flex-1 h-0.5 mt-4 mx-2 ${currentStep >= 2 ? 'bg-green-600' : 'bg-gray-300'}`}></div>
-                    <div className={`flex flex-col items-center ${currentStep >= 2 ? 'text-green-600' : 'text-gray-400'}`}>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 mb-2 ${currentStep >= 2 ? 'border-green-600 bg-green-100' : 'border-gray-300'}`}>2</div>
-                        <span className="text-xs font-medium">Endereço</span>
-                    </div>
-                    <div className={`flex-1 h-0.5 mt-4 mx-2 ${currentStep >= 3 ? 'bg-green-600' : 'bg-gray-300'}`}></div>
-                    <div className={`flex flex-col items-center ${currentStep >= 3 ? 'text-green-600' : 'text-gray-400'}`}>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 mb-2 ${currentStep >= 3 ? 'border-green-600 bg-green-100' : 'border-gray-300'}`}>3</div>
-                        <span className="text-xs font-medium">Pagamento</span>
-                    </div>
-                </div>
+                )}
 
 
                 <Card className="border-t-4 border-t-green-600 shadow-lg">
@@ -584,13 +666,20 @@ const PlanSelection = () => {
                         {currentStep === 1 && (
                             <form onSubmit={handleCreateAccount} className="space-y-6">
                                 <div className="space-y-4">
-                                    <h3 className="text-md font-semibold flex items-center gap-2 text-gray-700"><User className="w-4 h-4" /> Criar Conta</h3>
+                                    <h3 className="text-md font-semibold flex items-center gap-2 text-gray-700">
+                                        <User className="w-4 h-4" /> {profile ? "Confirme seus Dados" : "Criar Conta"}
+                                    </h3>
                                     <div className="grid md:grid-cols-2 gap-4">
                                         <div className="space-y-2"><Label>Nome Completo</Label><Input id="full_name" value={formData.full_name} onChange={handleInputChange} required /></div>
                                         <div className="space-y-2"><Label>Celular</Label><Input id="phone" value={formData.phone} onChange={handleInputChange} required placeholder="(11) 99999-9999" maxLength={15} /></div>
-                                        <div className="space-y-2 md:col-span-2"><Label>E-mail</Label><Input id="email" type="email" value={formData.email} onChange={handleInputChange} required /></div>
-                                        <div className="space-y-2"><Label>Senha</Label><Input id="password" type="password" value={formData.password} onChange={handleInputChange} required /></div>
-                                        <div className="space-y-2"><Label>Confirmar Senha</Label><Input id="confirmPassword" type="password" value={formData.confirmPassword} onChange={handleInputChange} required /></div>
+                                        <div className="space-y-2 md:col-span-2"><Label>E-mail</Label><Input id="email" type="email" value={formData.email} onChange={handleInputChange} required disabled={!!profile} className={profile ? "bg-gray-100" : ""} /></div>
+
+                                        {!profile && (
+                                            <>
+                                                <div className="space-y-2"><Label>Senha</Label><Input id="password" type="password" value={formData.password} onChange={handleInputChange} required /></div>
+                                                <div className="space-y-2"><Label>Confirmar Senha</Label><Input id="confirmPassword" type="password" value={formData.confirmPassword} onChange={handleInputChange} required /></div>
+                                            </>
+                                        )}
                                     </div>
                                     <div className="space-y-4 pt-4 border-t">
                                         <div className="flex items-center space-x-2">
@@ -616,7 +705,7 @@ const PlanSelection = () => {
                                     </div>
                                 </div>
                                 <Button type="submit" className="w-full h-12 text-lg shadow-md" disabled={loading || !acceptedTerms || !acceptedContract}>
-                                    {loading ? <Loader2 className="animate-spin mr-2" /> : "Continuar para Endereço"}
+                                    {loading ? <Loader2 className="animate-spin mr-2" /> : (profile ? "Confirmar e Continuar" : "Continuar para Endereço")}
                                 </Button>
                             </form>
                         )}
@@ -670,6 +759,16 @@ const PlanSelection = () => {
                     </CardContent>
                 </Card>
             </div>
+            {/* FALLBACK: Se o step for inválido */}
+            {
+                ![0, 1, 2, 3].includes(currentStep) && (
+                    <div className="text-center p-12">
+                        <h2 className="text-xl font-bold text-red-600">Erro de Navegação</h2>
+                        <p>Etapa desconhecida: {currentStep}</p>
+                        <Button onClick={() => setCurrentStep(0)} className="mt-4">Reiniciar</Button>
+                    </div>
+                )
+            }
         </div>
     );
 };

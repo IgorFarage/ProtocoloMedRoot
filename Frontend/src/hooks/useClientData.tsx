@@ -49,6 +49,12 @@ export function ClientDataProvider({ children }: { children: ReactNode }) {
     const [error, setError] = useState<string | null>(null);
 
     const fetchData = async () => {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
         try {
             const [historyRes, profileRes, protoRes] = await Promise.allSettled([

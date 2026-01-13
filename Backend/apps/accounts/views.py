@@ -183,8 +183,15 @@ class UserProfileView(APIView):
             "plan": user.current_plan,
         }
 
-        # 3. Buscar dados enriquecidos do Bitrix (Telefone, Endereço)
+        # 3. Buscar dados enriquecidos do Bitrix (Telefone, Endereço, PLANO)
         try:
+            # [FIX] Forçar sincronização do plano com Bitrix (Source of Truth)
+            BitrixService.check_and_update_user_plan(user)
+            
+            # Recarrega usuário do banco para pegar o plano atualizado
+            user.refresh_from_db()
+            profile_data['plan'] = user.current_plan
+
             bitrix_data = BitrixService.get_contact_data(user)
             profile_data.update(bitrix_data) # Mescla phone e address no JSON
         except Exception as e:
@@ -226,3 +233,38 @@ class UserProtocolView(APIView):
         cache.set(cache_key, result, 600)
 
         return Response(result, status=status.HTTP_200_OK)
+
+class UserUpdateView(APIView):
+    """
+    Permite atualizar dados básicos do usuário (Nome, Telefone).
+    Usado no Checkout se o usuário quiser corrigir dados.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request):
+        user = request.user
+        data = request.data
+        
+        full_name = data.get('full_name')
+        phone = data.get('phone')
+
+        updated = False
+        if full_name:
+            user.full_name = full_name
+            updated = True
+        if phone:
+            user.phone = phone
+            updated = True
+        
+        if updated:
+            user.save()
+            # Tenta sincronizar contato no Bitrix (Nome/Fone)
+            try:
+                if user.id_bitrix:
+                    # TODO: Implementar update_contact_data no BitrixService se necessário
+                    # Por enquanto apenas logamos, pois o update_address foca no endereço
+                    print(f"ℹ️ Dados locais atualizados para {user.email}. Bitrix sync pendente.")
+            except:
+                pass
+
+        return Response({"message": "Dados atualizados com sucesso."}, status=status.HTTP_200_OK)

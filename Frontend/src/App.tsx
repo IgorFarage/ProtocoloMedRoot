@@ -64,10 +64,16 @@ const App = () => (
 
             <Route path="/sobre-nos" element={<AboutUs />} />
             <Route path="/contato" element={<Contact />} />
-            <Route path="/planos" element={<PlanSelection />} />
+            <Route path="/planos" element={
+              <ClientDataProvider>
+                <PlanSelection />
+              </ClientDataProvider>
+            } />
             <Route path="/pagamento/sucesso" element={
               <ProtectedRoute>
-                <PaymentSuccess />
+                <ClientDataProvider>
+                  <PaymentSuccess />
+                </ClientDataProvider>
               </ProtectedRoute>
             } />
             <Route path="/pagamento/pendente" element={<PaymentPending />} />

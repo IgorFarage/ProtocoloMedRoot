@@ -11,6 +11,7 @@ from .models import Transaction
 from .services import FinancialService
 from .serializers import PurchaseSerializer
 from apps.accounts.serializers import RegisterSerializer
+from apps.store.services import SubscriptionService
 
 # Importa o BitrixService com tratamento de erro
 try:
@@ -211,7 +212,7 @@ class CompletePurchaseView(APIView):
             with db_transaction.atomic():
                 # User is already created/retrieved
                 
-                Transaction.objects.create(
+                transaction = Transaction.objects.create(
                     user=user, 
                     plan_type=plan_id, 
                     amount=total_price, 
@@ -222,8 +223,17 @@ class CompletePurchaseView(APIView):
                     mercado_pago_id=mp_id_value
                 )
 
+                # TRIGGER AUTOMATIC SUBSCRIPTION/PLAN ACTIVATION
+                if transaction.status == Transaction.Status.APPROVED:
+                    SubscriptionService.activate_subscription_from_transaction(transaction)
+
                 # Bitrix Integration
                 self._handle_bitrix_integration(user, validated_data, payment_result, plan_id, total_price)
+
+                # [FIX CACHE] Limpar cache do protocolo para refletir mudança imediata (Standard -> Plus)
+                from django.core.cache import cache
+                cache.delete(f"user_protocol_{user.id}")
+                cache.delete(f"user_profile_full_{user.id}")
 
                 # Return Success Response
                 refresh = RefreshToken.for_user(user)
@@ -294,10 +304,21 @@ class CompletePurchaseView(APIView):
             BitrixService.update_contact_data(user.id_bitrix, validated_data.get('cpf'), validated_data.get('phone'))
 
             # 3. Prepare Deal
+            from apps.accounts.config import BitrixConfig
             products = validated_data.get('products', [])
-            final_products = list(products) # conversion to list of dicts if needed
             
-            # Add Plan Item
+            # [FIX UPGRADE] Remover produtos que sejam PLANOS antigos (Standard/Plus) para evitar duplicidade
+            all_plan_ids = BitrixConfig.PLAN_IDS.values() # [262, 264, etc]
+            
+            # Filtrar produtos que NÃO sejam planos
+            filtered_products = [
+                p for p in products 
+                if int(p.get('id', 0)) not in all_plan_ids
+            ]
+            
+            final_products = list(filtered_products)
+            
+            # Add New Plan Item
             if hasattr(BitrixService, 'get_plan_details'):
                 plan_item = BitrixService.get_plan_details(plan_id)
                 if plan_item: final_products.append(plan_item)
