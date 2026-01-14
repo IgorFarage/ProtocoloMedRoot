@@ -63,7 +63,7 @@ const Register = () => {
             if (location.state?.selectedPlan) {
                 console.log("Voltando para o checkout com:", location.state);
                 navigate("/planos", {
-                    state: { ...location.state } // Mantém o plano, produtos e preços
+                    state: { ...location.state, step: 2, fromRegister: true } // Marca origem para auto-advance
                 });
             } else {
                 // Fluxo normal (foi direto para cadastro)

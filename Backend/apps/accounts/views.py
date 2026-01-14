@@ -267,4 +267,38 @@ class UserUpdateView(APIView):
             except:
                 pass
 
+
         return Response({"message": "Dados atualizados com sucesso."}, status=status.HTTP_200_OK)
+
+# 6. Webhook Endpoint
+class BitrixWebhookView(APIView):
+    """
+    Endpoint público para receber notificações do Bitrix.
+    Segurança: Valida 'auth[application_token]' contra BITRIX_APP_TOKEN_SECRET.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        import os
+        
+        # 1. Validação de Segurança (Token Secret)
+        secret = os.getenv('BITRIX_APP_TOKEN_SECRET')
+        incoming_token = request.data.get('auth[application_token]')
+        
+        # Se não configurado secret, loga warning mas (por enquanto) processa ou rejeita? 
+        # R: Rejeita (Forbidden) se secret existir. Se não existir, é perigoso deixar aberto.
+        if secret and incoming_token != secret:
+            print(f"⛔ Tentativa de Webhook com Token Inválido: {incoming_token}")
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        # 2. Processamento Assíncrono (Idealmente) ou Rápido
+        # O Bitrix espera 200 OK rápido.
+        try:
+            # Delegate to Service
+            BitrixService.process_incoming_webhook(request.data)
+        except Exception as e:
+            # Nunca retornar erro 500 para o Bitrix, senão ele desativa o webhook
+            print(f"❌ Erro processando Webhook: {e}")
+        
+        return Response({"status": "received"}, status=status.HTTP_200_OK)

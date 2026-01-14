@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import api from "@/lib/api";
+import { useState } from "react";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ProductCard } from "@/components/store/ProductCard";
@@ -8,6 +7,7 @@ import { Product } from "@/types/store";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ShoppingBag } from "lucide-react";
+import { useProductCatalog } from "@/hooks/useProductCatalog";
 import {
     Dialog,
     DialogContent,
@@ -17,23 +17,9 @@ import {
 } from "@/components/ui/dialog";
 
 export default function ProductCatalog() {
-    const [products, setProducts] = useState<Product[]>([]);
-    const [loading, setLoading] = useState(true);
+    const { products, loading, error } = useProductCatalog();
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
-    useEffect(() => {
-        async function fetchCatalog() {
-            try {
-                const response = await api.get('/store/catalog/');
-                setProducts(response.data);
-            } catch (err) {
-                console.error("Erro ao carregar catálogo:", err);
-            } finally {
-                setLoading(false);
-            }
-        }
-        fetchCatalog();
-    }, []);
 
     const formatPrice = (price: number) => {
         return new Intl.NumberFormat('pt-BR', {

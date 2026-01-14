@@ -25,23 +25,32 @@ const PlanSelection = () => {
 
     // --- LÓGICA DE RECUPERAÇÃO DE DADOS (Blindagem) ---
     const getStateOrLocal = (key: string) => {
-        // 1. Tenta pegar do state da navegação
-        if (location.state && location.state[key]) {
+        if (location.state && location.state[key] !== undefined) {
+            console.log(`📍 [PlanSelection] Found state for ${key}:`, location.state[key]);
             return location.state[key];
         }
-        // 2. Se falhar, tenta pegar do localStorage (Backup)
         const local = localStorage.getItem(`checkout_${key}`);
         if (local) {
-            try { return JSON.parse(local); } catch (e) { return null; }
+            console.log(`💾 [PlanSelection] Found localStorage for ${key}:`, local);
+            try {
+                return JSON.parse(local);
+            } catch {
+                return local;
+            }
         }
-        return null;
+        return undefined;
     };
 
     const isUpgrade = location.state?.isUpgrade;
 
     // [MODIFICADO] Se for Upgrade, tenta pegar do UseClientData senão usa o padrão
-    const products = getStateOrLocal('products') || (isUpgrade && activeProtocol?.products ? activeProtocol.products : []);
-    const answers = getStateOrLocal('answers') || (isUpgrade && clientAnswers ? clientAnswers : {});
+    const products = useMemo(() => {
+        return getStateOrLocal('products') || (isUpgrade && activeProtocol?.products ? activeProtocol.products : []);
+    }, [location.state, isUpgrade, activeProtocol]);
+
+    const answers = useMemo(() => {
+        return getStateOrLocal('answers') || (isUpgrade && clientAnswers ? clientAnswers : {});
+    }, [location.state, isUpgrade, clientAnswers]);
 
     // [MODIFICADO] Total price se não vier (calculado depois anyway)
     const total_price = getStateOrLocal('total_price') || (isUpgrade ? 150.00 : 0);
@@ -138,12 +147,13 @@ const PlanSelection = () => {
                 complement: prev.complement || "",
             }));
 
-            // Auto-advance se dados basicos ok? Melhor não forçar, mas ajuda.
-            if (profile.name && currentStep === 0) {
-                // Se já tem cadastro, talvez pudesse pular p/ step 2 ou 3, mas vamos deixar usuário decidir
+            // Auto-advance se vier do Registro
+            if (location.state?.fromRegister && currentStep === 1) {
+                console.log("🚀 Vindo do registro -> Avançando para endereço (Step 2)");
+                setCurrentStep(2);
             }
         }
-    }, [profile]);
+    }, [profile, currentStep, location.state]);
 
 
 
@@ -241,6 +251,22 @@ const PlanSelection = () => {
                 }
             } catch (error) { console.log("Erro CEP"); }
         }
+    };
+
+    // --- SELEÇÃO DE PLANO COM ROTEAMENTO ---
+    const handleSelectPlan = (plan: "standard" | "plus") => {
+        setSelectedPlan(plan);
+
+        // Se for Upgrade, mantém fluxo atual (vai direto pro pagamento se User existir)
+        if (location.state?.isUpgrade) {
+            setCurrentStep(3);
+            return;
+        }
+
+        // FLUXO UNIFICADO: Todos vão para Step 1
+        // - Se logado: Vê form "Confirme seus Dados" (com dados preenchidos)
+        // - Se deslogado: Vê form "Criar Conta" (campos de senha visíveis)
+        setCurrentStep(1);
     };
 
     // --- FUNÇÕES DE HANDLER POR ETAPA ---
@@ -574,7 +600,8 @@ const PlanSelection = () => {
                                         <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-300" /> Acompanhamento Médico</li>
                                     </ul>
                                 </CardContent>
-                                <CardFooter><Button className="w-full h-12 text-lg" variant={selectedPlan === 'standard' ? "default" : "outline"} onClick={() => { setSelectedPlan("standard"); setCurrentStep(1); }}>Selecionar Standard</Button></CardFooter>
+                                <CardFooter><Button className="w-full h-12 text-lg" variant={selectedPlan === 'standard' ? "default" : "outline"} onClick={() => handleSelectPlan("standard")}>Selecionar Standard</Button></CardFooter>
+
                             </Card>
                         )}
 
@@ -599,11 +626,7 @@ const PlanSelection = () => {
                                     <li className="flex items-center gap-2"><Check className="w-4 h-4 text-green-500" /> Ajustes de dosagem ilimitados</li>
                                 </ul>
                             </CardContent>
-                            <CardFooter><Button className="w-full h-12 text-lg bg-green-600 hover:bg-green-700" onClick={() => {
-                                setSelectedPlan("plus");
-                                // [UPGRADE] Pula direto para Step 3 (Pagamento)
-                                setCurrentStep(location.state?.isUpgrade ? 3 : 1);
-                            }}>Selecionar Plus</Button></CardFooter>
+                            <CardFooter><Button className="w-full h-12 text-lg bg-green-600 hover:bg-green-700" onClick={() => handleSelectPlan("plus")}>Selecionar Plus</Button></CardFooter>
                         </Card>
                     </div>
                 </div>
@@ -666,9 +689,24 @@ const PlanSelection = () => {
                         {currentStep === 1 && (
                             <form onSubmit={handleCreateAccount} className="space-y-6">
                                 <div className="space-y-4">
-                                    <h3 className="text-md font-semibold flex items-center gap-2 text-gray-700">
-                                        <User className="w-4 h-4" /> {profile ? "Confirme seus Dados" : "Criar Conta"}
-                                    </h3>
+                                    <div className="flex justify-between items-center">
+                                        <h3 className="text-md font-semibold flex items-center gap-2 text-gray-700">
+                                            <User className="w-4 h-4" /> {profile ? "Confirme seus Dados" : "Criar Conta"}
+                                        </h3>
+                                        {profile && (
+                                            <Button
+                                                variant="link"
+                                                className="text-red-500 h-auto p-0 text-xs"
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    localStorage.removeItem("access_token");
+                                                    window.location.reload();
+                                                }}
+                                            >
+                                                Não é você? Sair
+                                            </Button>
+                                        )}
+                                    </div>
                                     <div className="grid md:grid-cols-2 gap-4">
                                         <div className="space-y-2"><Label>Nome Completo</Label><Input id="full_name" value={formData.full_name} onChange={handleInputChange} required /></div>
                                         <div className="space-y-2"><Label>Celular</Label><Input id="phone" value={formData.phone} onChange={handleInputChange} required placeholder="(11) 99999-9999" maxLength={15} /></div>
@@ -681,30 +719,33 @@ const PlanSelection = () => {
                                             </>
                                         )}
                                     </div>
-                                    <div className="space-y-4 pt-4 border-t">
-                                        <div className="flex items-center space-x-2">
-                                            <Checkbox
-                                                id="terms"
-                                                checked={acceptedTerms}
-                                                onCheckedChange={(checked) => setAcceptedTerms(checked as boolean)}
-                                            />
-                                            <label htmlFor="terms" className="text-sm text-gray-700 leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                                Eu concordo com <a href="#" className="text-green-600 hover:underline">Termos & Condições</a> e com a <a href="#" className="text-green-600 hover:underline">Política de Privacidade</a> e <a href="#" className="text-green-600 hover:underline">Proteção de Dados</a>.
-                                            </label>
+                                    {/* Exibe Termos apenas para novos usuários */}
+                                    {!profile && (
+                                        <div className="space-y-4 pt-4 border-t">
+                                            <div className="flex items-center space-x-2">
+                                                <Checkbox
+                                                    id="terms"
+                                                    checked={acceptedTerms}
+                                                    onCheckedChange={(checked) => setAcceptedTerms(checked as boolean)}
+                                                />
+                                                <label htmlFor="terms" className="text-sm text-gray-700 leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                                    Eu concordo com <a href="#" className="text-green-600 hover:underline">Termos & Condições</a> e com a <a href="#" className="text-green-600 hover:underline">Política de Privacidade</a> e <a href="#" className="text-green-600 hover:underline">Proteção de Dados</a>.
+                                                </label>
+                                            </div>
+                                            <div className="flex items-center space-x-2">
+                                                <Checkbox
+                                                    id="contract"
+                                                    checked={acceptedContract}
+                                                    onCheckedChange={(checked) => setAcceptedContract(checked as boolean)}
+                                                />
+                                                <label htmlFor="contract" className="text-sm text-gray-700 leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                                    Eu concordo com o <a href="#" className="text-green-600 hover:underline">Contrato de Prestação de Serviço da Protocolo Med</a>.
+                                                </label>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center space-x-2">
-                                            <Checkbox
-                                                id="contract"
-                                                checked={acceptedContract}
-                                                onCheckedChange={(checked) => setAcceptedContract(checked as boolean)}
-                                            />
-                                            <label htmlFor="contract" className="text-sm text-gray-700 leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                                Eu concordo com o <a href="#" className="text-green-600 hover:underline">Contrato de Prestação de Serviço da Protocolo Med</a>.
-                                            </label>
-                                        </div>
-                                    </div>
+                                    )}
                                 </div>
-                                <Button type="submit" className="w-full h-12 text-lg shadow-md" disabled={loading || !acceptedTerms || !acceptedContract}>
+                                <Button type="submit" className="w-full h-12 text-lg shadow-md" disabled={loading || (!profile && (!acceptedTerms || !acceptedContract))}>
                                     {loading ? <Loader2 className="animate-spin mr-2" /> : (profile ? "Confirmar e Continuar" : "Continuar para Endereço")}
                                 </Button>
                             </form>

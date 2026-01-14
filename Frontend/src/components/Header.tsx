@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Menu } from "lucide-react";
+import { Menu, UserCircle } from "lucide-react";
+import { useAuth } from "@/auth/AuthProvider";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +13,7 @@ import {
 import Logo from "/LOGO.png";
 
 export const Header = () => {
+  const { user, logout } = useAuth();
   return (
     // posicionamento absoluto do logo
     <header className="border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-50 relative">
@@ -28,12 +30,17 @@ export const Header = () => {
 
           <DropdownMenuContent align="start" className="w-48">
             {/* Opções de navegação do Menu */}
-            <DropdownMenuItem asChild className="md:hidden">
-              <Link to="/login">Entrar</Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild className="md:hidden">
-              <Link to="/register">Cadastre-se</Link>
-            </DropdownMenuItem>
+            {!user ? (
+              <>
+                <DropdownMenuItem asChild className="md:hidden">
+                  <Link to="/login">Entrar</Link>
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <DropdownMenuItem asChild className="md:hidden">
+                <span className="font-semibold text-green-600">Olá, {user.full_name?.split(' ')[0]}</span>
+              </DropdownMenuItem>
+            )}
 
             <DropdownMenuItem asChild>
               <Link to="/">Home</Link>
@@ -73,13 +80,39 @@ export const Header = () => {
 
         {/* Bloco de Ações/Login (Direita) */}
         <div className="flex items-center gap-3">
-          {/* Link Entrar/Login: Visível apenas em Desktop */}
-          <Link to="/login" className="hidden md:block text-sm text-muted-foreground hover:text-foreground">
-            Entrar
-          </Link>
-          <Link to="/register" className="hidden md:block text-sm text-muted-foreground hover:text-foreground">
-            Cadastre-se
-          </Link>
+          {user ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="flex items-center gap-2 text-sm">
+                  <span className="font-semibold text-gray-700 max-w-[100px] truncate hidden md:block">
+                    Olá, {user.full_name?.split(' ')[0] || "Cliente"}
+                  </span>
+                  <UserCircle className="w-8 h-8 text-green-600" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {user.role === 'doctor' && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/DoctorDashboard">Área do Médico</Link>
+                  </DropdownMenuItem>
+                )}
+                {user.role === 'patient' && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/dashboard">Minha Área</Link>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={logout} className="text-red-600 focus:text-red-600 cursor-pointer">
+                  Sair
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <>
+              <Link to="/login" className="hidden md:block text-sm text-muted-foreground hover:text-foreground">
+                Entrar
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </header>

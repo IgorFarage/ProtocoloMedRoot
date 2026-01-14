@@ -5,6 +5,8 @@ import json
 import time
 import logging
 from typing import Optional, Dict, List, Any
+from django.core.cache import cache
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .config import BitrixConfig
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,44 @@ class BitrixService:
         if not base_url.endswith('/'):
             base_url += '/'
         return base_url
+
+    # =========================================================================
+    # THE SHIELD (Safe Request Wrapper)
+    # =========================================================================
+    
+    @staticmethod
+    @retry(
+        stop=stop_after_attempt(3), 
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((requests.exceptions.RequestException, requests.exceptions.Timeout))
+    )
+    def _safe_request(method: str, endpoint: str, **kwargs) -> Optional[Dict]:
+        """
+        Executa requisições ao Bitrix com Retries Automáticos (Tenacity) e Tratamento de Erro.
+        """
+        base_url = BitrixService._get_base_url()
+        if not base_url:
+            return None
+            
+        url = f"{base_url}{endpoint}"
+        
+        try:
+            response = requests.request(method, url, timeout=10, **kwargs)
+            
+            # Rate Limiting Handling (429) is handled by Tenacity if we raise exception
+            if response.status_code == 429:
+                logger.warning(f"⚠️ Bitrix Rate Limit (429) em {endpoint}. Retrying...")
+                response.raise_for_status() # Trigger retry
+                
+            response.raise_for_status()
+            
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Erro Bitrix ({endpoint}): {str(e)}")
+            raise e # Allow Tenacity to retry
+        except Exception as e:
+            logger.exception(f"❌ Erro Crítico Bitrix ({endpoint}): {e}")
+            return None
 
     # =========================================================================
     # 1. MAPEAMENTOS (Configuração)
@@ -54,10 +94,7 @@ class BitrixService:
 
     @staticmethod
     def create_lead(user: Any, answers: Optional[Dict] = None, address_data: Optional[Dict] = None) -> Optional[str]:
-        base_url = BitrixService._get_base_url()
-        if not base_url: return None
-        
-        endpoint_add = f"{base_url}crm.lead.add.json"
+        # Configurar Payload
         payload = {
             "fields": {
                 "TITLE": f"Lead - {user.full_name}",
@@ -83,36 +120,37 @@ class BitrixService:
         
         try:
             logger.info(f"Checking existence in Bitrix for {user.email}...")
+            
+            # Check Contact
             try:
-                contact_check = requests.get(f"{base_url}crm.contact.list.json", params={
-                    "filter[EMAIL]": user.email, "select[]": ["ID"]}, timeout=5)
-                contact_check.raise_for_status()
-                contacts = contact_check.json().get('result', [])
-                if contacts:
-                    return contacts[0]['ID']
-            except requests.RequestException: pass
+                contact_check = BitrixService._safe_request('GET', 'crm.contact.list.json', params={
+                    "filter[EMAIL]": user.email, "select[]": ["ID"]
+                })
+                if contact_check and contact_check.get('result'):
+                    return contact_check['result'][0]['ID']
+            except: pass
 
+            # Check Lead
             try:
-                lead_check = requests.get(f"{base_url}crm.lead.list.json", params={
-                    "filter[EMAIL]": user.email, "filter[STATUS_ID]": "NEW", "select[]": ["ID"]}, timeout=5)
-                lead_check.raise_for_status()
-                leads = lead_check.json().get('result', [])
-                if leads:
-                    return leads[0]['ID']
-            except requests.RequestException: pass
+                lead_check = BitrixService._safe_request('GET', 'crm.lead.list.json', params={
+                    "filter[EMAIL]": user.email, "filter[STATUS_ID]": "NEW", "select[]": ["ID"]
+                })
+                if lead_check and lead_check.get('result'):
+                    return lead_check['result'][0]['ID']
+            except: pass
 
             logger.info(f"📤 Criando NOVO Lead no Bitrix para {user.email}...")
-            response = requests.post(endpoint_add, json=payload, timeout=10)
-            response.raise_for_status()
-            result = response.json()
+            result = BitrixService._safe_request('POST', 'crm.lead.add.json', json=payload)
             
-            if 'result' in result:
+            if result and 'result' in result:
                 lead_id = result['result']
+                # Tenta verificar se converteu em contato automaticamente (Delay pequeno)
                 time.sleep(1.0) 
                 try:
-                    check = requests.get(f"{base_url}crm.lead.get.json?id={lead_id}", timeout=5)
-                    contact_id = check.json().get('result', {}).get('CONTACT_ID')
-                    if contact_id: return contact_id
+                    check = BitrixService._safe_request('GET', 'crm.lead.get.json', params={'id': lead_id})
+                    if check:
+                        contact_id = check.get('result', {}).get('CONTACT_ID')
+                        if contact_id: return contact_id
                 except: pass
                 return lead_id
             return None
@@ -122,8 +160,7 @@ class BitrixService:
 
     @staticmethod
     def prepare_deal_payment(user: Any, products_list: List[Dict], plan_title: str, total_amount: float, answers: Optional[Dict] = None, payment_data: Optional[Dict] = None) -> Optional[str]:
-        base_url = BitrixService._get_base_url()
-        if not base_url or not getattr(user, 'id_bitrix', None): return None
+        if not getattr(user, 'id_bitrix', None): return None
 
         answers_json_string = None
         if answers:
@@ -137,24 +174,28 @@ class BitrixService:
 
             # Self-Healing
             try:
-                lead_check = requests.get(f"{base_url}crm.lead.get.json?id={user.id_bitrix}", timeout=5)
-                lead_data = lead_check.json().get('result')
-                if lead_data and lead_data.get('CONTACT_ID'):
-                    contact_id_to_use = str(lead_data.get('CONTACT_ID'))
-                    user.id_bitrix = contact_id_to_use
-                    user.save()
+                lead_check = BitrixService._safe_request('GET', 'crm.lead.get.json', params={"id": user.id_bitrix})
+                if lead_check:
+                    lead_data = lead_check.get('result')
+                    if lead_data and lead_data.get('CONTACT_ID'):
+                        contact_id_to_use = str(lead_data.get('CONTACT_ID'))
+                        user.id_bitrix = contact_id_to_use
+                        user.save()
             except Exception: pass
 
-            deal_resp = requests.get(f"{base_url}crm.deal.list.json", params={
-                "filter[CONTACT_ID]": contact_id_to_use, "filter[CLOSED]": "N", "order[ID]": "DESC", "select[]": ["ID"]}, timeout=5)
-            deals = deal_resp.json().get('result', [])
-            if deals: deal_id = deals[0]['ID']
+            # Encontrar Deal existente aberto
+            deal_resp = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
+                "filter[CONTACT_ID]": contact_id_to_use, "filter[CLOSED]": "N", "order[ID]": "DESC", "select[]": ["ID"]
+            })
+            if deal_resp and deal_resp.get('result'):
+                 deal_id = deal_resp['result'][0]['ID']
             
             if not deal_id:
-                deal_resp_lead = requests.get(f"{base_url}crm.deal.list.json", params={
-                    "filter[LEAD_ID]": user.id_bitrix, "filter[CLOSED]": "N", "order[ID]": "DESC", "select[]": ["ID"]}, timeout=5)
-                deals_lead = deal_resp_lead.json().get('result', [])
-                if deals_lead: deal_id = deals_lead[0]['ID']
+                deal_resp_lead = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
+                    "filter[LEAD_ID]": user.id_bitrix, "filter[CLOSED]": "N", "order[ID]": "DESC", "select[]": ["ID"]
+                })
+                if deal_resp_lead and deal_resp_lead.get('result'):
+                    deal_id = deal_resp_lead['result'][0]['ID']
 
             fields_to_save = {
                 "TITLE": plan_title,
@@ -172,14 +213,14 @@ class BitrixService:
 
             if not deal_id:
                 fields_to_save["CONTACT_ID"] = contact_id_to_use
-                resp = requests.post(f"{base_url}crm.deal.add.json", json={"fields": fields_to_save}, timeout=10)
-                if 'result' in resp.json(): deal_id = resp.json()['result']
+                resp = BitrixService._safe_request('POST', 'crm.deal.add.json', json={"fields": fields_to_save})
+                if resp and 'result' in resp: deal_id = resp['result']
             else:
-                requests.post(f"{base_url}crm.deal.update.json", json={"id": deal_id, "fields": fields_to_save}, timeout=10)
+                BitrixService._safe_request('POST', 'crm.deal.update.json', json={"id": deal_id, "fields": fields_to_save})
 
             if deal_id and products_list:
                 rows = [{"PRODUCT_ID": p.get('id', 0), "PRODUCT_NAME": p.get('name'), "PRICE": float(p.get('price', 0)), "QUANTITY": 1} for p in products_list]
-                requests.post(f"{base_url}crm.deal.productrows.set.json", json={"id": deal_id, "rows": rows}, timeout=10)
+                BitrixService._safe_request('POST', 'crm.deal.productrows.set.json', json={"id": deal_id, "rows": rows})
             
             return deal_id
         except Exception as e:
@@ -188,21 +229,19 @@ class BitrixService:
 
     @staticmethod
     def update_contact_data(user_bitrix_id: str, cpf: Optional[str] = None, phone: Optional[str] = None) -> bool:
-        base_url = BitrixService._get_base_url()
-        if not base_url or not user_bitrix_id: return False
+        if not user_bitrix_id: return False
         fields = {}
         if cpf: fields[BitrixConfig.DEAL_FIELDS["CPF"]] = cpf
         if phone: fields["PHONE"] = [{"VALUE": phone, "VALUE_TYPE": "WORK"}]
         if not fields: return False
         try:
-            requests.post(f"{base_url}crm.contact.update.json", json={"id": user_bitrix_id, "fields": fields}, timeout=5)
+            BitrixService._safe_request('POST', 'crm.contact.update.json', json={"id": user_bitrix_id, "fields": fields})
             return True
         except Exception: return False
 
     @staticmethod
     def update_contact_address(user_bitrix_id: str, address_data: Dict) -> bool:
-        base_url = BitrixService._get_base_url()
-        if not base_url or not user_bitrix_id or not address_data: return False
+        if not user_bitrix_id or not address_data: return False
         fields = {
             "ADDRESS": f"{address_data.get('street', '')}, {address_data.get('number', '')}",
             "ADDRESS_2": f"{address_data.get('neighborhood', '')} - {address_data.get('complement', '')}",
@@ -212,7 +251,7 @@ class BitrixService:
             "ADDRESS_COUNTRY": "Brasil"
         }
         try:
-            requests.post(f"{base_url}crm.contact.update.json", json={"id": user_bitrix_id, "fields": fields}, timeout=5)
+            BitrixService._safe_request('POST', 'crm.contact.update.json', json={"id": user_bitrix_id, "fields": fields})
             logger.info(f"✅ Endereço do Contato {user_bitrix_id} atualizado.")
             return True
         except Exception as e:
@@ -221,177 +260,99 @@ class BitrixService:
 
     @staticmethod
     def get_product_catalog() -> List[Dict]:
-        base_url = BitrixService._get_base_url()
-        if not base_url: return []
+        """
+        Retorna o catálogo de produtos com Cache para evitar 429.
+        """
+        cache_key = "bitrix_product_catalog"
+        cached_catalog = cache.get(cache_key)
+        if cached_catalog:
+            return cached_catalog
+
         try:
             target_ids = BitrixConfig.SECTION_IDS
             payload = { "filter": { "SECTION_ID": target_ids }, "select": ["ID", "NAME", "PRICE", "DESCRIPTION", "SECTION_ID"] }
-            response = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=10)
+            response = BitrixService._safe_request('POST', 'crm.product.list.json', json=payload)
+            
             catalog = []
-            if "result" in response.json():
-                for p in response.json()["result"]:
+            if response and "result" in response:
+                for p in response["result"]:
                     catalog.append({
                         "id": p.get("ID"),
                         "name": p.get("NAME"),
                         "price": float(p.get("PRICE") or 0),
                         "description": p.get("DESCRIPTION", ""),
-                        "image_url": BitrixService._fetch_best_image(base_url, p["ID"]),
+                        "image_url": BitrixService._fetch_best_image(p["ID"]),
                         "category_id": p.get("SECTION_ID")
                     })
+            
+            # Salva no Cache por 1 hora
+            cache.set(cache_key, catalog, 3600)
             return catalog
         except Exception: return []
 
-    # Cache simples em memória para evitar N+1 calls (ID -> {desc, img, timestamp})
-    _PRODUCT_CACHE = {}
-
     @staticmethod
-    def _get_cached_product_info(base_url: str, p_id: Any) -> Dict:
-        # Verifica cache
-        cached = BitrixService._PRODUCT_CACHE.get(p_id)
-        if cached:
-            return cached
-
-        # Se não tiver no cache, busca
-        desc = ""
-        img_url = None
-        
-        try:
-            # 1. Busca Detalhes (Descrição)
-            p_info = requests.get(f"{base_url}crm.product.get.json", params={"id": p_id}, timeout=3).json().get("result", {})
-            desc = p_info.get("DESCRIPTION", "")
-        except: pass
-
-        # 2. Busca Imagem
-        img_url = BitrixService._fetch_best_image(base_url, p_id)
-        
-        # Salva no cache
-        data = {"description": desc, "img": img_url}
-        BitrixService._PRODUCT_CACHE[p_id] = data
-        return data
-
-    @staticmethod
-    def _find_bitrix_id_by_email(email: str) -> Optional[str]:
-        base_url = BitrixService._get_base_url()
-        if not base_url: return None
-        try:
-            # 1. Search Contact
-            contact_check = requests.get(f"{base_url}crm.contact.list.json", params={
-                "filter[EMAIL]": email, "select[]": ["ID"]}, timeout=5)
-            contacts = contact_check.json().get('result', [])
-            if contacts: return contacts[0]['ID']
-
-            # 2. Search Lead (if no contact)
-            lead_check = requests.get(f"{base_url}crm.lead.list.json", params={
-                "filter[EMAIL]": email, "select[]": ["ID"]}, timeout=5)
-            leads = lead_check.json().get('result', [])
-            if leads: return leads[0]['ID']
-        except: pass
-        return None
-
-    @staticmethod
-    def get_client_protocol(user: Any) -> Dict:
-        base_url = BitrixService._get_base_url()
-        if not base_url: return None
-
-        # Self-Healing: Se não tem ID local, tenta buscar no Bitrix pelo email
-        if not getattr(user, 'id_bitrix', None):
-            found_id = BitrixService._find_bitrix_id_by_email(user.email)
-            if found_id:
-                user.id_bitrix = str(found_id)
-                user.save()
-                logger.info(f"🔧 Self-Healing: ID Bitrix recuperado para {user.email}: {found_id}")
-            else:
-                return {"error": "Usuário não vinculado ao Bitrix (Lead não encontrado)"}
+    def _fetch_best_image(product_id: Any) -> Optional[str]:
+        # Tenta cache específico por imagem de produto (longa duração)
+        cache_key = f"bitrix_product_image_{product_id}"
+        cached_img = cache.get(cache_key)
+        if cached_img: return cached_img
 
         try:
-            resp = requests.get(f"{base_url}crm.deal.list.json", params={
-                "filter[CONTACT_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID", "STAGE_ID", "TITLE", "OPPORTUNITY"]}, timeout=5)
-            deals = resp.json().get('result', [])
-            if not deals: 
-                # Tenta buscar pelo LEAD_ID caso o contato falhe
-                resp_lead = requests.get(f"{base_url}crm.deal.list.json", params={
-                    "filter[LEAD_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID", "STAGE_ID", "TITLE", "OPPORTUNITY"]}, timeout=5)
-                deals = resp_lead.json().get('result', [])
-
-            if not deals: return {"status": "no_deal", "message": "Nenhum protocolo encontrado."}
+            # 1. ProductImage List
+            img_res = BitrixService._safe_request('GET', 'catalog.productImage.list.json', params={"productId": product_id})
+            if img_res and "result" in img_res:
+                res = img_res["result"]
+                if res.get("productImages"):
+                    url = res["productImages"][0].get("detailUrl")
+                    if url:
+                        cache.set(cache_key, url, 86400) # 24h
+                        return url
             
-            deal = deals[0]
-            deal_id = deal.get("ID")
-            total_value = float(deal.get("OPPORTUNITY", 0))
-
-            rows = requests.get(f"{base_url}crm.deal.productrows.get.json", params={"id": deal_id}, timeout=5).json().get('result', [])
-            
-            enrich_products = []
-            for r in rows:
-                p_id = r.get("PRODUCT_ID")
-                product_info = {"description": "", "img": None}
+            # 2. Detail/Preview Picture
+            prod = BitrixService._safe_request('GET', 'crm.product.get.json', params={"id": product_id})
+            if prod and "result" in prod:
+                res = prod["result"]
+                url = None
+                det = res.get("DETAIL_PICTURE")
+                if isinstance(det, dict): url = det.get("showUrl")
+                if not url:
+                    pre = res.get("PREVIEW_PICTURE")
+                    if isinstance(pre, dict): url = pre.get("showUrl")
                 
-                if p_id:
-                    product_info = BitrixService._get_cached_product_info(base_url, p_id)
-
-                enrich_products.append({
-                    "id": p_id,
-                    "name": r.get("PRODUCT_NAME"), 
-                    "price": float(r.get("PRICE", 0)), 
-                    "quantity": int(r.get("QUANTITY", 1)),
-                    "description": product_info["description"],
-                    "img": product_info["img"],
-                    "sub": "Protocolo Personalizado" # Placeholder, ou mapear se possível
-                })
-            
-            return {
-                "deal_id": deal_id, 
-                "stage": deal.get("STAGE_ID"), 
-                "title": deal.get("TITLE"),
-                "total_value": total_value,
-                "products": enrich_products
-            }
-        except Exception as e: 
-            logger.error(f"Erro get_client_protocol: {e}")
-            return {"error": "Erro CRM"}
-
-    @staticmethod
-    def _fetch_best_image(base_url: str, product_id: Any) -> Optional[str]:
-        try:
-            img_res = requests.get(f"{base_url}catalog.productImage.list.json", params={"productId": product_id}, timeout=3)
-            res = img_res.json().get("result", {})
-            if res.get("productImages"): return res["productImages"][0].get("detailUrl")
+                if url:
+                    cache.set(cache_key, url, 86400)
+                    return url
         except: pass
-        try:
-            prod = requests.get(f"{base_url}crm.product.get.json", params={"id": product_id}, timeout=3).json().get("result", {})
-            det = prod.get("DETAIL_PICTURE")
-            if isinstance(det, dict): return det.get("showUrl")
-            pre = prod.get("PREVIEW_PICTURE")
-            if isinstance(pre, dict): return pre.get("showUrl")
-        except: pass
-        return None
+        img_placeholder = "https://via.placeholder.com/150" # Fallback
+        cache.set(cache_key, img_placeholder, 3600)
+        return img_placeholder
 
     @staticmethod
     def generate_protocol(answers: Dict[str, Any]) -> Dict[str, Any]:
-        base_url = BitrixService._get_base_url()
-        if not base_url: return {"error": "Configuration Error"}
         MATCHERS = {
             "dutasterida_oral": ["Dutasterida"], "finasterida_oral": ["Finasterida"],
             "minoxidil_oral": ["Minoxidil", "2.5"], "saw_palmetto_oral": ["Saw"], 
             "minoxidil_topico": ["Minoxidil", "Tópico"], "finasterida_topica": ["Finasterida", "Tópico"], 
             "shampoo": ["Shampoo"], "biotina": ["Biotina"]
         }
-        catalog_cache = []
-        try:
-            payload = { "filter": { "SECTION_ID": BitrixConfig.SECTION_IDS }, "select": ["ID", "NAME", "PRICE", "DESCRIPTION", "SECTION_ID"] }
-            catalog_cache = requests.post(f"{base_url}crm.product.list.json", json=payload, timeout=5).json().get("result", [])
-        except: return {"error": "Erro CRM Communication"}
+        
+        # Usa o método com cache
+        catalog_cache = BitrixService.get_product_catalog()
+        if not catalog_cache: return {"error": "Erro CRM Communication"}
 
         def find_product(role_key):
             keywords = [k.lower() for k in MATCHERS.get(role_key, [])]
             for p in catalog_cache:
-                name = p.get("NAME", "").lower()
-                if "topico" in role_key and str(p.get('SECTION_ID')) != '20': continue
+                name = p.get("name", "").lower()
+                # Adaptação para usar o dicionário limpo do catalog_cache
+                cat_id = str(p.get("category_id"))
+                if "topico" in role_key and cat_id != '20': continue
                 if all(k in name for k in keywords):
                     if "oral" in role_key and "topico" in name: continue
                     return p
             return None
 
+        # Lógica de Recomendação (Mantida)
         gender = answers.get("F1_Q1_gender", "masculino")
         health = answers.get("F2_Q14_health_cond", "").lower()
         alrg = answers.get("F2_Q15_allergy", "").lower()
@@ -416,82 +377,67 @@ class BitrixService:
         for role in selected:
             p = find_product(role)
             if p:
-                price = float(p.get("PRICE") or 0)
+                price = p["price"]
                 total += price
                 final_products.append({
-                    "id": p["ID"], 
-                    "name": p["NAME"], 
+                    "id": p["id"], 
+                    "name": p["name"], 
                     "price": price, 
                     "sub": "Protocolo Personalizado", 
-                    "img": BitrixService._fetch_best_image(base_url, p["ID"]),
-                    "description": p.get("DESCRIPTION", "")
+                    "img": p["image_url"],
+                    "description": p["description"]
                 })
 
         return {"redFlag": False, "title": "Seu Protocolo Exclusivo", "description": "Baseado na sua triagem.", "products": final_products, "total_price": round(total, 2)}
 
     @staticmethod
     def get_plan_details(plan_slug):
-        base_url = BitrixService._get_base_url()
-        if not base_url: return None
         bitrix_id = BitrixConfig.PLAN_IDS.get(plan_slug)
         if not bitrix_id: return None
+        
+        # Cache para detalhes do plano
+        cache_key = f"bitrix_plan_details_{plan_slug}"
+        cached = cache.get(cache_key)
+        if cached: return cached
+
         try:
-            prod = requests.get(f"{base_url}crm.product.get.json?id={bitrix_id}").json().get("result", {})
-            return {"id": str(prod.get("ID")), "name": prod.get("NAME"), "price": float(prod.get("PRICE") or 0)}
-        except: return None
+            prod = BitrixService._safe_request('GET', 'crm.product.get.json', params={"id": bitrix_id})
+            if prod and 'result' in prod:
+                p = prod['result']
+                data = {"id": str(p.get("ID")), "name": p.get("NAME"), "price": float(p.get("PRICE") or 0)}
+                cache.set(cache_key, data, 3600)
+                return data
+        except: pass
+        return None
 
     @staticmethod
     def check_and_update_user_plan(user: Any) -> str:
-        """
-        Verifica os produtos no Negócio (Deal) do usuário no Bitrix
-        e atualiza o user.current_plan localmente.
-        Retorna o plano detectado ('standard', 'plus' ou 'none').
-        """
-        base_url = BitrixService._get_base_url()
-        if not base_url or not getattr(user, 'id_bitrix', None):
-            return 'none'
+        if not getattr(user, 'id_bitrix', None): return 'none'
         
         try:
-            # 1. Encontrar o Deal do usuário
-            resp = requests.get(f"{base_url}crm.deal.list.json", params={
-                "filter[CONTACT_ID]": user.id_bitrix, 
-                "order[ID]": "DESC", 
-                "select[]": ["ID"]
-            }, timeout=5)
-            deals = resp.json().get('result', [])
+            # Encontrar o Deal
+            resp = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
+                "filter[CONTACT_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID"]
+            })
+            if not resp or not resp.get('result'): return 'none'
             
-            if not deals:
-                return 'none'
+            deal_id = resp['result'][0].get("ID")
             
-            deal_id = deals[0].get("ID")
+            # Obter produtos
+            rows_resp = BitrixService._safe_request('GET', 'crm.deal.productrows.get.json', params={"id": deal_id})
+            if not rows_resp: return user.current_plan
             
-            # 2. Obter os produtos do Deal
-            rows_resp = requests.get(f"{base_url}crm.deal.productrows.get.json", params={"id": deal_id}, timeout=5)
-            rows = rows_resp.json().get('result', [])
-            
-            # [REF] Usando Config
-            # Inicialização Necessária!
-            has_plus = False
-            has_standard = False
+            rows = rows_resp.get('result', [])
             
             plan_ids = BitrixConfig.PLAN_IDS
             id_standard = plan_ids.get('standard')
             id_plus = plan_ids.get('plus')
-
-            for r in rows:
-                p_id = int(r.get("PRODUCT_ID", 0))
-                if p_id == id_plus:
-                    has_plus = True
-                elif p_id == id_standard:
-                    has_standard = True
             
-            new_plan = 'none'
-            if has_plus:
-                new_plan = 'plus'
-            elif has_standard:
-                new_plan = 'standard'
+            has_plus = any(int(r.get("PRODUCT_ID", 0)) == id_plus for r in rows)
+            has_standard = any(int(r.get("PRODUCT_ID", 0)) == id_standard for r in rows)
             
-            # 3. Atualizar usuário se mudou
+            new_plan = 'plus' if has_plus else ('standard' if has_standard else 'none')
+            
             if user.current_plan != new_plan:
                 user.current_plan = new_plan
                 user.save(update_fields=['current_plan'])
@@ -505,45 +451,172 @@ class BitrixService:
 
     @staticmethod
     def get_contact_data(user: Any) -> Dict[str, Any]:
-        """
-        Busca dados detalhados do Contato no Bitrix (Telefone, Endereço).
-        """
-        base_url = BitrixService._get_base_url()
         contact_id = getattr(user, 'id_bitrix', None)
+        if not contact_id: return {}
         
-        if not base_url or not contact_id:
-            return {}
+        cache_key = f"bitrix_contact_details_{contact_id}"
+        cached = cache.get(cache_key)
+        if cached: return cached
 
         try:
-            # Selecionar campos específicos para evitar payload gigante
-            # PHONE, ADDRESS, ADDRESS_2, ADDRESS_CITY, ADDRESS_POSTAL_CODE, ADDRESS_PROVINCE
-            resp = requests.get(f"{base_url}crm.contact.get.json", params={
-                "id": contact_id
-            }, timeout=5)
+            resp = BitrixService._safe_request('GET', 'crm.contact.get.json', params={"id": contact_id})
+            if not resp: return {}
             
-            data = resp.json().get('result', {})
+            data = resp.get('result', {})
             
-            # Formatar Telefone
             phone = ""
             if "PHONE" in data and isinstance(data["PHONE"], list) and len(data["PHONE"]) > 0:
                 phone = data["PHONE"][0].get("VALUE", "")
 
-            # Formatar Endereço
-            # Bitrix Fields: ADDRESS (Rua, Num), ADDRESS_2 (Bairro, Compl), ADDRESS_CITY, ADDRESS_PROVINCE, ADDRESS_POSTAL_CODE, ADDRESS_COUNTRY
             address = {
-                "street": data.get("ADDRESS", ""), # O Bitrix muitas vezes junta tudo aqui se não for bem separado
+                "street": data.get("ADDRESS", ""),
                 "city": data.get("ADDRESS_CITY", ""),
                 "state": data.get("ADDRESS_PROVINCE", ""),
                 "zip": data.get("ADDRESS_POSTAL_CODE", ""),
                 "neighborhood": data.get("ADDRESS_2", ""),
                 "country": data.get("ADDRESS_COUNTRY", "Brasil")
             }
-
-            return {
-                "phone": phone,
-                "address": address
-            }
+            
+            final_data = {"phone": phone, "address": address}
+            cache.set(cache_key, final_data, 300) # 5 minutos
+            return final_data
 
         except Exception as e:
             logger.error(f"❌ Erro ao buscar dados do contato {contact_id}: {e}")
             return {}
+
+    @staticmethod
+    def get_client_protocol(user: Any) -> Dict:
+        if not getattr(user, 'id_bitrix', None):
+            found_id = BitrixService._find_bitrix_id_by_email(user.email)
+            if found_id:
+                user.id_bitrix = str(found_id)
+                user.save()
+            else:
+                return {"error": "Usuário não vinculado ao Bitrix (Lead não encontrado)"}
+
+        try:
+            resp = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
+                "filter[CONTACT_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID", "STAGE_ID", "TITLE", "OPPORTUNITY"]
+            })
+            deals = resp.get('result', []) if resp else []
+            if not deals: 
+                 resp_lead = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
+                    "filter[LEAD_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID", "STAGE_ID", "TITLE", "OPPORTUNITY"]
+                 })
+                 deals = resp_lead.get('result', []) if resp_lead else []
+
+            if not deals: return {"status": "no_deal", "message": "Nenhum protocolo encontrado."}
+            
+            deal = deals[0]
+            deal_id = deal.get("ID")
+            total_value = float(deal.get("OPPORTUNITY", 0))
+
+            rows_res = BitrixService._safe_request('GET', 'crm.deal.productrows.get.json', params={"id": deal_id})
+            rows = rows_res.get('result', []) if rows_res else []
+            
+            enrich_products = []
+            for r in rows:
+                p_id = r.get("PRODUCT_ID")
+                # Usa métodos cacheados
+                desc = ""
+                img = None
+                if p_id:
+                    # Tenta pegar info do catálogo ou cache temporário
+                    img = BitrixService._fetch_best_image(p_id)
+                    # Descrição exigiria outro call se não estiver no catalog cache.
+                    # Simplificação para performance: não busca description individualmente se for pesado
+                
+                enrich_products.append({
+                    "id": p_id,
+                    "name": r.get("PRODUCT_NAME"), 
+                    "price": float(r.get("PRICE", 0)), 
+                    "quantity": int(r.get("QUANTITY", 1)),
+                    "description": desc,
+                    "img": img,
+                    "sub": "Protocolo Personalizado"
+                })
+            
+            return {
+                "deal_id": deal_id, 
+                "stage": deal.get("STAGE_ID"), 
+                "title": deal.get("TITLE"),
+                "total_value": total_value,
+                "products": enrich_products
+            }
+        except Exception as e: 
+            logger.error(f"Erro get_client_protocol: {e}")
+            return {"error": "Erro CRM"}
+
+    @staticmethod
+    def _find_bitrix_id_by_email(email: str) -> Optional[str]:
+        try:
+            contact_check = BitrixService._safe_request('GET', 'crm.contact.list.json', params={
+                "filter[EMAIL]": email, "select[]": ["ID"]
+            })
+            if contact_check and contact_check.get('result'): return contact_check['result'][0]['ID']
+
+            lead_check = BitrixService._safe_request('GET', 'crm.lead.list.json', params={
+                "filter[EMAIL]": email, "select[]": ["ID"]
+            })
+            if lead_check and lead_check.get('result'): return lead_check['result'][0]['ID']
+        except: pass
+        return None
+
+    # =========================================================================
+    # 3. WEBHOOKS DE ENTRADA (Reactive Architecture)
+    # =========================================================================
+
+    @staticmethod
+    def process_incoming_webhook(data: Dict[str, Any]) -> bool:
+        """
+        Processa eventos recebidos do Bitrix (Ex: ONCRMDEALUPDATE).
+        """
+        event = data.get('event')
+        
+        # Log seguro
+        logger.info(f"📨 Webhook Bitrix Recebido: {event}")
+
+        if event == 'ONCRMDEALUPDATE':
+            return BitrixService._handle_deal_update(data)
+        
+        # Outros eventos: ONCRMCONTACTADD, etc.
+        return True
+
+    @staticmethod
+    def _handle_deal_update(data: Dict[str, Any]) -> bool:
+        """
+        Quando um negócio é atualizado, verificamos se o usuário associado precisa de update no plano.
+        """
+        try:
+            deal_id = data.get('data[FIELDS][ID]')
+            if not deal_id: return False
+
+            # Buscar o Deal para ver quem é o CONTACT_ID
+            deal_info = BitrixService._safe_request('GET', 'crm.deal.get.json', params={"id": deal_id})
+            if not deal_info or not deal_info.get('result'): return False
+            
+            result = deal_info['result']
+            contact_id = result.get('CONTACT_ID')
+            stage_id = result.get('STAGE_ID') 
+            
+            if not contact_id:
+                logger.warning(f"Webhook Deal {deal_id} sem Contact ID.")
+                return False
+
+            # Encontrar usuário Django
+            from .models import User
+            try:
+                user = User.objects.get(id_bitrix=str(contact_id))
+                logger.info(f"🔄 Sincronizando Plano para usuário {user.email} (Trigger: Webhook Deal {deal_id})")
+                
+                # Forçar atualização do plano
+                BitrixService.check_and_update_user_plan(user)
+                return True
+            except User.DoesNotExist:
+                logger.warning(f"Webhook: Usuário com id_bitrix {contact_id} não encontrado no Django.")
+                return False
+
+        except Exception as e:
+            logger.exception(f"❌ Erro _handle_deal_update: {e}")
+            return False
