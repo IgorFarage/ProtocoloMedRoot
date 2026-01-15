@@ -12,7 +12,7 @@ from .services import FinancialService
 from .serializers import PurchaseSerializer
 from apps.accounts.serializers import RegisterSerializer
 from apps.store.services import SubscriptionService
-
+import os
 # Importa o BitrixService com tratamento de erro
 try:
     from apps.accounts.services import BitrixService
@@ -160,6 +160,7 @@ class CompletePurchaseView(APIView):
             },
             "external_reference": external_ref
         }
+        
 
         # 3. Get or Create User (Before Payment to get Customer ID)
         try:
@@ -228,7 +229,27 @@ class CompletePurchaseView(APIView):
                     SubscriptionService.activate_subscription_from_transaction(transaction)
 
                 # Bitrix Integration
-                self._handle_bitrix_integration(user, validated_data, payment_result, plan_id, total_price)
+                bitrix_success = False
+                deal_id = None
+                try:
+                    deal_id = self._handle_bitrix_integration(user, validated_data, payment_result, plan_id, total_price)
+                    if deal_id:
+                        bitrix_success = True
+                except Exception as e:
+                    logger.error(f"⚠️ Bitrix Sync Failed directly after purchase: {e}")
+
+                # Update Transaction with Sync Status
+                transaction.bitrix_sync_status = 'synced' if bitrix_success else 'failed'
+                if bitrix_success: transaction.bitrix_deal_id = str(deal_id)
+                # Save MP Metadata (Sanitized) & Context
+                meta_data = {
+                    "payment_response": self._sanitize_payment_data(payment_result),
+                    "original_products": validated_data.get('products', []),
+                    "questionnaire_snapshot": validated_data.get('questionnaire_data', {})
+                }
+                # Fix: Convert Decimals to float/str for JSON serialization
+                transaction.mp_metadata = self._make_json_serializable(meta_data)
+                transaction.save()
 
                 # [FIX CACHE] Limpar cache do protocolo para refletir mudança imediata (Standard -> Plus)
                 from django.core.cache import cache
@@ -259,6 +280,45 @@ class CompletePurchaseView(APIView):
             logger.exception(f"❌ Internal Consistency Error: {e}")
             return Response({"error": "Erro ao finalizar pedido (consistência)."}, status=500)
 
+    def _sanitize_payment_data(self, payment_result):
+        """
+        Remove dados sensíveis e desnecessários do payload do Mercado Pago.
+        """
+        if not payment_result or not isinstance(payment_result, dict):
+            return {}
+        
+        sanitized = payment_result.copy()
+        
+        # Campos para remover (PII excessiva ou dados técnicos irrelevantes)
+        keys_to_remove = [
+            'card', 'payer', 'additional_info', 'processing_mode', 'merchant_account_id'
+        ]
+        
+        for key in keys_to_remove:
+            sanitized.pop(key, None)
+            
+        # Manter apenas dados essenciais do payer se necessário, mas o MP já retorna seguro.
+        # Reforço de segurança: garantindo que não salvamos objeto card completo se vier
+        if 'card' in sanitized: del sanitized['card']
+            
+        return sanitized
+
+    def _make_json_serializable(self, data):
+        """
+        Recursively converts Decimal objects to floats (or strings) so they can be serialized to JSON.
+        Handles dicts, lists, and direct Decimal values.
+        """
+        from decimal import Decimal
+        if isinstance(data, dict):
+            return {k: self._make_json_serializable(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._make_json_serializable(v) for v in data]
+        elif isinstance(data, Decimal):
+            return float(data)
+        elif hasattr(data, 'pk') and hasattr(data, '__dict__'): # Handle basic model instances if any slip through
+             return str(data)
+        return data
+
     def _extract_error_message(self, payment_result):
         if not payment_result: return "Erro desconhecido"
         msg = payment_result.get('message') or payment_result.get('status_detail') or "Falha no pagamento"
@@ -277,9 +337,9 @@ class CompletePurchaseView(APIView):
         # Re-using logic from original code passing data to serializer
         # Note: Validated data is clean, but RegisterSerializer needs raw or dict
         
-        from apps.accounts.models import CustomUser # Assuming model name
+        from apps.accounts.models import User
         email = validated_data.get('email')
-        existing = CustomUser.objects.filter(email=email).first()
+        existing = User.objects.filter(email=email).first()
         if existing:
             return existing
             
@@ -290,52 +350,53 @@ class CompletePurchaseView(APIView):
         raise ValueError("Invalid User Data for Creation")
 
     def _handle_bitrix_integration(self, user, validated_data, payment_result, plan_id, total_price):
-        if not BitrixService: return
+        """
+        Tenta realizar a integração completa. Retorna o Deal ID se sucesso, ou lança exceção.
+        """
+        if not BitrixService: return None
 
-        try:
-            # 1. Lead/Contact Sync
-            if not user.id_bitrix:
-                bitrix_id = BitrixService.create_lead(user, validated_data.get('questionnaire_data'), validated_data.get('address_data'))
-                if bitrix_id:
-                    user.id_bitrix = str(bitrix_id)
-                    user.save()
-            
-            # 2. Update Contact
-            BitrixService.update_contact_data(user.id_bitrix, validated_data.get('cpf'), validated_data.get('phone'))
+        # 1. Lead/Contact Sync
+        if not user.id_bitrix:
+            bitrix_id = BitrixService.create_lead(user, validated_data.get('questionnaire_data'), validated_data.get('address_data'))
+            if bitrix_id:
+                user.id_bitrix = str(bitrix_id)
+                user.save()
+        
+        # 2. Update Contact
+        BitrixService.update_contact_data(user.id_bitrix, validated_data.get('cpf'), validated_data.get('phone'))
 
-            # 3. Prepare Deal
-            from apps.accounts.config import BitrixConfig
-            products = validated_data.get('products', [])
-            
-            # [FIX UPGRADE] Remover produtos que sejam PLANOS antigos (Standard/Plus) para evitar duplicidade
-            all_plan_ids = BitrixConfig.PLAN_IDS.values() # [262, 264, etc]
-            
-            # Filtrar produtos que NÃO sejam planos
-            filtered_products = [
-                p for p in products 
-                if int(p.get('id', 0)) not in all_plan_ids
-            ]
-            
-            final_products = list(filtered_products)
-            
-            # Add New Plan Item
-            if hasattr(BitrixService, 'get_plan_details'):
-                plan_item = BitrixService.get_plan_details(plan_id)
-                if plan_item: final_products.append(plan_item)
-            
-            payment_info_bitrix = {
-                "id": payment_result.get('id'),
-                "date_created": payment_result.get('date_created'),
-                "status": payment_result.get('status')
-            }
+        # 3. Prepare Deal
+        from apps.accounts.config import BitrixConfig
+        products = validated_data.get('products', [])
+        
+        # [FIX UPGRADE] Remover produtos que sejam PLANOS antigos (Standard/Plus) para evitar duplicidade
+        all_plan_ids = BitrixConfig.PLAN_IDS.values() # [262, 264, etc]
+        
+        # Filtrar produtos que NÃO sejam planos
+        filtered_products = [
+            p for p in products 
+            if int(p.get('id', 0)) not in all_plan_ids
+        ]
+        
+        final_products = list(filtered_products)
+        
+        # Add New Plan Item
+        if hasattr(BitrixService, 'get_plan_details'):
+            plan_item = BitrixService.get_plan_details(plan_id)
+            if plan_item: final_products.append(plan_item)
+        
+        payment_info_bitrix = {
+            "id": payment_result.get('id'),
+            "date_created": payment_result.get('date_created'),
+            "status": payment_result.get('status')
+        }
 
-            BitrixService.prepare_deal_payment(
-                user, 
-                final_products, 
-                f"ProtocoloMed - {plan_id}", 
-                total_price, 
-                validated_data.get('questionnaire_data'), 
-                payment_data=payment_info_bitrix
-            )
-        except Exception as e:
-            logger.error(f"⚠️ Bitrix Integration Error: {e}")
+        # Returns Deal ID or None
+        return BitrixService.prepare_deal_payment(
+            user, 
+            final_products, 
+            f"ProtocoloMed - {plan_id}", 
+            total_price, 
+            validated_data.get('questionnaire_data'), 
+            payment_data=payment_info_bitrix
+        )

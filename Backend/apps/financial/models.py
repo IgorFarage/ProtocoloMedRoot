@@ -46,6 +46,17 @@ class Transaction(models.Model):
     external_reference = models.CharField(max_length=100, unique=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     
+    # Bitrix Sync & Audit
+    bitrix_deal_id = models.CharField(max_length=100, null=True, blank=True)
+    bitrix_sync_status = models.CharField(
+        max_length=20, 
+        choices=[('pending', 'Pendente'), ('synced', 'Sincronizado'), ('failed', 'Falhou')],
+        default='pending'
+    )
+    bitrix_sync_attempts = models.IntegerField(default=0)
+    last_sync_attempt = models.DateTimeField(null=True, blank=True)
+    mp_metadata = models.JSONField(default=dict, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -482,7 +482,7 @@ class BitrixService:
             return final_data
 
         except Exception as e:
-            logger.error(f"❌ Erro ao buscar dados do contato {contact_id}: {e}")
+            logger.warning(f"⚠️ Erro ao buscar dados do contato {contact_id} (Offline Mode): {e}")
             return {}
 
     @staticmethod
