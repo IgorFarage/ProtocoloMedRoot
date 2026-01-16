@@ -3,6 +3,7 @@ version: '3.8'
 services:
   db:
     image: postgres:15-alpine
+    restart: always
     volumes:
       - pg_data:/var/lib/postgresql/data
     env_file:
@@ -16,6 +17,7 @@ services:
       retries: 5
 
   backend:
+    restart: always
     build:
       context: ./Backend
       dockerfile: Dockerfile
@@ -32,6 +34,7 @@ services:
       - protocolomed_net
 
   nginx:
+    restart: always
     build:
       context: ./Frontend
       dockerfile: Dockerfile
