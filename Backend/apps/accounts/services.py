@@ -627,3 +627,85 @@ class BitrixService:
         except Exception as e:
             logger.exception(f"❌ Erro _handle_deal_update: {e}")
             return False
+
+    @staticmethod
+    def sync_transaction_full(transaction: Any) -> Dict[str, Any]:
+        """
+        Sincronização COMPLETA: Garante que Contato, Endereço e Deal estejam corretos no Bitrix.
+        Usado para recuperação manual ou auto-healing.
+        """
+        results = {
+            "contact_created": False,
+            "contact_updated": False,
+            "address_updated": False,
+            "deal_id": None,
+            "errors": []
+        }
+        
+        try:
+            user = transaction.user
+            meta = transaction.mp_metadata or {}
+            
+            # 1. Garantir existência do Lead/Contato
+            # Tenta usar endereço do metadata se existir, senão pega do User (se formos expandir isso)
+            address_data = {}
+            if meta.get('shipping_address'):
+                address_data = meta.get('shipping_address')
+            
+            # Se o usuário não tem bitrix_id, cria
+            if not getattr(user, 'id_bitrix', None):
+                lead_id = BitrixService.create_lead(user, answers=None, address_data=address_data)
+                if lead_id:
+                    user.id_bitrix = lead_id
+                    user.save()
+                    results["contact_created"] = True
+                else:
+                    results["errors"].append("Falha ao criar/encontrar Lead/Contato")
+                    return results
+
+            bitrix_id = user.id_bitrix
+            
+            # 2. Atualizar Dados do Contato (Telefone, CPF)
+            payer = meta.get('payer', {})
+            phone = payer.get('phone', {}).get('number') # Estrutura do MP geralmente
+            if not phone and meta.get('payment_response'):
+                 # Tentativa de fallback
+                 phone = meta.get('payment_response', {}).get('payer', {}).get('phone', {}).get('number')
+                 
+            cpf = payer.get('identification', {}).get('number')
+            
+            if BitrixService.update_contact_data(bitrix_id, cpf=cpf, phone=phone):
+                results["contact_updated"] = True
+            
+            # 3. Atualizar Endereço
+            if address_data:
+                 if BitrixService.update_contact_address(bitrix_id, address_data):
+                     results["address_updated"] = True
+            
+            # 4. Criar/Atualizar Deal
+            deal_id = BitrixService.prepare_deal_payment(
+                user,
+                meta.get('original_products', []),
+                f"ProtocoloMed - {transaction.plan_type}",
+                float(transaction.amount),
+                meta.get('questionnaire_snapshot', {}),
+                meta.get('payment_response', {})
+            )
+            
+            if deal_id:
+                results["deal_id"] = deal_id
+                
+                # Atualizar Transaction se necessário
+                if transaction.bitrix_deal_id != str(deal_id):
+                    transaction.bitrix_deal_id = str(deal_id)
+                    transaction.bitrix_sync_status = 'synced'
+                    transaction.save()
+            else:
+                 results["errors"].append("Falha ao criar Deal")
+
+            return results
+
+        except Exception as e:
+            logger.exception(f"❌ Erro sync_transaction_full: {e}")
+            results["errors"].append(str(e))
+            return results
