@@ -37,7 +37,9 @@ export default function ClientLayout() {
             <aside className="w-full md:w-64 bg-white border-r border-gray-100 shadow-sm flex-shrink-0 z-10">
                 <div className="p-6 flex flex-col h-full">
                     <div className="mb-8 flex flex-col items-center md:items-start space-y-2">
-                        <img src={Logo} alt="ProtocoloMed" className="h-12" />
+                        <Link to="/" className="hover:opacity-80 transition-opacity">
+                            <img src={Logo} alt="ProtocoloMed" className="h-12" />
+                        </Link>
 
                         <div className="flex flex-wrap gap-2 items-center">
                             {/* Indicador de Status (Ativo/Inativo) */}
