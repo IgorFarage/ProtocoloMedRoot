@@ -270,6 +270,7 @@ class BitrixService:
 
         try:
             target_ids = BitrixConfig.SECTION_IDS
+            target_ids = BitrixConfig.SECTION_IDS
             payload = { "filter": { "SECTION_ID": target_ids }, "select": ["ID", "NAME", "PRICE", "DESCRIPTION", "SECTION_ID"] }
             response = BitrixService._safe_request('POST', 'crm.product.list.json', json=payload)
             
@@ -579,6 +580,12 @@ class BitrixService:
 
         if event == 'ONCRMDEALUPDATE':
             return BitrixService._handle_deal_update(data)
+            
+        # Limpar Cache de Produtos se houver alteração no Catálogo
+        if event in ['ONCRMPRODUCTUPDATE', 'ONCRMPRODUCTADD', 'ONCRMPRODUCTDELETE']:
+            logger.info(f"♻️ Limpando Cache de Produtos (Trigger: {event})")
+            cache.delete("bitrix_product_catalog")
+            return True
         
         # Outros eventos: ONCRMCONTACTADD, etc.
         return True
