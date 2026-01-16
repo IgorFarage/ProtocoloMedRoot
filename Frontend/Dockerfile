@@ -6,7 +6,7 @@ FROM node:20-alpine as build
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY . .
 ARG VITE_MERCADO_PAGO_PUBLIC_KEY
