@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    env_file:
+      - .env.prod
+    networks:
+      - protocolomed_net
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $POSTGRES_USER" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000
+    volumes:
+      - static_volume:/app/static
+      - media_volume:/app/media
+    env_file:
+      - .env.prod
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - protocolomed_net
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Frontend/Dockerfile
+    volumes:
+      - static_volume:/app/static
+      - media_volume:/app/media
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - protocolomed_net
+
+volumes:
+  pg_data:
+  static_volume:
+  media_volume:
+
+
+networks:
+  protocolomed_net:
+    driver: bridge

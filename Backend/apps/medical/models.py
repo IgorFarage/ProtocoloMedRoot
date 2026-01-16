@@ -75,8 +75,8 @@ class Appointments(models.Model):
         ]
 
 class PatientPhotos(models.Model):
-    patient = models.ForeignKey(PATIENT_MODEL, on_delete=models.CASCADE)
-    photo_url = models.CharField(max_length=255)
+    patient = models.ForeignKey(PATIENT_MODEL, on_delete=models.CASCADE, related_name='photos')
+    photo = models.ImageField(upload_to='evolution_gallery/%Y/%m/%d/')
     taken_at = models.DateField(auto_now_add=True)
     is_public = models.BooleanField(default=False)
     class Meta:

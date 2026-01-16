@@ -61,7 +61,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
 
-    # Seus Apps Locais (code-first)
+    # Apps Locais (code-first)
     'apps.accounts',
     'apps.medical',
     'apps.store',

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, date, time
 from typing import List, Dict, Any, Optional
 from django.db import transaction
 from django.conf import settings
-from .models import Appointments
+from .models import Appointments, PatientPhotos
 from apps.accounts.models import User
 
 class MedicalScheduleService:
@@ -104,3 +104,36 @@ class MedicalScheduleService:
             return {"error": "Formato de data/hora inválido."}
         except Exception as e:
             return {"error": f"Erro interno: {str(e)}"}
+
+class AppMedicalService:
+    @staticmethod
+    def create_evolution_entry(patient_user: User, image_file, is_public: bool = False) -> PatientPhotos:
+        """
+        Salva uma foto de evolução para o paciente.
+        """
+        # Validar se o usuário é paciente ou tem perfil de paciente associado
+        # O model PatientPhotos espera uma instância de 'accounts.Patients'
+        # Assumindo que o User tem relação one-to-one com Patients (user.patients)
+        
+        patient_profile = getattr(patient_user, 'patients', None)
+        if not patient_profile:
+            # Lazy creation: se não existe, cria agora (recuperação automática)
+            from apps.accounts.models import Patients
+            patient_profile, _ = Patients.objects.get_or_create(user=patient_user)
+            
+        if not patient_profile:
+             raise ValueError("Falha sistêmica: Não foi possível criar/recuperar perfil de Paciente.")
+
+        photo_entry = PatientPhotos.objects.create(
+            patient=patient_profile,
+            photo=image_file,
+            is_public=is_public
+        )
+        return photo_entry
+
+    @staticmethod
+    def get_patient_photos(patient_user: User):
+        patient_profile = getattr(patient_user, 'patients', None)
+        if not patient_profile:
+            return []
+        return patient_profile.photos.all().order_by('-taken_at')
