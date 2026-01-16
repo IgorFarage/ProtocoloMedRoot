@@ -35,6 +35,8 @@ services:
     build:
       context: .
       dockerfile: Frontend/Dockerfile
+      args:
+        VITE_MERCADO_PAGO_PUBLIC_KEY: ${VITE_MERCADO_PAGO_PUBLIC_KEY}
     volumes:
       - static_volume:/app/static
       - media_volume:/app/media

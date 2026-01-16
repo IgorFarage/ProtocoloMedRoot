@@ -9,6 +9,8 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
+ARG VITE_MERCADO_PAGO_PUBLIC_KEY
+ENV VITE_MERCADO_PAGO_PUBLIC_KEY=$VITE_MERCADO_PAGO_PUBLIC_KEY
 RUN npm run build
 
 # STAGE 2: Serve with Nginx
