@@ -161,9 +161,8 @@ class BitrixService:
     @staticmethod
     def prepare_deal_payment(user: Any, products_list: List[Dict], plan_title: str, total_amount: float, answers: Optional[Dict] = None, payment_data: Optional[Dict] = None) -> Optional[str]:
         """
-        Cria ou atualiza um Deal no Bitrix.
-        Apenas insere dados (Status Pagamento, Produtos, Valores).
-        NÃO altera o Stage (Coluna) do Kanban.
+        Cria ou atualiza Deal.
+        CORREÇÃO CRÍTICA: Busca também Deals em 'WON' (Ganhos), evitando pegar Deals antigos (34) em vez do atual (448).
         """
         if not getattr(user, 'id_bitrix', None): return None
 
@@ -177,7 +176,7 @@ class BitrixService:
             deal_id = None
             contact_id_to_use = user.id_bitrix
 
-            # 1. Self-Healing de Lead vs Contato
+            # 1. Self-Healing Lead/Contact
             try:
                 lead_check = BitrixService._safe_request('GET', 'crm.lead.get.json', params={"id": user.id_bitrix})
                 if lead_check and lead_check.get('result'):
@@ -188,18 +187,23 @@ class BitrixService:
                         user.save()
             except Exception: pass
 
-            # 2. Busca Deal Existente (Aberto)
+            # 2. BUSCA INTELIGENTE (A Correção)
+            # Removemos "filter[CLOSED]: N" para ele encontrar o Deal 448 que já está em WON.
             deal_resp = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
                 "filter[CONTACT_ID]": contact_id_to_use, 
-                "filter[CLOSED]": "N", 
-                "order[ID]": "DESC", 
-                "select[]": ["ID", "STAGE_ID"]
+                # Sem filtro de CLOSED, para achar os Ganhos também
+                "order[ID]": "DESC", # O mais recente é o rei
+                "select[]": ["ID", "STAGE_ID", "CLOSED"]
             })
             
             if deal_resp and deal_resp.get('result'):
-                 deal_id = deal_resp['result'][0]['ID']
+                 potential_deal = deal_resp['result'][0]
+                 # Só ignoramos se for uma venda PERDIDA antiga
+                 # Ajuste 'LOSE', 'APOLOGY' conforme os IDs das suas colunas de falha
+                 if potential_deal.get('STAGE_ID') not in ['LOSE', 'APOLOGY']:
+                     deal_id = potential_deal['ID']
             
-            # 3. Define Campos para Atualização de DADOS (Sem Stage)
+            # 3. Define Campos
             fields_to_save = {
                 "TITLE": plan_title,
                 "OPPORTUNITY": float(total_amount),
@@ -208,7 +212,7 @@ class BitrixService:
             if answers_json_string: 
                 fields_to_save[BitrixConfig.DEAL_FIELDS["ANSWERS_JSON"]] = answers_json_string
             
-            # 4. Apenas Dados de Pagamento
+            # 4. Dados de Pagamento (Sem mover Stage)
             if payment_data:
                 if payment_data.get('id'): 
                     fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_ID"]] = str(payment_data.get('id'))
@@ -218,24 +222,20 @@ class BitrixService:
                 if payment_data.get('status'):
                     status_map = {"approved": "Aprovado", "in_process": "Em análise", "pending": "Pendente", "rejected": "Recusado"}
                     raw_status = str(payment_data.get('status')).lower()
-                    
-                    # Atualiza APENAS o campo de texto, não move a coluna
                     fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_STATUS"]] = status_map.get(raw_status, raw_status)
                     
                     if raw_status == 'approved':
-                        logger.info(f"ℹ️ Atualizando status de pagamento para Aprovado no Deal {deal_id or 'Novo'}.")
+                        logger.info(f"ℹ️ Atualizando dados de pagamento no Deal {deal_id or 'Novo'}.")
 
-            # 5. Executa no Bitrix
+            # 5. Executa
             if not deal_id:
                 fields_to_save["CONTACT_ID"] = contact_id_to_use
-                # Cria novo (cairá na coluna padrão definida no Bitrix)
                 resp = BitrixService._safe_request('POST', 'crm.deal.add.json', json={"fields": fields_to_save})
                 if resp and 'result' in resp: deal_id = resp['result']
             else:
-                # Atualiza existente (Mantém Stage atual)
                 BitrixService._safe_request('POST', 'crm.deal.update.json', json={"id": deal_id, "fields": fields_to_save})
 
-            # 6. Atualiza Produtos
+            # 6. Produtos
             if deal_id and products_list:
                 rows = [{"PRODUCT_ID": p.get('id', 0), "PRODUCT_NAME": p.get('name'), "PRICE": float(p.get('price', 0)), "QUANTITY": 1} for p in products_list]
                 BitrixService._safe_request('POST', 'crm.deal.productrows.set.json', json={"id": deal_id, "rows": rows})
