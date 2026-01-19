@@ -241,7 +241,7 @@ class CompletePurchaseView(APIView):
                 # Update Transaction with Sync Status
                 transaction.bitrix_sync_status = 'synced' if bitrix_success else 'failed'
                 if bitrix_success: transaction.bitrix_deal_id = str(deal_id)
-                # Save MP Metadata (Sanitized) & Context
+                # [MODIFICAÇÃO: Snapshot de Contexto para Resiliência]
                 meta_data = {
                     "payment_response": self._sanitize_payment_data(payment_result),
                     "original_products": validated_data.get('products', []),

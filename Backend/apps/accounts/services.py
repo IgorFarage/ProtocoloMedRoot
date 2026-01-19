@@ -233,15 +233,19 @@ class BitrixService:
         fields = {}
         if cpf: fields[BitrixConfig.DEAL_FIELDS["CPF"]] = cpf
         if phone: fields["PHONE"] = [{"VALUE": phone, "VALUE_TYPE": "WORK"}]
+        
         if not fields: return False
         try:
             BitrixService._safe_request('POST', 'crm.contact.update.json', json={"id": user_bitrix_id, "fields": fields})
             return True
-        except Exception: return False
+        except Exception as e:
+            logger.error(f"❌ [Bitrix Sync] Falha Update CPF/Tel: {e}")
+            return False
 
     @staticmethod
     def update_contact_address(user_bitrix_id: str, address_data: Dict) -> bool:
         if not user_bitrix_id or not address_data: return False
+        
         fields = {
             "ADDRESS": f"{address_data.get('street', '')}, {address_data.get('number', '')}",
             "ADDRESS_2": f"{address_data.get('neighborhood', '')} - {address_data.get('complement', '')}",
@@ -252,10 +256,9 @@ class BitrixService:
         }
         try:
             BitrixService._safe_request('POST', 'crm.contact.update.json', json={"id": user_bitrix_id, "fields": fields})
-            logger.info(f"✅ Endereço do Contato {user_bitrix_id} atualizado.")
             return True
         except Exception as e:
-            logger.exception(f"❌ Erro update_contact_address: {e}")
+            logger.error(f"❌ [Bitrix Sync] Falha Update Endereço: {e}")
             return False
 
     @staticmethod
