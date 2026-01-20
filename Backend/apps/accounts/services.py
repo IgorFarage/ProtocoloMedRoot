@@ -178,6 +178,7 @@ class BitrixService:
 
             # 1. Self-Healing Lead/Contact
             try:
+                # [FIX] Envolvo em try específico para evitar 400 se o ID não for de Lead valido
                 lead_check = BitrixService._safe_request('GET', 'crm.lead.get.json', params={"id": user.id_bitrix})
                 if lead_check and lead_check.get('result'):
                     lead_data = lead_check.get('result')
@@ -185,7 +186,9 @@ class BitrixService:
                         contact_id_to_use = str(lead_data.get('CONTACT_ID'))
                         user.id_bitrix = contact_id_to_use
                         user.save()
-            except Exception: pass
+            except Exception: 
+                # Se falhar (ex: 400 Bad Request pq é ID de contato), apenas ignoramos e seguimos
+                pass
 
             # 2. BUSCA INTELIGENTE (A Correção)
             # Removemos "filter[CLOSED]: N" para ele encontrar o Deal 448 que já está em WON.
@@ -641,6 +644,72 @@ class BitrixService:
                 
                 # Forçar atualização do plano
                 BitrixService.check_and_update_user_plan(user)
+
+                # [BIDIRECTIONAL SYNC] Verificar consistência financeira
+                # Se o Django diz que está pago, o Bitrix TEM que dizer que está pago.
+                from apps.financial.models import Transaction
+                from apps.accounts.models import UserQuestionnaire
+                
+                # Busca a transação mais recente aprovada p/ este user
+                # ou busca especificamente pelo deal_id se tivermos esse link
+                transaction = Transaction.objects.filter(bitrix_deal_id=str(deal_id)).first()
+                
+                if not transaction:
+                    # Tenta fallback pelo user e status approved
+                    transaction = Transaction.objects.filter(
+                        user=user, 
+                        status=Transaction.Status.APPROVED
+                    ).order_by('-created_at').first()
+
+                if transaction and transaction.status == Transaction.Status.APPROVED:
+                    # Verifica campos críticos no Deal
+                    current_payment_status = result.get(BitrixConfig.DEAL_FIELDS.get("PAYMENT_STATUS"))
+                    current_opportunity = float(result.get("OPPORTUNITY") or 0)
+                    
+                    needs_fix = False
+                    fields_fix = {}
+
+                    # 1. Checa Status
+                    if current_payment_status != "Aprovado":
+                         logger.warning(f"⚠️ [Sync Inverso] Bitrix desatualizado (Status). Forçando 'Aprovado' no Deal {deal_id}.")
+                         fields_fix[BitrixConfig.DEAL_FIELDS["PAYMENT_STATUS"]] = "Aprovado"
+                         needs_fix = True
+
+                    # 2. Checa Valor (Se estiver zerado no Bitrix mas tiver valor no Django)
+                    if current_opportunity == 0 and transaction.amount > 0:
+                         logger.warning(f"⚠️ [Sync Inverso] Bitrix desatualizado (Valor Zerado). Re-enviando dados.")
+                         # Aqui teríamos que acionar o prepare_deal_payment completo para recriar produtos
+                         # Mas para evitar loop, vamos apenas chamar o repair simples ou logar
+                         # Ideal: Chamar o prepare_deal_payment logicamente
+                         needs_fix = True
+                         # Não definimos fields_fix aqui pois o prepare cuida disso
+
+                    if needs_fix:
+                        # Executa o reparo completo sem recriar objetos, apenas update
+                        # Recupera snapshot se houver
+                        # Importante: Passar products_list vazio se só queremos arrumar status, 
+                        # mas se o valor estiver errado, precisamos dos produtos.
+                        
+                        meta = transaction.mp_metadata or {}
+                        prods = meta.get('original_products', [])
+                        
+                        # Se não tiver produtos no meta (caso legado), tenta regenerar
+                        if not prods and user:
+                             q = UserQuestionnaire.objects.filter(user=user).order_by('-created_at').first()
+                             if q: 
+                                 prot = BitrixService.generate_protocol(q.answers)
+                                 if prot: prods = prot.get('products', [])
+                        
+                        if prods:
+                            BitrixService.prepare_deal_payment(
+                                user=user,
+                                products_list=prods,
+                                plan_title=f"ProtocoloMed - {transaction.plan_type}",
+                                total_amount=float(transaction.amount),
+                                answers=None, # Não precisa re-enviar respostas
+                                payment_data={"status": "approved", "id": transaction.mercado_pago_id}
+                            )
+
                 return True
             except User.DoesNotExist:
                 logger.warning(f"Webhook: Usuário com id_bitrix {contact_id} não encontrado no Django.")
