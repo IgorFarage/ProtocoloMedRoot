@@ -32,9 +32,10 @@ class BitrixService:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((requests.exceptions.RequestException, requests.exceptions.Timeout))
     )
-    def _safe_request(method: str, endpoint: str, **kwargs) -> Optional[Dict]:
+    def _safe_request(method: str, endpoint: str, silent: bool = False, **kwargs) -> Optional[Dict]:
         """
         Executa requisições ao Bitrix com Retries Automáticos (Tenacity) e Tratamento de Erro.
+        param silent: Se True, suprime logs de erro 4xx/5xx (útil para probes de verificação).
         """
         base_url = BitrixService._get_base_url()
         if not base_url:
@@ -54,10 +55,12 @@ class BitrixService:
             
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Erro Bitrix ({endpoint}): {str(e)}")
+            if not silent:
+                logger.error(f"❌ Erro Bitrix ({endpoint}): {str(e)}")
             raise e # Allow Tenacity to retry
         except Exception as e:
-            logger.exception(f"❌ Erro Crítico Bitrix ({endpoint}): {e}")
+            if not silent:
+                logger.exception(f"❌ Erro Crítico Bitrix ({endpoint}): {e}")
             return None
 
     # =========================================================================
@@ -177,18 +180,28 @@ class BitrixService:
             contact_id_to_use = user.id_bitrix
 
             # 1. Self-Healing Lead/Contact
+            # Tenta identificar se o ID é Contato primeiro (evita erro 400 ao buscar Lead com ID de Contato)
+            is_contact = False
             try:
-                # [FIX] Envolvo em try específico para evitar 400 se o ID não for de Lead valido
-                lead_check = BitrixService._safe_request('GET', 'crm.lead.get.json', params={"id": user.id_bitrix})
-                if lead_check and lead_check.get('result'):
-                    lead_data = lead_check.get('result')
-                    if lead_data.get('CONTACT_ID'):
-                        contact_id_to_use = str(lead_data.get('CONTACT_ID'))
-                        user.id_bitrix = contact_id_to_use
-                        user.save()
-            except Exception: 
-                # Se falhar (ex: 400 Bad Request pq é ID de contato), apenas ignoramos e seguimos
-                pass
+                # [PROBE] Verifica silenciosamente se é Contato
+                contact_probe = BitrixService._safe_request('GET', 'crm.contact.get.json', params={"id": user.id_bitrix}, silent=True)
+                if contact_probe and contact_probe.get('result'):
+                    is_contact = True
+            except: pass
+
+            if not is_contact:
+                try:
+                    # [PROBE] Se não é contato, tenta ver se é Lead (pode ter convertido)
+                    lead_check = BitrixService._safe_request('GET', 'crm.lead.get.json', params={"id": user.id_bitrix}, silent=True)
+                    if lead_check and lead_check.get('result'):
+                        lead_data = lead_check.get('result')
+                        if lead_data.get('CONTACT_ID'):
+                            contact_id_to_use = str(lead_data.get('CONTACT_ID'))
+                            user.id_bitrix = contact_id_to_use
+                            user.save()
+                except Exception: 
+                    # Se falhar (ex: 400 Bad Request pq é ID inválido/deleção), ignoramos
+                    pass
 
             # 2. BUSCA INTELIGENTE (A Correção)
             # Removemos "filter[CLOSED]: N" para ele encontrar o Deal 448 que já está em WON.
