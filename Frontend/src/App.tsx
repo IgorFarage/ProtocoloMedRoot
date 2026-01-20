@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/auth/AuthProvider";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import MaintenanceGuard from "@/components/MaintenanceGuard"; // Import correto
 
 // Páginas
 import Index from "./pages/Index";
@@ -49,97 +50,99 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <AuthProvider>
-          <Routes>
-            {/* Rotas Públicas */}
-            <Route path="/" element={<Index />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/cadastro" element={<Register />} />
+        <MaintenanceGuard>
+          <AuthProvider>
+            <Routes>
+              {/* Rotas Públicas */}
+              <Route path="/" element={<Index />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/cadastro" element={<Register />} />
 
-            {/* NOVA ROTA DE PRODUTOS */}
-            <Route path="/produtos" element={<ProductCatalog />} />
+              {/* NOVA ROTA DE PRODUTOS */}
+              <Route path="/produtos" element={<ProductCatalog />} />
 
-            {/* [AJUSTE] Padronizado para inglês para bater com os links internos */}
-            <Route path="/questionario" element={<Questionnaire />} />
+              {/* [AJUSTE] Padronizado para inglês para bater com os links internos */}
+              <Route path="/questionario" element={<Questionnaire />} />
 
-            <Route path="/sobre-nos" element={<AboutUs />} />
-            <Route path="/contato" element={<Contact />} />
-            <Route path="/planos" element={
-              <ClientDataProvider>
-                <PlanSelection />
-              </ClientDataProvider>
-            } />
-            <Route path="/pagamento/sucesso" element={
-              <ProtectedRoute>
+              <Route path="/sobre-nos" element={<AboutUs />} />
+              <Route path="/contato" element={<Contact />} />
+              <Route path="/planos" element={
                 <ClientDataProvider>
-                  <PaymentSuccess />
+                  <PlanSelection />
                 </ClientDataProvider>
-              </ProtectedRoute>
-            } />
-            <Route path="/pagamento/pendente" element={<PaymentPending />} />
-            <Route path="/pagamento/erro" element={<PaymentFailure />} />
+              } />
+              <Route path="/pagamento/sucesso" element={
+                <ProtectedRoute>
+                  <ClientDataProvider>
+                    <PaymentSuccess />
+                  </ClientDataProvider>
+                </ProtectedRoute>
+              } />
+              <Route path="/pagamento/pendente" element={<PaymentPending />} />
+              <Route path="/pagamento/erro" element={<PaymentFailure />} />
 
-            {/* Rotas Protegidas - PACIENTE */}
-            <Route path="/" element={
-              <ProtectedRoute requireRole="patient">
-                <ClientDataProvider>
-                  <ClientLayout />
-                </ClientDataProvider>
-              </ProtectedRoute>
-            }>
-              <Route path="dashboard" element={<ClientOverview />} />
-              <Route path="perfil" element={<ClientProfile />} />
-              <Route path="agendamento" element={<ClientSchedule />} />
-              <Route path="historico" element={<ClientHistory />} />
-              <Route path="SeuProtocolo" element={<ClientProtocol />} />
-              {/* <Route path="PerfilMedico" element={<DoctorProfile />} /> */}
-            </Route>
+              {/* Rotas Protegidas - PACIENTE */}
+              <Route path="/" element={
+                <ProtectedRoute requireRole="patient">
+                  <ClientDataProvider>
+                    <ClientLayout />
+                  </ClientDataProvider>
+                </ProtectedRoute>
+              }>
+                <Route path="dashboard" element={<ClientOverview />} />
+                <Route path="perfil" element={<ClientProfile />} />
+                <Route path="agendamento" element={<ClientSchedule />} />
+                <Route path="historico" element={<ClientHistory />} />
+                <Route path="SeuProtocolo" element={<ClientProtocol />} />
+                {/* <Route path="PerfilMedico" element={<DoctorProfile />} /> */}
+              </Route>
 
-            {/* Rotas Protegidas - MÉDICO */}
-            <Route
-              path="/DoctorDashboard"
-              element={
-                <ProtectedRoute requireRole="doctor">
-                  <DoctorDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/medico/paciente/:id"
-              element={
-                <ProtectedRoute requireRole="doctor">
-                  <DoctorRecord />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/medico/teleconsulta/:id"
-              element={
-                <ProtectedRoute requireRole="doctor">
-                  <DoctorTelemedicine />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/medico/agenda"
-              element={
-                <ProtectedRoute requireRole="doctor">
-                  <DoctorSchedule />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/medico/configuracoes"
-              element={
-                <ProtectedRoute requireRole="doctor">
-                  <DoctorProfileSettings />
-                </ProtectedRoute>
-              }
-            />
+              {/* Rotas Protegidas - MÉDICO */}
+              <Route
+                path="/DoctorDashboard"
+                element={
+                  <ProtectedRoute requireRole="doctor">
+                    <DoctorDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/medico/paciente/:id"
+                element={
+                  <ProtectedRoute requireRole="doctor">
+                    <DoctorRecord />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/medico/teleconsulta/:id"
+                element={
+                  <ProtectedRoute requireRole="doctor">
+                    <DoctorTelemedicine />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/medico/agenda"
+                element={
+                  <ProtectedRoute requireRole="doctor">
+                    <DoctorSchedule />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/medico/configuracoes"
+                element={
+                  <ProtectedRoute requireRole="doctor">
+                    <DoctorProfileSettings />
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AuthProvider>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AuthProvider>
+        </MaintenanceGuard>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
