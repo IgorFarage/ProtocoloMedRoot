@@ -11,7 +11,7 @@ class AddressSerializer(serializers.Serializer):
     complement = serializers.CharField(max_length=100, required=False, allow_blank=True)
 
 class ProductItemSerializer(serializers.Serializer):
-    id = serializers.IntegerField() or serializers.CharField()
+    id = serializers.CharField()
     name = serializers.CharField()
     price = serializers.DecimalField(max_digits=10, decimal_places=2)
 

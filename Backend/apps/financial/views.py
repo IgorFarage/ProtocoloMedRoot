@@ -147,6 +147,13 @@ class CompletePurchaseView(APIView):
         payment_method = validated_data.get('payment_method_id')
         external_ref = str(uuid.uuid4())
 
+        # [DEBUG] Log incoming products
+        raw_products = request.data.get('products', [])
+        val_products = validated_data.get('products', [])
+        logger.info(f"🛒 Checkout Initialized for {email}. Raw Products: {len(raw_products)} | Validated Products: {len(val_products)}")
+        if raw_products:
+             logger.info(f"📦 First Product IDs: {[p.get('id') for p in raw_products[:5]]}")
+
         # 2. Payment Payload Construction
         payment_payload = {
             "transaction_amount": total_price,
@@ -242,9 +249,19 @@ class CompletePurchaseView(APIView):
                 transaction.bitrix_sync_status = 'synced' if bitrix_success else 'failed'
                 if bitrix_success: transaction.bitrix_deal_id = str(deal_id)
                 # [MODIFICAÇÃO: Snapshot de Contexto para Resiliência]
+                # [OTIMIZAÇÃO] Salvar apenas dados essenciais para economizar espaço no DB
+                raw_products = request.data.get('products', [])
+                sanitized_products = [
+                    {
+                        "id": p.get("id"), 
+                        "name": p.get("name"), 
+                        "price": p.get("price")
+                    } for p in raw_products
+                ]
+
                 meta_data = {
                     "payment_response": self._sanitize_payment_data(payment_result),
-                    "original_products": validated_data.get('products', []),
+                    "original_products": sanitized_products, 
                     "questionnaire_snapshot": validated_data.get('questionnaire_data', {})
                 }
                 # Fix: Convert Decimals to float/str for JSON serialization
