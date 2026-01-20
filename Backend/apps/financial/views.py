@@ -123,7 +123,28 @@ class WebhookView(APIView):
 
 
 # --- VIEW 4: COMPRA COMPLETA (REFACTORED) ---
+
+class PlanPricesView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """
+        Retorna os preços atuais dos planos Standard e Plus diretamente do Bitrix (ou cache).
+        """
+        standard_details = BitrixService.get_plan_details('standard')
+        plus_details = BitrixService.get_plan_details('plus')
+
+        # Fallbacks seguros caso Bitrix esteja offline ou retorno seja None
+        price_standard = standard_details.get('price', 0) if standard_details else 0
+        price_plus = plus_details.get('price', 150.00) if plus_details else 150.00
+
+        return Response({
+            "standard": price_standard,
+            "plus": price_plus
+        })
+
 class CompletePurchaseView(APIView):
+
     permission_classes = [AllowAny]
 
     def post(self, request):

@@ -183,20 +183,42 @@ const PlanSelection = () => {
             .reduce((sum: number, p: any) => sum + (parseFloat(p.price) || 0), 0);
     }, [products, activeProductIds]);
 
-    // Preço Base dos Planos (Serviço)
-    const PLAN_BASE_PRICE = {
-        standard: 0,   // Apenas produtos
-        plus: 150.00   // Produtos + R$ 150 serviço
-    };
+    // [MODIFICADO] Estado para Preços Dinâmicos (Vindo do Bitrix)
+    const [planPrices, setPlanPrices] = useState({ standard: 0, plus: 150.00 }); // Fallback inicial
+
+    useEffect(() => {
+        const fetchPrices = async () => {
+            try {
+                const res = await api.get('/financial/plans/prices/');
+                if (res.data) {
+                    console.log("💰 [PlanSelection] Preços atualizados do Bitrix:", res.data);
+                    setPlanPrices({
+                        standard: parseFloat(res.data.standard) || 0,
+                        plus: parseFloat(res.data.plus) || 150.00
+                    });
+                }
+            } catch (error) {
+                console.warn("⚠️ [PlanSelection] Falha ao buscar preços do Bitrix. Usando fallback.", error);
+            }
+        };
+        fetchPrices();
+    }, []);
 
     const getPrice = (plan: "standard" | "plus") => {
         // [MODIFICAÇÃO UPGRADE]
-        // Se for upgrade, ignora produtos e cobra preço fixo da diferença (R$ 150)
+        // Se for upgrade, ignora produtos e cobra preço fixo da diferença (Baseado no preço do Plus)
+        // OBS: Aqui assumimos que o upgrade custa o valor do plano Plus.
         if (location.state?.isUpgrade && plan === 'plus') {
-            return "150.00";
+            return planPrices.plus.toFixed(2);
         }
 
-        let base = productsTotal + PLAN_BASE_PRICE[plan];
+        let base = productsTotal;
+
+        if (plan === 'plus') {
+            base += planPrices.plus;
+        } else {
+            base += planPrices.standard;
+        }
 
         // Desconto Trimestral (10%)
         if (billingCycle === "quarterly") {
