@@ -5,14 +5,17 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import api from "@/lib/api";
+import { Loader2 } from "lucide-react";
 
 const PaymentPending = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { toast } = useToast();
     const [copied, setCopied] = useState(false);
+    const [isChecking, setIsChecking] = useState(false);
 
-    const { pixData, price, status } = location.state || {};
+    const { pixData, price, status, orderId } = location.state || {};
 
     useEffect(() => {
         if (!pixData && status !== 'in_process') {
@@ -29,6 +32,44 @@ const PaymentPending = () => {
             toast({ description: "Código PIX copiado!" });
         }
     };
+
+    const checkPaymentStatus = async (silent = false) => {
+        if (!orderId) {
+            if (!silent) navigate("/dashboard");
+            return;
+        }
+
+        if (!silent) setIsChecking(true);
+
+        try {
+            const res = await api.get(`/financial/check-status/${orderId}/`);
+            const currentStatus = res.data.status;
+
+            if (['approved', 'authorized', 'paid'].includes(currentStatus)) {
+                toast({ title: "Pagamento Aprovado!", description: "Seu acesso foi liberado.", className: "bg-green-600 text-white" });
+                navigate("/pagamento/sucesso", {
+                    state: {
+                        orderId: orderId,
+                        status: currentStatus
+                    }
+                });
+            } else if (!silent) {
+                toast({ variant: "default", title: "Ainda pendente", description: "Aguardando confirmação do banco..." });
+            }
+        } catch (error) {
+            console.error("Erro ao verificar status", error);
+            if (!silent) toast({ variant: "destructive", title: "Erro", description: "Não foi possível verificar o status." });
+        } finally {
+            if (!silent) setIsChecking(false);
+        }
+    };
+
+    // Polling automático a cada 5 segundos
+    useEffect(() => {
+        if (!orderId || !pixData) return;
+        const interval = setInterval(() => checkPaymentStatus(true), 5000);
+        return () => clearInterval(interval);
+    }, [orderId, pixData]);
 
     if (!pixData && status === 'in_process') {
         return (
@@ -127,9 +168,10 @@ const PaymentPending = () => {
                 <CardFooter className="flex flex-col gap-2">
                     <Button
                         className="w-full bg-yellow-600 hover:bg-yellow-700 text-white h-12 text-lg"
-                        onClick={() => navigate("/dashboard")} // Assumindo que o usuário vai verificar depois
+                        onClick={() => checkPaymentStatus(false)}
+                        disabled={isChecking}
                     >
-                        Já realizei o pagamento
+                        {isChecking ? <><Loader2 className="animate-spin mr-2" /> Verificando...</> : "Já realizei o pagamento"}
                     </Button>
                     <Button variant="ghost" className="w-full text-gray-500" onClick={() => navigate('/planos')}>
                         Voltar

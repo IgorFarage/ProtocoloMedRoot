@@ -183,10 +183,15 @@ class UserProfileView(APIView):
             "plan": user.current_plan,
         }
 
+        # [NOVO] Verificar se existe transação Pendente (Para mostrar no Dashboard)
+        # Import local para evitar ciclo se financial importar accounts
+        from apps.financial.models import Transaction
+        
         # 3. Buscar dados enriquecidos do Bitrix (Telefone, Endereço, PLANO)
+        bitrix_status_report = {}
         try:
             # [FIX] Forçar sincronização do plano com Bitrix (Source of Truth)
-            BitrixService.check_and_update_user_plan(user)
+            bitrix_status_report = BitrixService.check_and_update_user_plan(user)
             
             # Recarrega usuário do banco para pegar o plano atualizado
             user.refresh_from_db()
@@ -197,6 +202,24 @@ class UserProfileView(APIView):
         except Exception as e:
             print(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
             # Não falha o request, apenas vai sem os dados extras
+
+        pending_tx = Transaction.objects.filter(
+            user=user, 
+            status=Transaction.Status.PENDING
+        ).order_by('-created_at').first()
+
+        bitrix_payment_status = bitrix_status_report.get('payment_status', 'Unknown')
+        is_bitrix_pending = bitrix_payment_status in ['Pendente', 'Em análise', 'Em processo']
+
+        if pending_tx or is_bitrix_pending:
+            profile_data['pending_transaction'] = {
+                'exists': True,
+                'order_id': pending_tx.external_reference if pending_tx else None,
+                'payment_method': pending_tx.payment_type if pending_tx else 'pix', # Default Pix se não achar
+                'bitrix_status': bitrix_payment_status # Debug Frontend
+            }
+        else:
+             profile_data['pending_transaction'] = {'exists': False}
 
         # 4. Salva Cache (5 min)
         cache.set(cache_key, profile_data, 300)

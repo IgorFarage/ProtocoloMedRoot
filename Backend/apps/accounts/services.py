@@ -450,21 +450,45 @@ class BitrixService:
         return None
 
     @staticmethod
-    def check_and_update_user_plan(user: Any) -> str:
-        if not getattr(user, 'id_bitrix', None): return 'none'
+    def check_and_update_user_plan(user: Any) -> Dict[str, str]:
+        """
+        Sincroniza o plano com o Bitrix e retorna detalhes.
+        Return: {"plan": "plus"|"standard"|"none", "payment_status": "Aprovado"|"Pendente"|...}
+        """
+        default_return = {"plan": getattr(user, 'current_plan', 'none'), "payment_status": "Unknown"}
+        if not getattr(user, 'id_bitrix', None): return default_return
         
         try:
             # Encontrar o Deal
+            payment_status_field = BitrixConfig.DEAL_FIELDS.get("PAYMENT_STATUS")
             resp = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
-                "filter[CONTACT_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID"]
+                "filter[CONTACT_ID]": user.id_bitrix, 
+                "order[ID]": "DESC", 
+                "select[]": ["ID", payment_status_field]
             })
-            if not resp or not resp.get('result'): return 'none'
+            if not resp or not resp.get('result'): return default_return
             
-            deal_id = resp['result'][0].get("ID")
+            latest_deal = resp['result'][0]
+            deal_id = latest_deal.get("ID")
+            payment_status_raw = latest_deal.get(payment_status_field)
+            
+            # [FIX] Bitrix retorna lista ['Valor'], precisamos extrair
+            payment_status = payment_status_raw[0] if isinstance(payment_status_raw, list) and payment_status_raw else str(payment_status_raw)
+            if payment_status == 'None': payment_status = None
+
+            # [VALIDAÇÃO RIGOROSA] Só ativa se estiver Aprovado
+            if payment_status != "Aprovado":
+                logger.info(f"ℹ️ Plano Inativo/Pendente: Status no Bitrix é '{payment_status}' (Deal {deal_id})")
+                if user.current_plan != 'none':
+                    user.current_plan = 'none'
+                    user.save(update_fields=['current_plan'])
+                
+                return {"plan": "none", "payment_status": payment_status or "Pendente"}
             
             # Obter produtos
             rows_resp = BitrixService._safe_request('GET', 'crm.deal.productrows.get.json', params={"id": deal_id})
-            if not rows_resp: return user.current_plan
+            if not rows_resp: 
+                 return {"plan": user.current_plan, "payment_status": "Aprovado"} # Falback
             
             rows = rows_resp.get('result', [])
             
@@ -482,11 +506,11 @@ class BitrixService:
                 user.save(update_fields=['current_plan'])
                 logger.info(f"✅ Plano do usuário {user.email} atualizado via Bitrix para: {new_plan}")
             
-            return new_plan
+            return {"plan": new_plan, "payment_status": payment_status}
 
         except Exception as e:
             logger.error(f"Erro ao sincronizar plano do Bitrix: {e}")
-            return user.current_plan
+            return default_return
 
     @staticmethod
     def get_contact_data(user: Any) -> Dict[str, Any]:
