@@ -18,4 +18,4 @@ tenacity>=8.2.3
 drf-spectacular>=0.27.0
 gunicorn>=21.2.0
 Pillow>=10.2.0
-resend>=2.4.0resend==2.19.0
+resend>=2.4.0
