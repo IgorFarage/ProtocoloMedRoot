@@ -834,6 +834,110 @@ class BitrixService:
             return results
 
         except Exception as e:
-            logger.exception(f"❌ Erro sync_transaction_full: {e}")
             results["errors"].append(str(e))
             return results
+
+class PasswordResetService:
+    @staticmethod
+    def request_password_reset(email: str) -> bool:
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_encode
+        from django.utils.encoding import force_bytes
+        from django.conf import settings
+        from .models import User
+        import resend
+
+        try:
+            user = User.objects.filter(email=email).first()
+            if not user:
+                # Retorna True para não vazar emails cadastrados (Security Best Practice)
+                return True
+
+            # Gerar Token e UID
+            token = default_token_generator.make_token(user)
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            
+            # Link do Frontend
+            # Use FRONTEND_URL env var if available (useful for localhost), else default to prod
+            frontend_url = os.getenv('FRONTEND_URL', 'https://protocolo.med.br')
+            # Remove trailing slash if present
+            if frontend_url.endswith('/'):
+                frontend_url = frontend_url[:-1]
+                
+            reset_link = f"{frontend_url}/reset-password/{uid}/{token}"
+
+            # Envio via Resend
+            resend.api_key = settings.RESEND_API_KEY
+            
+            html_content = f"""
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2>Redefinição de Senha - ProtocoloMed</h2>
+                <p>Olá, {user.full_name or 'Usuário'}.</p>
+                <p>Recebemos uma solicitação para redefinir sua senha.</p>
+                <p>Clique no botão abaixo para criar uma nova senha:</p>
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="{reset_link}" style="background-color: #0F0740; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Redefinir Minha Senha</a>
+                </div>
+                <p>Se você não solicitou isso, pode ignorar este e-mail com segurança.</p>
+                <br>
+                <p style="font-size: 12px; color: #666;">Nota: Em ambiente de desenvolvimento, o Gmail pode marcar este link como suspeito devido ao uso de redirecionadores (ngrok/Localhost). Isso é normal e não ocorrerá em Produção com domínio verificado.</p>
+                <p>Atenciosamente,<br>Equipe ProtocoloMed</p>
+            </div>
+            """
+
+            text_content = f"""
+            Olá, {user.full_name or 'Usuário'}.
+            
+            Recebemos uma solicitação para redefinir sua senha.
+            Copie e cole o link abaixo no seu navegador para criar uma nova senha:
+            
+            {reset_link}
+            
+            Se o Gmail bloquear o link, verifique o console do servidor onde o link também foi exibido.
+            """
+
+            resend.Emails.send({
+                "from": "ProtocoloMed <onboarding@resend.dev>",
+                "to": [user.email],
+                "subject": "Redefinição de Senha",
+                "html": html_content,
+                "text": text_content
+            })
+            
+            logger.info(f"📧 Reset Password Email sent to {user.email}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Error sending reset password email: {e}")
+            return False
+
+    @staticmethod
+    def confirm_password_reset(uid: str, token: str, new_password: str) -> bool:
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_decode
+        from django.utils.encoding import force_str
+        from .models import User
+
+        try:
+            # Decode UID
+            try:
+                user_id = force_str(urlsafe_base64_decode(uid))
+                user = User.objects.get(pk=user_id)
+            except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+                logger.warning(f"⚠️ Invalid UID during password reset: {uid}")
+                return False
+
+            # Validate Token
+            if not default_token_generator.check_token(user, token):
+                logger.warning(f"⚠️ Invalid Token for user {user.email}")
+                return False
+
+            # Reset Password
+            user.set_password(new_password)
+            user.save()
+            logger.info(f"✅ Password reset successfully for {user.email}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Error confirming password reset: {e}")
+            return False

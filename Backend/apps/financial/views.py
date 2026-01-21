@@ -178,6 +178,22 @@ class PlanPricesView(APIView):
             "plus": price_plus
         })
 
+
+# --- VIEW 5: STATUS DA TRANSAÇÃO ---
+class TransactionStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, external_ref):
+        try:
+            transaction = Transaction.objects.get(external_reference=external_ref)
+            return Response({
+                "status": transaction.status,
+                "payment_type": transaction.payment_type,
+                "cycle": transaction.cycle
+            })
+        except Transaction.DoesNotExist:
+            return Response({"error": "Transação não encontrada."}, status=404)
+
 class CompletePurchaseView(APIView):
 
     permission_classes = [AllowAny]
@@ -357,21 +373,6 @@ class CompletePurchaseView(APIView):
         except Exception as e:
             logger.exception(f"❌ Internal Consistency Error: {e}")
             return Response({"error": "Erro ao finalizar pedido (consistência)."}, status=500)
-
-class TransactionStatusView(APIView):
-    permission_classes = [IsAuthenticated] # Or [AllowAny] if we want to allow public check with valid UUID
-
-    def get(self, request, external_ref):
-        try:
-            # Busca por external_reference para segurança (UUID difícil de chutar)
-            transaction = Transaction.objects.get(external_reference=external_ref)
-            return Response({
-                "status": transaction.status,
-                "payment_type": transaction.payment_type,
-                "cycle": transaction.cycle
-            })
-        except Transaction.DoesNotExist:
-            return Response({"error": "Transação não encontrada."}, status=404)
 
     def _sanitize_payment_data(self, payment_result):
         """

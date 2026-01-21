@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView, RecommendationView, UpdateAddressView, UserProfileView, UserProtocolView, UserUpdateView, BitrixWebhookView
+from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView, RecommendationView, UpdateAddressView, UserProfileView, UserProtocolView, UserUpdateView, BitrixWebhookView, PasswordResetRequestView, PasswordResetConfirmView
 
 urlpatterns = [
     # Rota de Cadastro
@@ -31,4 +31,8 @@ urlpatterns = [
 
     # Atualização de Dados Pessoais
     path('profile/update/', UserUpdateView.as_view(), name='user_profile_update'),
+
+    # Password Reset
+    path('password_reset/', PasswordResetRequestView.as_view(), name='password_reset_request'),
+    path('password_reset/confirm/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 ]

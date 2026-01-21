@@ -325,3 +325,49 @@ class BitrixWebhookView(APIView):
             print(f"❌ Erro processando Webhook: {e}")
         
         return Response({"status": "received"}, status=status.HTTP_200_OK)
+
+# 7. Password Reset Views
+from .services import PasswordResetService
+
+class PasswordResetRequestView(APIView):
+    """
+    Endpoint para solicitar redefinição de senha.
+    Payload: {"email": "user@example.com"}
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({"error": "E-mail é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Chama serviço (sempre retorna True por segurança)
+        PasswordResetService.request_password_reset(email)
+        
+        return Response({
+            "message": "Se o e-mail estiver cadastrado, você receberá um link de redefinição."
+        }, status=status.HTTP_200_OK)
+
+class PasswordResetConfirmView(APIView):
+    """
+    Endpoint para confirmar nova senha.
+    Payload: {"uid": "...", "token": "...", "new_password": "..."}
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        uid = request.data.get('uid')
+        token = request.data.get('token')
+        new_password = request.data.get('new_password')
+
+        if not all([uid, token, new_password]):
+            return Response({"error": "Todos os campos são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+
+        success = PasswordResetService.confirm_password_reset(uid, token, new_password)
+        
+        if success:
+            return Response({"message": "Senha redefinida com sucesso."}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "Token inválido ou expirado."}, status=status.HTTP_400_BAD_REQUEST)

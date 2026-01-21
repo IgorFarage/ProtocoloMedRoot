@@ -13,4 +13,12 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
+// Métodos de Autenticação e Reset
+export const auth = {
+    requestPasswordReset: (email: string) => api.post('/accounts/password_reset/', { email }),
+
+    confirmPasswordReset: (uid: string, token: string, new_password: string) =>
+        api.post('/accounts/password_reset/confirm/', { uid, token, new_password })
+};
+
 export default api;
