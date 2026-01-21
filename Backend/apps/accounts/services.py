@@ -897,8 +897,9 @@ class PasswordResetService:
             """
 
             resend.Emails.send({
-                "from": "ProtocoloMed <onboarding@resend.dev>",
+                "from": "ProtocoloMed <suporte@protocolo.med.br>",
                 "to": [user.email],
+                "reply_to": "suaagendaprotocolo@gmail.com",
                 "subject": "Redefinição de Senha",
                 "html": html_content,
                 "text": text_content
