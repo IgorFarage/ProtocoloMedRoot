@@ -24,6 +24,11 @@ export interface UserProfile {
         neighborhood: string;
         country: string;
     };
+    pending_transaction?: {
+        exists: boolean;
+        order_id?: string;
+        payment_method?: string;
+    };
 }
 
 interface ClientDataContextType {

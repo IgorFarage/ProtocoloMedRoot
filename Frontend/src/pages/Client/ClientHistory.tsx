@@ -3,7 +3,8 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useClientData } from "@/hooks/useClientData";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Calendar as CalendarIcon, ClipboardList, ShoppingBag, Camera, Upload } from "lucide-react";
+import { Loader2, Calendar as CalendarIcon, ClipboardList, ShoppingBag } from "lucide-react";
+import { EvolutionGallery } from "@/components/client/EvolutionGallery";
 
 export default function ClientHistory() {
     const { loading, fullHistory, calculateProtocol } = useClientData();
@@ -91,35 +92,7 @@ export default function ClientHistory() {
                 </TabsContent>
 
                 <TabsContent value="photos" className="mt-6">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Galeria de Evolução</CardTitle>
-                            <CardDescription>Registre seu progresso visualmente enviando fotos periodicamente.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                {/* Placeholder para fotos */}
-                                <div className="aspect-square bg-gray-100 rounded-lg flex items-center justify-center text-muted-foreground border-2 border-dashed border-gray-200 hover:border-primary/50 transition-colors cursor-pointer">
-                                    <div className="text-center p-2">
-                                        <Camera className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                        <span className="text-xs">Adicionar Foto</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="bg-blue-50 p-4 rounded-lg flex gap-3 items-start border border-blue-100">
-                                <div className="bg-white p-2 rounded-full shadow-sm">
-                                    <Upload className="w-4 h-4 text-blue-600" />
-                                </div>
-                                <div>
-                                    <h4 className="font-medium text-blue-900 text-sm">Dica de Registro</h4>
-                                    <p className="text-sm text-blue-700 mt-1">
-                                        Tente tirar as fotos sempre no mesmo local e com a mesma iluminação para melhor comparação.
-                                    </p>
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
+                    <EvolutionGallery />
                 </TabsContent>
             </Tabs>
         </div>

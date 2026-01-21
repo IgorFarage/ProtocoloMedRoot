@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { Product } from '../types/store';
 
 const CACHE_KEY = '@protocolomed:catalog_cache';
-const CACHE_TTL = 60 * 60 * 1000; // 60 minutes in milliseconds
+const CACHE_TTL = 1 * 60 * 1000; // 1 minute in milliseconds
 
 interface CachedData {
     timestamp: number;

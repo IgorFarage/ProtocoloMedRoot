@@ -32,9 +32,10 @@ class BitrixService:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((requests.exceptions.RequestException, requests.exceptions.Timeout))
     )
-    def _safe_request(method: str, endpoint: str, **kwargs) -> Optional[Dict]:
+    def _safe_request(method: str, endpoint: str, silent: bool = False, **kwargs) -> Optional[Dict]:
         """
         Executa requisições ao Bitrix com Retries Automáticos (Tenacity) e Tratamento de Erro.
+        param silent: Se True, suprime logs de erro 4xx/5xx (útil para probes de verificação).
         """
         base_url = BitrixService._get_base_url()
         if not base_url:
@@ -54,10 +55,12 @@ class BitrixService:
             
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Erro Bitrix ({endpoint}): {str(e)}")
+            if not silent:
+                logger.error(f"❌ Erro Bitrix ({endpoint}): {str(e)}")
             raise e # Allow Tenacity to retry
         except Exception as e:
-            logger.exception(f"❌ Erro Crítico Bitrix ({endpoint}): {e}")
+            if not silent:
+                logger.exception(f"❌ Erro Crítico Bitrix ({endpoint}): {e}")
             return None
 
     # =========================================================================
@@ -160,6 +163,10 @@ class BitrixService:
 
     @staticmethod
     def prepare_deal_payment(user: Any, products_list: List[Dict], plan_title: str, total_amount: float, answers: Optional[Dict] = None, payment_data: Optional[Dict] = None) -> Optional[str]:
+        """
+        Cria ou atualiza Deal.
+        CORREÇÃO CRÍTICA: Busca também Deals em 'WON' (Ganhos), evitando pegar Deals antigos (34) em vez do atual (448).
+        """
         if not getattr(user, 'id_bitrix', None): return None
 
         answers_json_string = None
@@ -172,45 +179,71 @@ class BitrixService:
             deal_id = None
             contact_id_to_use = user.id_bitrix
 
-            # Self-Healing
+            # 1. Self-Healing Lead/Contact
+            # Tenta identificar se o ID é Contato primeiro (evita erro 400 ao buscar Lead com ID de Contato)
+            is_contact = False
             try:
-                lead_check = BitrixService._safe_request('GET', 'crm.lead.get.json', params={"id": user.id_bitrix})
-                if lead_check:
-                    lead_data = lead_check.get('result')
-                    if lead_data and lead_data.get('CONTACT_ID'):
-                        contact_id_to_use = str(lead_data.get('CONTACT_ID'))
-                        user.id_bitrix = contact_id_to_use
-                        user.save()
-            except Exception: pass
+                # [PROBE] Verifica silenciosamente se é Contato
+                contact_probe = BitrixService._safe_request('GET', 'crm.contact.get.json', params={"id": user.id_bitrix}, silent=True)
+                if contact_probe and contact_probe.get('result'):
+                    is_contact = True
+            except: pass
 
-            # Encontrar Deal existente aberto
+            if not is_contact:
+                try:
+                    # [PROBE] Se não é contato, tenta ver se é Lead (pode ter convertido)
+                    lead_check = BitrixService._safe_request('GET', 'crm.lead.get.json', params={"id": user.id_bitrix}, silent=True)
+                    if lead_check and lead_check.get('result'):
+                        lead_data = lead_check.get('result')
+                        if lead_data.get('CONTACT_ID'):
+                            contact_id_to_use = str(lead_data.get('CONTACT_ID'))
+                            user.id_bitrix = contact_id_to_use
+                            user.save()
+                except Exception: 
+                    # Se falhar (ex: 400 Bad Request pq é ID inválido/deleção), ignoramos
+                    pass
+
+            # 2. BUSCA INTELIGENTE (A Correção)
+            # Removemos "filter[CLOSED]: N" para ele encontrar o Deal 448 que já está em WON.
             deal_resp = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
-                "filter[CONTACT_ID]": contact_id_to_use, "filter[CLOSED]": "N", "order[ID]": "DESC", "select[]": ["ID"]
+                "filter[CONTACT_ID]": contact_id_to_use, 
+                # Sem filtro de CLOSED, para achar os Ganhos também
+                "order[ID]": "DESC", # O mais recente é o rei
+                "select[]": ["ID", "STAGE_ID", "CLOSED"]
             })
-            if deal_resp and deal_resp.get('result'):
-                 deal_id = deal_resp['result'][0]['ID']
             
-            if not deal_id:
-                deal_resp_lead = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
-                    "filter[LEAD_ID]": user.id_bitrix, "filter[CLOSED]": "N", "order[ID]": "DESC", "select[]": ["ID"]
-                })
-                if deal_resp_lead and deal_resp_lead.get('result'):
-                    deal_id = deal_resp_lead['result'][0]['ID']
-
+            if deal_resp and deal_resp.get('result'):
+                 potential_deal = deal_resp['result'][0]
+                 # Só ignoramos se for uma venda PERDIDA antiga
+                 # Ajuste 'LOSE', 'APOLOGY' conforme os IDs das suas colunas de falha
+                 if potential_deal.get('STAGE_ID') not in ['LOSE', 'APOLOGY']:
+                     deal_id = potential_deal['ID']
+            
+            # 3. Define Campos
             fields_to_save = {
                 "TITLE": plan_title,
                 "OPPORTUNITY": float(total_amount),
                 "CURRENCY_ID": "BRL"
             }
-            if answers_json_string: fields_to_save[BitrixConfig.DEAL_FIELDS["ANSWERS_JSON"]] = answers_json_string
+            if answers_json_string: 
+                fields_to_save[BitrixConfig.DEAL_FIELDS["ANSWERS_JSON"]] = answers_json_string
+            
+            # 4. Dados de Pagamento (Sem mover Stage)
             if payment_data:
-                if payment_data.get('id'): fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_ID"]] = str(payment_data.get('id'))
-                if payment_data.get('date_created'): fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_DATE"]] = str(payment_data.get('date_created'))
+                if payment_data.get('id'): 
+                    fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_ID"]] = str(payment_data.get('id'))
+                if payment_data.get('date_created'): 
+                    fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_DATE"]] = str(payment_data.get('date_created'))
+                
                 if payment_data.get('status'):
                     status_map = {"approved": "Aprovado", "in_process": "Em análise", "pending": "Pendente", "rejected": "Recusado"}
-                    raw = str(payment_data.get('status'))
-                    fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_STATUS"]] = status_map.get(raw, raw)
+                    raw_status = str(payment_data.get('status')).lower()
+                    fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_STATUS"]] = status_map.get(raw_status, raw_status)
+                    
+                    if raw_status == 'approved':
+                        logger.info(f"ℹ️ Atualizando dados de pagamento no Deal {deal_id or 'Novo'}.")
 
+            # 5. Executa
             if not deal_id:
                 fields_to_save["CONTACT_ID"] = contact_id_to_use
                 resp = BitrixService._safe_request('POST', 'crm.deal.add.json', json={"fields": fields_to_save})
@@ -218,11 +251,13 @@ class BitrixService:
             else:
                 BitrixService._safe_request('POST', 'crm.deal.update.json', json={"id": deal_id, "fields": fields_to_save})
 
+            # 6. Produtos
             if deal_id and products_list:
                 rows = [{"PRODUCT_ID": p.get('id', 0), "PRODUCT_NAME": p.get('name'), "PRICE": float(p.get('price', 0)), "QUANTITY": 1} for p in products_list]
                 BitrixService._safe_request('POST', 'crm.deal.productrows.set.json', json={"id": deal_id, "rows": rows})
             
             return deal_id
+
         except Exception as e:
             logger.exception(f"❌ Erro prepare_deal_payment: {e}")
             return None
@@ -233,15 +268,19 @@ class BitrixService:
         fields = {}
         if cpf: fields[BitrixConfig.DEAL_FIELDS["CPF"]] = cpf
         if phone: fields["PHONE"] = [{"VALUE": phone, "VALUE_TYPE": "WORK"}]
+        
         if not fields: return False
         try:
             BitrixService._safe_request('POST', 'crm.contact.update.json', json={"id": user_bitrix_id, "fields": fields})
             return True
-        except Exception: return False
+        except Exception as e:
+            logger.error(f"❌ [Bitrix Sync] Falha Update CPF/Tel: {e}")
+            return False
 
     @staticmethod
     def update_contact_address(user_bitrix_id: str, address_data: Dict) -> bool:
         if not user_bitrix_id or not address_data: return False
+        
         fields = {
             "ADDRESS": f"{address_data.get('street', '')}, {address_data.get('number', '')}",
             "ADDRESS_2": f"{address_data.get('neighborhood', '')} - {address_data.get('complement', '')}",
@@ -252,10 +291,9 @@ class BitrixService:
         }
         try:
             BitrixService._safe_request('POST', 'crm.contact.update.json', json={"id": user_bitrix_id, "fields": fields})
-            logger.info(f"✅ Endereço do Contato {user_bitrix_id} atualizado.")
             return True
         except Exception as e:
-            logger.exception(f"❌ Erro update_contact_address: {e}")
+            logger.error(f"❌ [Bitrix Sync] Falha Update Endereço: {e}")
             return False
 
     @staticmethod
@@ -269,6 +307,7 @@ class BitrixService:
             return cached_catalog
 
         try:
+            target_ids = BitrixConfig.SECTION_IDS
             target_ids = BitrixConfig.SECTION_IDS
             payload = { "filter": { "SECTION_ID": target_ids }, "select": ["ID", "NAME", "PRICE", "DESCRIPTION", "SECTION_ID"] }
             response = BitrixService._safe_request('POST', 'crm.product.list.json', json=payload)
@@ -411,21 +450,45 @@ class BitrixService:
         return None
 
     @staticmethod
-    def check_and_update_user_plan(user: Any) -> str:
-        if not getattr(user, 'id_bitrix', None): return 'none'
+    def check_and_update_user_plan(user: Any) -> Dict[str, str]:
+        """
+        Sincroniza o plano com o Bitrix e retorna detalhes.
+        Return: {"plan": "plus"|"standard"|"none", "payment_status": "Aprovado"|"Pendente"|...}
+        """
+        default_return = {"plan": getattr(user, 'current_plan', 'none'), "payment_status": "Unknown"}
+        if not getattr(user, 'id_bitrix', None): return default_return
         
         try:
             # Encontrar o Deal
+            payment_status_field = BitrixConfig.DEAL_FIELDS.get("PAYMENT_STATUS")
             resp = BitrixService._safe_request('GET', 'crm.deal.list.json', params={
-                "filter[CONTACT_ID]": user.id_bitrix, "order[ID]": "DESC", "select[]": ["ID"]
+                "filter[CONTACT_ID]": user.id_bitrix, 
+                "order[ID]": "DESC", 
+                "select[]": ["ID", payment_status_field]
             })
-            if not resp or not resp.get('result'): return 'none'
+            if not resp or not resp.get('result'): return default_return
             
-            deal_id = resp['result'][0].get("ID")
+            latest_deal = resp['result'][0]
+            deal_id = latest_deal.get("ID")
+            payment_status_raw = latest_deal.get(payment_status_field)
+            
+            # [FIX] Bitrix retorna lista ['Valor'], precisamos extrair
+            payment_status = payment_status_raw[0] if isinstance(payment_status_raw, list) and payment_status_raw else str(payment_status_raw)
+            if payment_status == 'None': payment_status = None
+
+            # [VALIDAÇÃO RIGOROSA] Só ativa se estiver Aprovado
+            if payment_status != "Aprovado":
+                logger.info(f"ℹ️ Plano Inativo/Pendente: Status no Bitrix é '{payment_status}' (Deal {deal_id})")
+                if user.current_plan != 'none':
+                    user.current_plan = 'none'
+                    user.save(update_fields=['current_plan'])
+                
+                return {"plan": "none", "payment_status": payment_status or "Pendente"}
             
             # Obter produtos
             rows_resp = BitrixService._safe_request('GET', 'crm.deal.productrows.get.json', params={"id": deal_id})
-            if not rows_resp: return user.current_plan
+            if not rows_resp: 
+                 return {"plan": user.current_plan, "payment_status": "Aprovado"} # Falback
             
             rows = rows_resp.get('result', [])
             
@@ -443,11 +506,11 @@ class BitrixService:
                 user.save(update_fields=['current_plan'])
                 logger.info(f"✅ Plano do usuário {user.email} atualizado via Bitrix para: {new_plan}")
             
-            return new_plan
+            return {"plan": new_plan, "payment_status": payment_status}
 
         except Exception as e:
             logger.error(f"Erro ao sincronizar plano do Bitrix: {e}")
-            return user.current_plan
+            return default_return
 
     @staticmethod
     def get_contact_data(user: Any) -> Dict[str, Any]:
@@ -579,6 +642,12 @@ class BitrixService:
 
         if event == 'ONCRMDEALUPDATE':
             return BitrixService._handle_deal_update(data)
+            
+        # Limpar Cache de Produtos se houver alteração no Catálogo
+        if event in ['ONCRMPRODUCTUPDATE', 'ONCRMPRODUCTADD', 'ONCRMPRODUCTDELETE']:
+            logger.info(f"♻️ Limpando Cache de Produtos (Trigger: {event})")
+            cache.delete("bitrix_product_catalog")
+            return True
         
         # Outros eventos: ONCRMCONTACTADD, etc.
         return True
@@ -612,6 +681,72 @@ class BitrixService:
                 
                 # Forçar atualização do plano
                 BitrixService.check_and_update_user_plan(user)
+
+                # [BIDIRECTIONAL SYNC] Verificar consistência financeira
+                # Se o Django diz que está pago, o Bitrix TEM que dizer que está pago.
+                from apps.financial.models import Transaction
+                from apps.accounts.models import UserQuestionnaire
+                
+                # Busca a transação mais recente aprovada p/ este user
+                # ou busca especificamente pelo deal_id se tivermos esse link
+                transaction = Transaction.objects.filter(bitrix_deal_id=str(deal_id)).first()
+                
+                if not transaction:
+                    # Tenta fallback pelo user e status approved
+                    transaction = Transaction.objects.filter(
+                        user=user, 
+                        status=Transaction.Status.APPROVED
+                    ).order_by('-created_at').first()
+
+                if transaction and transaction.status == Transaction.Status.APPROVED:
+                    # Verifica campos críticos no Deal
+                    current_payment_status = result.get(BitrixConfig.DEAL_FIELDS.get("PAYMENT_STATUS"))
+                    current_opportunity = float(result.get("OPPORTUNITY") or 0)
+                    
+                    needs_fix = False
+                    fields_fix = {}
+
+                    # 1. Checa Status
+                    if current_payment_status != "Aprovado":
+                         logger.warning(f"⚠️ [Sync Inverso] Bitrix desatualizado (Status). Forçando 'Aprovado' no Deal {deal_id}.")
+                         fields_fix[BitrixConfig.DEAL_FIELDS["PAYMENT_STATUS"]] = "Aprovado"
+                         needs_fix = True
+
+                    # 2. Checa Valor (Se estiver zerado no Bitrix mas tiver valor no Django)
+                    if current_opportunity == 0 and transaction.amount > 0:
+                         logger.warning(f"⚠️ [Sync Inverso] Bitrix desatualizado (Valor Zerado). Re-enviando dados.")
+                         # Aqui teríamos que acionar o prepare_deal_payment completo para recriar produtos
+                         # Mas para evitar loop, vamos apenas chamar o repair simples ou logar
+                         # Ideal: Chamar o prepare_deal_payment logicamente
+                         needs_fix = True
+                         # Não definimos fields_fix aqui pois o prepare cuida disso
+
+                    if needs_fix:
+                        # Executa o reparo completo sem recriar objetos, apenas update
+                        # Recupera snapshot se houver
+                        # Importante: Passar products_list vazio se só queremos arrumar status, 
+                        # mas se o valor estiver errado, precisamos dos produtos.
+                        
+                        meta = transaction.mp_metadata or {}
+                        prods = meta.get('original_products', [])
+                        
+                        # Se não tiver produtos no meta (caso legado), tenta regenerar
+                        if not prods and user:
+                             q = UserQuestionnaire.objects.filter(user=user).order_by('-created_at').first()
+                             if q: 
+                                 prot = BitrixService.generate_protocol(q.answers)
+                                 if prot: prods = prot.get('products', [])
+                        
+                        if prods:
+                            BitrixService.prepare_deal_payment(
+                                user=user,
+                                products_list=prods,
+                                plan_title=f"ProtocoloMed - {transaction.plan_type}",
+                                total_amount=float(transaction.amount),
+                                answers=None, # Não precisa re-enviar respostas
+                                payment_data={"status": "approved", "id": transaction.mercado_pago_id}
+                            )
+
                 return True
             except User.DoesNotExist:
                 logger.warning(f"Webhook: Usuário com id_bitrix {contact_id} não encontrado no Django.")
@@ -620,3 +755,85 @@ class BitrixService:
         except Exception as e:
             logger.exception(f"❌ Erro _handle_deal_update: {e}")
             return False
+
+    @staticmethod
+    def sync_transaction_full(transaction: Any) -> Dict[str, Any]:
+        """
+        Sincronização COMPLETA: Garante que Contato, Endereço e Deal estejam corretos no Bitrix.
+        Usado para recuperação manual ou auto-healing.
+        """
+        results = {
+            "contact_created": False,
+            "contact_updated": False,
+            "address_updated": False,
+            "deal_id": None,
+            "errors": []
+        }
+        
+        try:
+            user = transaction.user
+            meta = transaction.mp_metadata or {}
+            
+            # 1. Garantir existência do Lead/Contato
+            # Tenta usar endereço do metadata se existir, senão pega do User (se formos expandir isso)
+            address_data = {}
+            if meta.get('shipping_address'):
+                address_data = meta.get('shipping_address')
+            
+            # Se o usuário não tem bitrix_id, cria
+            if not getattr(user, 'id_bitrix', None):
+                lead_id = BitrixService.create_lead(user, answers=None, address_data=address_data)
+                if lead_id:
+                    user.id_bitrix = lead_id
+                    user.save()
+                    results["contact_created"] = True
+                else:
+                    results["errors"].append("Falha ao criar/encontrar Lead/Contato")
+                    return results
+
+            bitrix_id = user.id_bitrix
+            
+            # 2. Atualizar Dados do Contato (Telefone, CPF)
+            payer = meta.get('payer', {})
+            phone = payer.get('phone', {}).get('number') # Estrutura do MP geralmente
+            if not phone and meta.get('payment_response'):
+                 # Tentativa de fallback
+                 phone = meta.get('payment_response', {}).get('payer', {}).get('phone', {}).get('number')
+                 
+            cpf = payer.get('identification', {}).get('number')
+            
+            if BitrixService.update_contact_data(bitrix_id, cpf=cpf, phone=phone):
+                results["contact_updated"] = True
+            
+            # 3. Atualizar Endereço
+            if address_data:
+                 if BitrixService.update_contact_address(bitrix_id, address_data):
+                     results["address_updated"] = True
+            
+            # 4. Criar/Atualizar Deal
+            deal_id = BitrixService.prepare_deal_payment(
+                user,
+                meta.get('original_products', []),
+                f"ProtocoloMed - {transaction.plan_type}",
+                float(transaction.amount),
+                meta.get('questionnaire_snapshot', {}),
+                meta.get('payment_response', {})
+            )
+            
+            if deal_id:
+                results["deal_id"] = deal_id
+                
+                # Atualizar Transaction se necessário
+                if transaction.bitrix_deal_id != str(deal_id):
+                    transaction.bitrix_deal_id = str(deal_id)
+                    transaction.bitrix_sync_status = 'synced'
+                    transaction.save()
+            else:
+                 results["errors"].append("Falha ao criar Deal")
+
+            return results
+
+        except Exception as e:
+            logger.exception(f"❌ Erro sync_transaction_full: {e}")
+            results["errors"].append(str(e))
+            return results

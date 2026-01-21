@@ -2,9 +2,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
 from datetime import datetime
-from .services import MedicalScheduleService
+from .services import MedicalScheduleService, AppMedicalService
 from .models import Appointments
+from .serializers import PatientPhotoSerializer
 
 class SlotsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -52,3 +54,25 @@ class ScheduleAppointmentView(APIView):
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
         
         return Response(result, status=status.HTTP_201_CREATED)
+
+class PatientEvolutionView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser)
+
+    def get(self, request):
+        photos = AppMedicalService.get_patient_photos(request.user)
+        serializer = PatientPhotoSerializer(photos, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    def post(self, request):
+        file_obj = request.FILES.get('photo')
+        if not file_obj:
+            return Response({"error": "Nenhuma imagem fornecida."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # TODO: Receber is_public do request se necessário
+            photo = AppMedicalService.create_evolution_entry(request.user, file_obj)
+            serializer = PatientPhotoSerializer(photo, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

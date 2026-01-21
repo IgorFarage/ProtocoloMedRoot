@@ -61,7 +61,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
 
-    # Seus Apps Locais (code-first)
+    # Apps Locais (code-first)
     'apps.accounts',
     'apps.medical',
     'apps.store',
@@ -161,6 +161,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'static'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 

@@ -76,6 +76,9 @@ export const Header = () => {
             alt="Logo ProtocoloMED"
             className="h-12 md:h-20 w-auto"
           />
+          <span className="absolute bottom-0 right-0 text-[10px] font-bold text-muted-foreground uppercase tracking-widest whitespace-nowrap">
+            beta 1.0
+          </span>
         </Link>
 
         {/* Bloco de Ações/Login (Direita) */}

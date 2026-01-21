@@ -30,6 +30,7 @@ export default function ClientLayout() {
 
     const hasActivePlan = profile?.plan && profile.plan !== 'none';
     const isPlus = profile?.plan === 'plus';
+    const isPending = profile?.pending_transaction?.exists && !hasActivePlan; // Só mostra pendente se não estiver ativo
 
     return (
         <div className="min-h-screen flex flex-col md:flex-row bg-gray-50/50">
@@ -37,16 +38,21 @@ export default function ClientLayout() {
             <aside className="w-full md:w-64 bg-white border-r border-gray-100 shadow-sm flex-shrink-0 z-10">
                 <div className="p-6 flex flex-col h-full">
                     <div className="mb-8 flex flex-col items-center md:items-start space-y-2">
-                        <img src={Logo} alt="ProtocoloMed" className="h-12" />
+                        <Link to="/" className="hover:opacity-80 transition-opacity">
+                            <img src={Logo} alt="ProtocoloMed" className="h-12" />
+                        </Link>
 
                         <div className="flex flex-wrap gap-2 items-center">
                             {/* Indicador de Status (Ativo/Inativo) */}
+                            {/* Indicador de Status (Ativo/Inativo/Pendente) */}
                             <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1.5 ${hasActivePlan
                                 ? 'bg-green-100 text-green-700 border border-green-200'
-                                : 'bg-red-100 text-red-700 border border-red-200'
+                                : isPending
+                                    ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                                    : 'bg-red-100 text-red-700 border border-red-200'
                                 }`}>
-                                <div className={`h-1.5 w-1.5 rounded-full ${hasActivePlan ? 'bg-green-500' : 'bg-red-500'}`} />
-                                {hasActivePlan ? 'ATIVA' : 'INATIVO'}
+                                <div className={`h-1.5 w-1.5 rounded-full ${hasActivePlan ? 'bg-green-500' : isPending ? 'bg-orange-500' : 'bg-red-500'}`} />
+                                {hasActivePlan ? 'ATIVA' : isPending ? 'PENDENTE' : 'INATIVO'}
                             </div>
 
                             {/* Indicador Plus (Dourado) */}

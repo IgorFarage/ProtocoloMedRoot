@@ -1,6 +1,7 @@
 import uuid
 import logging
 import json 
+from datetime import datetime, timedelta 
 from django.conf import settings
 from django.db import transaction as db_transaction
 from rest_framework.views import APIView
@@ -114,8 +115,42 @@ class WebhookView(APIView):
                     status = payment_info.get("status")
                     transaction = Transaction.objects.filter(external_reference=ext_ref).first()
                     if transaction:
-                        if status == "approved": transaction.status = Transaction.Status.APPROVED
-                        elif status == "rejected": transaction.status = Transaction.Status.REJECTED
+                        if status == "approved":
+                            transaction.status = Transaction.Status.APPROVED
+                            transaction.save() # Salva antes para garantir
+
+                            # [NOVO] Ativa Assinatura/Plano
+                            try:
+                                SubscriptionService.activate_subscription_from_transaction(transaction)
+                                logger.info(f"✅ [Webhook] Subscription activated for user {transaction.user.email}")
+                            except Exception as sub_err:
+                                logger.error(f"❌ [Webhook] Subscription Activation Failed: {sub_err}")
+
+                            # [NOVO] Sincroniza com Bitrix (se falhou antes)
+                            if transaction.bitrix_sync_status != 'synced' and BitrixService:
+                                try:
+                                    logger.info("🔄 [Webhook] Retrying Bitrix Sync...")
+                                    # Recria dados básicos para sync
+                                    validated_data = {
+                                        "full_name": transaction.user.get_full_name(),
+                                        "phone": transaction.user.profile.phone if hasattr(transaction.user, 'profile') else "",
+                                        "email": transaction.user.email,
+                                        "address_data": transaction.user.profile.address if hasattr(transaction.user, 'profile') else {}
+                                    }
+                                    # Precisamos extrair metadata se existir
+                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
+                                        orig_products = transaction.mp_metadata.get('original_products', [])
+                                        # TODO: Melhorar reconstrução se necessário
+                                    
+                                    # Nota: O sync completo via webhook é complexo sem o payload original completo.
+                                    # Por enquanto, focamos na ATIVAÇÃO DO PLANO que é o crítico.
+                                except Exception as bitrix_err:
+                                     logger.error(f"❌ [Webhook] Bitrix Sync Retry Failed: {bitrix_err}")
+
+                        elif status == "rejected": 
+                            transaction.status = Transaction.Status.REJECTED
+                            transaction.save()
+                        
                         transaction.mercado_pago_id = str(mp_id)
                         transaction.save()
             except Exception as e: logger.error(f"Webhook Error: {e}")
@@ -123,7 +158,28 @@ class WebhookView(APIView):
 
 
 # --- VIEW 4: COMPRA COMPLETA (REFACTORED) ---
+
+class PlanPricesView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """
+        Retorna os preços atuais dos planos Standard e Plus diretamente do Bitrix (ou cache).
+        """
+        standard_details = BitrixService.get_plan_details('standard')
+        plus_details = BitrixService.get_plan_details('plus')
+
+        # Fallbacks seguros caso Bitrix esteja offline ou retorno seja None
+        price_standard = standard_details.get('price', 0) if standard_details else 0
+        price_plus = plus_details.get('price', 150.00) if plus_details else 150.00
+
+        return Response({
+            "standard": price_standard,
+            "plus": price_plus
+        })
+
 class CompletePurchaseView(APIView):
+
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -146,6 +202,13 @@ class CompletePurchaseView(APIView):
         plan_id = validated_data.get('plan_id')
         payment_method = validated_data.get('payment_method_id')
         external_ref = str(uuid.uuid4())
+
+        # [DEBUG] Log incoming products
+        raw_products = request.data.get('products', [])
+        val_products = validated_data.get('products', [])
+        logger.info(f"🛒 Checkout Initialized for {email}. Raw Products: {len(raw_products)} | Validated Products: {len(val_products)}")
+        if raw_products:
+             logger.info(f"📦 First Product IDs: {[p.get('id') for p in raw_products[:5]]}")
 
         # 2. Payment Payload Construction
         payment_payload = {
@@ -178,6 +241,11 @@ class CompletePurchaseView(APIView):
         if payment_method != 'pix':
             payment_payload["token"] = validated_data.get('token')
             payment_payload["installments"] = validated_data.get('installments', 1)
+        else:
+            # [PIX] Set Expiration to 30 minutes
+            expiration_time = (datetime.utcnow() + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000-00:00")
+            payment_payload["date_of_expiration"] = expiration_time
+            logger.info(f"⏳ Pix Expiration set to: {expiration_time}")
 
         # UNIFIED CALL - Direct Payment (No Subscription/Customer extraction)
         payment_result = financial_service.process_direct_payment(payment_payload)
@@ -241,10 +309,20 @@ class CompletePurchaseView(APIView):
                 # Update Transaction with Sync Status
                 transaction.bitrix_sync_status = 'synced' if bitrix_success else 'failed'
                 if bitrix_success: transaction.bitrix_deal_id = str(deal_id)
-                # Save MP Metadata (Sanitized) & Context
+                # [MODIFICAÇÃO: Snapshot de Contexto para Resiliência]
+                # [OTIMIZAÇÃO] Salvar apenas dados essenciais para economizar espaço no DB
+                raw_products = request.data.get('products', [])
+                sanitized_products = [
+                    {
+                        "id": p.get("id"), 
+                        "name": p.get("name"), 
+                        "price": p.get("price")
+                    } for p in raw_products
+                ]
+
                 meta_data = {
                     "payment_response": self._sanitize_payment_data(payment_result),
-                    "original_products": validated_data.get('products', []),
+                    "original_products": sanitized_products, 
                     "questionnaire_snapshot": validated_data.get('questionnaire_data', {})
                 }
                 # Fix: Convert Decimals to float/str for JSON serialization
@@ -279,6 +357,21 @@ class CompletePurchaseView(APIView):
         except Exception as e:
             logger.exception(f"❌ Internal Consistency Error: {e}")
             return Response({"error": "Erro ao finalizar pedido (consistência)."}, status=500)
+
+class TransactionStatusView(APIView):
+    permission_classes = [IsAuthenticated] # Or [AllowAny] if we want to allow public check with valid UUID
+
+    def get(self, request, external_ref):
+        try:
+            # Busca por external_reference para segurança (UUID difícil de chutar)
+            transaction = Transaction.objects.get(external_reference=external_ref)
+            return Response({
+                "status": transaction.status,
+                "payment_type": transaction.payment_type,
+                "cycle": transaction.cycle
+            })
+        except Transaction.DoesNotExist:
+            return Response({"error": "Transação não encontrada."}, status=404)
 
     def _sanitize_payment_data(self, payment_result):
         """

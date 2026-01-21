@@ -183,20 +183,45 @@ const PlanSelection = () => {
             .reduce((sum: number, p: any) => sum + (parseFloat(p.price) || 0), 0);
     }, [products, activeProductIds]);
 
-    // Preço Base dos Planos (Serviço)
-    const PLAN_BASE_PRICE = {
-        standard: 0,   // Apenas produtos
-        plus: 150.00   // Produtos + R$ 150 serviço
-    };
+    // [MODIFICADO] Estado para Preços Dinâmicos (Vindo do Bitrix)
+    const [planPrices, setPlanPrices] = useState({ standard: 0, plus: 150.00 }); // Fallback inicial
+
+    // [NOVO] Estado do Método de Pagamento
+    const [paymentMethod, setPaymentMethod] = useState<"credit_card" | "pix">("credit_card");
+
+    useEffect(() => {
+        const fetchPrices = async () => {
+            try {
+                const res = await api.get('/financial/plans/prices/');
+                if (res.data) {
+                    console.log("💰 [PlanSelection] Preços atualizados do Bitrix:", res.data);
+                    setPlanPrices({
+                        standard: parseFloat(res.data.standard) || 0,
+                        plus: parseFloat(res.data.plus) || 150.00
+                    });
+                }
+            } catch (error) {
+                console.warn("⚠️ [PlanSelection] Falha ao buscar preços do Bitrix. Usando fallback.", error);
+            }
+        };
+        fetchPrices();
+    }, []);
 
     const getPrice = (plan: "standard" | "plus") => {
         // [MODIFICAÇÃO UPGRADE]
-        // Se for upgrade, ignora produtos e cobra preço fixo da diferença (R$ 150)
+        // Se for upgrade, ignora produtos e cobra preço fixo da diferença (Baseado no preço do Plus)
+        // OBS: Aqui assumimos que o upgrade custa o valor do plano Plus.
         if (location.state?.isUpgrade && plan === 'plus') {
-            return "150.00";
+            return planPrices.plus.toFixed(2);
         }
 
-        let base = productsTotal + PLAN_BASE_PRICE[plan];
+        let base = productsTotal;
+
+        if (plan === 'plus') {
+            base += planPrices.plus;
+        } else {
+            base += planPrices.standard;
+        }
 
         // Desconto Trimestral (10%)
         if (billingCycle === "quarterly") {
@@ -381,7 +406,7 @@ const PlanSelection = () => {
                 total_price: getPrice(selectedPlan), // Preço já recalculado
                 products: finalProducts, // Lista filtrada
                 cpf: formData.cpf, // Importante para o Pagamento
-                phone: formData.phone, // Update contact
+                payment_method_id: paymentMethod === 'pix' ? 'pix' : undefined, // [PIX]
 
                 // Mapeamento Completo para PurchaseSerializer
                 full_name: formData.full_name,
@@ -400,39 +425,42 @@ const PlanSelection = () => {
 
             const mpKey = import.meta.env.VITE_MERCADO_PAGO_PUBLIC_KEY;
             console.log("🔑 Frontend Public Key:", mpKey);
-            // @ts-ignore
-            const mp = new window.MercadoPago(mpKey);
 
-            // ... (Lógica de Tokenização Mantida) ...
-            try {
-                const cardToken = await mp.createCardToken({
-                    cardNumber: formData.cardNumber.replace(/\s/g, ""),
-                    cardholderName: formData.cardName,
-                    cardExpirationMonth: formData.cardMonth,
-                    cardExpirationYear: "20" + formData.cardYear,
-                    securityCode: formData.cardCvv,
-                    identificationType: "CPF",
-                    identificationNumber: formData.cpf.replace(/\D/g, "")
-                });
+            // [PIX] Se for Pix, pula tokenização de cartão
+            if (paymentMethod === 'credit_card') {
+                // @ts-ignore
+                const mp = new window.MercadoPago(mpKey);
 
-                payload.token = cardToken.id;
-                payload.installments = 1;
-
-                const bin = formData.cardNumber.replace(/\s/g, "").substring(0, 6);
                 try {
-                    const paymentMethodsHelper = await mp.getPaymentMethods({ bin });
-                    if (paymentMethodsHelper.results && paymentMethodsHelper.results.length > 0) {
-                        payload.payment_method_id = paymentMethodsHelper.results[0].id;
-                    } else {
+                    const cardToken = await mp.createCardToken({
+                        cardNumber: formData.cardNumber.replace(/\s/g, ""),
+                        cardholderName: formData.cardName,
+                        cardExpirationMonth: formData.cardMonth,
+                        cardExpirationYear: "20" + formData.cardYear,
+                        securityCode: formData.cardCvv,
+                        identificationType: "CPF",
+                        identificationNumber: formData.cpf.replace(/\D/g, "")
+                    });
+
+                    payload.token = cardToken.id;
+                    payload.installments = 1;
+
+                    const bin = formData.cardNumber.replace(/\s/g, "").substring(0, 6);
+                    try {
+                        const paymentMethodsHelper = await mp.getPaymentMethods({ bin });
+                        if (paymentMethodsHelper.results && paymentMethodsHelper.results.length > 0) {
+                            payload.payment_method_id = paymentMethodsHelper.results[0].id;
+                        } else {
+                            const firstDigit = formData.cardNumber.replace(/\s/g, "")[0];
+                            payload.payment_method_id = firstDigit === "5" ? "master" : "visa";
+                        }
+                    } catch (e) {
                         const firstDigit = formData.cardNumber.replace(/\s/g, "")[0];
                         payload.payment_method_id = firstDigit === "5" ? "master" : "visa";
                     }
-                } catch (e) {
-                    const firstDigit = formData.cardNumber.replace(/\s/g, "")[0];
-                    payload.payment_method_id = firstDigit === "5" ? "master" : "visa";
+                } catch (err) {
+                    throw new Error("Dados do cartão inválidos.");
                 }
-            } catch (err) {
-                throw new Error("Dados do cartão inválidos.");
             }
 
             const response = await api.post("/financial/purchase/", payload);
@@ -445,7 +473,18 @@ const PlanSelection = () => {
 
                 const status = response.data.payment_status || response.data.status;
 
-                if (status === 'in_process') {
+                // [PIX] Fluxo de Pendente
+                if (status === 'pending' && paymentMethod === 'pix') {
+                    navigate("/pagamento/pendente", {
+                        state: {
+                            price: getPrice(selectedPlan),
+                            status: status,
+                            pixData: response.data.pix_data, // Passa QR Code
+                            orderId: response.data.order_id // [NOVO] Para verificação de status
+                        }
+                    });
+                }
+                else if (status === 'in_process') {
                     navigate("/pagamento/pendente", {
                         state: {
                             price: getPrice(selectedPlan),
@@ -779,20 +818,58 @@ const PlanSelection = () => {
                                     <h3 className="text-md font-semibold flex items-center gap-2 text-gray-700"><CreditCard className="w-4 h-4" /> Pagamento</h3>
                                     <div className="space-y-2"><Label>CPF do Titular</Label><Input id="cpf" placeholder="000.000.000-00" value={formData.cpf} onChange={handleInputChange} maxLength={14} required /></div>
 
-                                    <div className="bg-gray-50 p-5 rounded-lg border border-gray-200 mt-4">
-                                        <div className="space-y-4 animate-in fade-in slide-in-from-left-2">
-                                            <div className="space-y-2"><Label>Número do Cartão</Label><Input id="cardNumber" value={formData.cardNumber} onChange={handleInputChange} required maxLength={19} /></div>
-                                            <div className="space-y-2"><Label>Nome no Cartão</Label><Input id="cardName" value={formData.cardName} onChange={handleInputChange} required /></div>
-                                            <div className="grid grid-cols-3 gap-4">
-                                                <div className="space-y-2"><Label>Mês</Label><Input id="cardMonth" placeholder="MM" maxLength={2} value={formData.cardMonth} onChange={handleInputChange} required /></div>
-                                                <div className="space-y-2"><Label>Ano</Label><Input id="cardYear" placeholder="AA" maxLength={2} value={formData.cardYear} onChange={handleInputChange} required /></div>
-                                                <div className="space-y-2"><Label>CVV</Label><Input id="cardCvv" maxLength={4} value={formData.cardCvv} onChange={handleInputChange} required type="password" /></div>
-                                            </div>
+                                    {/* MÉTODOS DE PAGAMENTO */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div
+                                            className={`border rounded-lg p-4 cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${paymentMethod === 'credit_card' ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}
+                                            onClick={() => setPaymentMethod('credit_card')}
+                                        >
+                                            <CreditCard className={`w-6 h-6 ${paymentMethod === 'credit_card' ? 'text-blue-600' : 'text-gray-400'}`} />
+                                            <span className={`text-sm font-medium ${paymentMethod === 'credit_card' ? 'text-blue-900' : 'text-gray-500'}`}>Cartão de Crédito</span>
+                                        </div>
+                                        <div
+                                            className={`border rounded-lg p-4 cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${paymentMethod === 'pix' ? 'border-green-600 bg-green-50' : 'border-gray-200 hover:bg-gray-50'}`}
+                                            onClick={() => setPaymentMethod('pix')}
+                                        >
+                                            <QrCode className={`w-6 h-6 ${paymentMethod === 'pix' ? 'text-green-600' : 'text-gray-400'}`} />
+                                            <span className={`text-sm font-medium ${paymentMethod === 'pix' ? 'text-green-900' : 'text-gray-500'}`}>Pix</span>
                                         </div>
                                     </div>
+
+                                    {paymentMethod === 'credit_card' && (
+                                        <div className="bg-gray-50 p-5 rounded-lg border border-gray-200 mt-4 animate-in fade-in slide-in-from-top-2">
+                                            <div className="space-y-4">
+                                                <div className="space-y-2"><Label>Número do Cartão</Label><Input id="cardNumber" value={formData.cardNumber} onChange={handleInputChange} required maxLength={19} /></div>
+                                                <div className="space-y-2"><Label>Nome no Cartão</Label><Input id="cardName" value={formData.cardName} onChange={handleInputChange} required /></div>
+                                                <div className="grid grid-cols-3 gap-4">
+                                                    <div className="space-y-2"><Label>Mês</Label><Input id="cardMonth" placeholder="MM" maxLength={2} value={formData.cardMonth} onChange={handleInputChange} required /></div>
+                                                    <div className="space-y-2"><Label>Ano</Label><Input id="cardYear" placeholder="AA" maxLength={2} value={formData.cardYear} onChange={handleInputChange} required /></div>
+                                                    <div className="space-y-2"><Label>CVV</Label><Input id="cardCvv" maxLength={4} value={formData.cardCvv} onChange={handleInputChange} required type="password" /></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {paymentMethod === 'pix' && (
+                                        <div className="bg-green-50 p-5 rounded-lg border border-green-200 mt-4 animate-in fade-in slide-in-from-top-2 text-center">
+                                            <div className="flex justify-center mb-3">
+                                                <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-green-600 shadow-sm">
+                                                    <QrCode className="w-6 h-6" />
+                                                </div>
+                                            </div>
+                                            <h4 className="font-semibold text-green-900 mb-2">Pagamento Instantâneo</h4>
+                                            <p className="text-sm text-green-800">
+                                                Ao continuar, geraremos um <strong>QR Code</strong> para pagamento.
+                                            </p>
+                                            <p className="text-xs text-green-700 mt-2">
+                                                A aprovação é imediata e seu protocolo será liberado na hora.
+                                            </p>
+                                        </div>
+                                    )}
+
                                 </div>
-                                <Button type="submit" className="w-full h-12 text-lg shadow-md bg-blue-600 hover:bg-blue-700" disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin mr-2" /> : `Pagar R$ ${getPrice(selectedPlan)}`}
+                                <Button type="submit" className={`w-full h-12 text-lg shadow-md ${paymentMethod === 'pix' ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'}`} disabled={loading}>
+                                    {loading ? <Loader2 className="animate-spin mr-2" /> : (paymentMethod === 'pix' ? `Gerar Pix R$ ${getPrice(selectedPlan)}` : `Pagar R$ ${getPrice(selectedPlan)}`)}
                                 </Button>
                             </form>
                         )}
