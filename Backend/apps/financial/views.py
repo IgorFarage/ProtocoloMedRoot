@@ -172,6 +172,42 @@ class WebhookView(APIView):
                                 except Exception as bitrix_err:
                                      logger.error(f"❌ [Webhook] Bitrix Sync Retry Failed: {bitrix_err}")
 
+                        elif status in ["pending", "in_process"]:
+                            # [FIX] Garante que status Pendente também sincroniza com Bitrix (para corrigir falhas iniciais)
+                            if transaction.bitrix_sync_status != 'synced' and BitrixService:
+                                try:
+                                    logger.info(f"🔄 [Webhook] Syncing Pending Status for {transaction.external_reference}...")
+                                    
+                                    # [REUSE] Lógica de Sync (Simplificada)
+                                    payment_info_bitrix = {
+                                        "id": str(mp_id),
+                                        "status": status,
+                                        "date_created": datetime.now().isoformat()
+                                    }
+                                    
+                                    # Recria produtos (Fallback básico)
+                                    products_list = []
+                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
+                                        products_list = transaction.mp_metadata.get('original_products', [])
+
+                                    deal_id = BitrixService.prepare_deal_payment(
+                                        user=transaction.user,
+                                        products_list=products_list,
+                                        plan_title=f"ProtocoloMed - {transaction.plan_type}",
+                                        total_amount=float(transaction.amount),
+                                        answers=None,
+                                        payment_data=payment_info_bitrix
+                                    )
+                                    
+                                    if deal_id:
+                                        transaction.bitrix_deal_id = str(deal_id)
+                                        transaction.bitrix_sync_status = 'synced'
+                                        transaction.save()
+                                        logger.info(f"✅ [Webhook] Bitrix Sync (Pending) Success! Deal: {deal_id}")
+
+                                except Exception as e:
+                                    logger.error(f"❌ [Webhook] Pending Sync Failed: {e}")
+
                         elif status == "rejected": 
                             transaction.status = Transaction.Status.REJECTED
                             transaction.save()
