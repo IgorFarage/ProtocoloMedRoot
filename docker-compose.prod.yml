@@ -91,6 +91,7 @@ services:
       - N8N_HOST=n8n.protocolo.med.br
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
+      - N8N_SECURE_COOKIE=false
       - NODE_ENV=production
       - WEBHOOK_URL=http://69.6.221.24:5678/
       - DB_TYPE=postgresdb
