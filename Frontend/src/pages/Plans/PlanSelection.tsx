@@ -151,15 +151,15 @@ const PlanSelection = () => {
 
             setFormData(prev => ({
                 ...prev,
-                full_name: prev.full_name || profile.name || "",
-                email: prev.email || profile.email || "",
-                phone: prev.phone || profile.phone || "",
-                cep: prev.cep || profile.address?.zip || "",
-                address: prev.address || street,
-                city: prev.city || profile.address?.city || "",
-                state: prev.state || profile.address?.state || "",
-                neighborhood: prev.neighborhood || profile.address?.neighborhood || "",
-                number: prev.number || num || "S/N",
+                full_name: profile.name || prev.full_name || "",
+                email: profile.email || prev.email || "",
+                phone: profile.phone || prev.phone || "",
+                cep: profile.address?.zip || prev.cep || "",
+                address: street || prev.address || "",
+                city: profile.address?.city || prev.city || "",
+                state: profile.address?.state || prev.state || "",
+                neighborhood: profile.address?.neighborhood || prev.neighborhood || "",
+                number: prev.number || "S/N",
                 complement: prev.complement || "",
             }));
 

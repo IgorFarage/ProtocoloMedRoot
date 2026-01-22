@@ -40,6 +40,15 @@ class User(AbstractBaseUser, PermissionsMixin):
     full_name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20, null=True, blank=True)
     
+    # Endereço Local (Cache/Persistência)
+    cep = models.CharField(max_length=10, null=True, blank=True)
+    street = models.CharField(max_length=255, null=True, blank=True)
+    number = models.CharField(max_length=20, null=True, blank=True)
+    complement = models.CharField(max_length=255, null=True, blank=True)
+    neighborhood = models.CharField(max_length=100, null=True, blank=True)
+    city = models.CharField(max_length=100, null=True, blank=True)
+    state = models.CharField(max_length=2, null=True, blank=True)
+
     # Integrações
     id_bitrix = models.CharField(max_length=50, null=True, blank=True, help_text="ID do contato no CRM")
     customer_id_mp = models.CharField(max_length=50, null=True, blank=True, help_text="ID do Cliente no Mercado Pago")
