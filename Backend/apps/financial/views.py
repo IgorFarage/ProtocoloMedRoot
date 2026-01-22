@@ -130,20 +130,45 @@ class WebhookView(APIView):
                             if transaction.bitrix_sync_status != 'synced' and BitrixService:
                                 try:
                                     logger.info("🔄 [Webhook] Retrying Bitrix Sync...")
-                                    # Recria dados básicos para sync
-                                    validated_data = {
-                                        "full_name": transaction.user.get_full_name(),
-                                        "phone": transaction.user.profile.phone if hasattr(transaction.user, 'profile') else "",
-                                        "email": transaction.user.email,
-                                        "address_data": transaction.user.profile.address if hasattr(transaction.user, 'profile') else {}
-                                    }
-                                    # Precisamos extrair metadata se existir
-                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
-                                        orig_products = transaction.mp_metadata.get('original_products', [])
-                                        # TODO: Melhorar reconstrução se necessário
                                     
-                                    # Nota: O sync completo via webhook é complexo sem o payload original completo.
-                                    # Por enquanto, focamos na ATIVAÇÃO DO PLANO que é o crítico.
+                                    # 1. Reconstrói lista de produtos do Metadata
+                                    products_list = []
+                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
+                                        products_list = transaction.mp_metadata.get('original_products', [])
+                                    
+                                    # Fallback: Se não tiver no metadata (legado), tenta gerar do questionário
+                                    if not products_list:
+                                        from apps.accounts.models import UserQuestionnaire
+                                        last_q = UserQuestionnaire.objects.filter(user=transaction.user).order_by('-created_at').first()
+                                        if last_q:
+                                            protocol = BitrixService.generate_protocol(last_q.answers)
+                                            products_list = protocol.get('products', [])
+
+                                    # 2. Prepara dados de pagamento para o Bitrix
+                                    payment_info_bitrix = {
+                                        "id": str(mp_id),
+                                        "status": "approved", # Se entrou aqui, é porque foi aprovado
+                                        "date_created": datetime.now().isoformat()
+                                    }
+
+                                    # 3. Chama o serviço
+                                    deal_id = BitrixService.prepare_deal_payment(
+                                        user=transaction.user,
+                                        products_list=products_list,
+                                        plan_title=f"ProtocoloMed - {transaction.plan_type}",
+                                        total_amount=float(transaction.amount),
+                                        answers=None, # Não reenviamos respostas aqui
+                                        payment_data=payment_info_bitrix
+                                    )
+
+                                    if deal_id:
+                                        transaction.bitrix_deal_id = str(deal_id)
+                                        transaction.bitrix_sync_status = 'synced'
+                                        transaction.save()
+                                        logger.info(f"✅ [Webhook] Bitrix Sync Success! Deal: {deal_id}")
+                                    else:
+                                        logger.warning("⚠️ [Webhook] Bitrix Sync returned no Deal ID.")
+
                                 except Exception as bitrix_err:
                                      logger.error(f"❌ [Webhook] Bitrix Sync Retry Failed: {bitrix_err}")
 
