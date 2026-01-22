@@ -322,13 +322,20 @@ class CompletePurchaseView(APIView):
             with db_transaction.atomic():
                 # User is already created/retrieved
                 
+                # [FIX STATUS] Determine initial status explicitly
+                final_status = Transaction.Status.PENDING
+                if status_mp in ['approved', 'authorized']:
+                    final_status = Transaction.Status.APPROVED
+                elif status_mp == 'rejected':
+                    final_status = Transaction.Status.REJECTED
+                    
                 transaction = Transaction.objects.create(
                     user=user, 
                     plan_type=plan_id, 
                     amount=total_price, 
                     cycle=validated_data.get('billing_cycle'),
                     external_reference=external_ref, 
-                    status=Transaction.Status.APPROVED if is_success else Transaction.Status.PENDING,
+                    status=final_status,
                     payment_type=Transaction.PaymentType.PIX if payment_method == 'pix' else Transaction.PaymentType.CREDIT_CARD,
                     mercado_pago_id=mp_id_value
                 )
