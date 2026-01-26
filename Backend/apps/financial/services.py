@@ -94,6 +94,81 @@ class FinancialService:
             print(f"❌ Exceção save_card: {e}")
             return None
 
+    def execute_transparent_subscription(self, user_data: dict, subscription_config: dict, token: str) -> dict:
+        """
+        Cria uma assinatura (Preapproval) com VÍNCULO EXPLÍCITO DE PAYER.
+        Fluxo: Customer -> Save Card -> Preapproval (payload com payer.id).
+        """
+        try:
+            # 1. Obter ou Criar Cliente
+            cpf_val = user_data.get('cpf') or user_data.get('identification', {}).get('number')
+            
+            customer = self.get_or_create_customer(
+                email=user_data['email'],
+                first_name=user_data.get('first_name'),
+                last_name=user_data.get('last_name'),
+                cpf=cpf_val
+            )
+            if not customer:
+                return {"error": "Falha ao gerenciar Customer no MP"}
+            
+            customer_id = customer['id']
+            
+            # 2. Salvar Cartão (CRÍTICO)
+            card = self.save_card(customer_id, token)
+            
+            if not card or 'id' not in card:
+                 print(f"❌ Falha crítica: Cartão não foi salvo. Resposta save_card: {card}")
+                 return {"error": "Não foi possível salvar o cartão. Verifique os dados."}
+
+            card_id = card['id']
+            print(f"✅ Cartão Salvo com Sucesso! ID: {card_id}")
+
+            # 3. Criar Assinatura (Preapproval)
+            import datetime
+            start_date = (datetime.datetime.now() + datetime.timedelta(minutes=1)).isoformat() + "Z"
+            
+            amount = subscription_config.get('transaction_amount') or subscription_config.get('amount')
+            
+            preapproval_payload = {
+                "back_url": "https://protocolomed.com.br/payment-success",
+                "reason": subscription_config.get("reason", "Assinatura"),
+                "external_reference": subscription_config.get("external_reference"),
+                "auto_recurring": {
+                    "frequency": 1, 
+                    "frequency_type": "months",
+                    "start_date": start_date,
+                    "transaction_amount": float(amount),
+                    "currency_id": "BRL"
+                },
+                # VÍNCULO EXPLÍCITO: OBRIGATÓRIO PARA SANDBOX + CARD_ID
+                "payer": {
+                    "id": customer_id,
+                    "email": user_data.get("email")
+                },
+                "card_token_id": token,     # ID do cartão salvo (ex: 17694...)
+                "status": "authorized" 
+            }
+
+            print(f"🚀 Enviando Payload Assinatura MP (Com Payer ID): {json.dumps(preapproval_payload, indent=2)}")
+            
+            response = self.sdk.preapproval().create(preapproval_payload)
+            response_content = response.get("response", {})
+            status = response.get("status")
+
+            if status == 201:
+                print(f"✅ Assinatura Criada: {response_content.get('id')}")
+                return response_content
+            
+            error_msg = response_content.get("message", "Erro na criação da assinatura")
+            print(f"❌ Erro MP Assinatura (Status {status}): {json.dumps(response_content, indent=2)}")
+            
+            return {"error": error_msg, "details": response_content}
+
+        except Exception as e:
+            print(f"❌ Erro Crítico execute_transparent_subscription: {e}")
+            return {"error": str(e)}
+
     def create_subscription(self, subscription_data):
         """
         Cria uma assinatura (Preapproval) sem plano no Mercado Pago.

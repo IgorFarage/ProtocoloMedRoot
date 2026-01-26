@@ -270,7 +270,13 @@ class CompletePurchaseView(APIView):
         
         # Extract basic data
         email = validated_data.get('email')
-        full_name_list = validated_data.get('full_name').split()
+        import re
+        full_name_raw = validated_data.get('full_name', '')
+        # [FIX MP 107] Sanitize: Remove numbers and symbols, keep only letters/spaces
+        safe_name = re.sub(r'[^a-zA-Z\u00C0-\u00FF\s]', '', full_name_raw).strip() # Include accents
+        if not safe_name: safe_name = "Cliente"
+
+        full_name_list = safe_name.split()
         first_name = full_name_list[0]
         last_name = " ".join(full_name_list[1:]) if len(full_name_list) > 1 else "Client"
         cpf = validated_data.get('cpf')
@@ -278,87 +284,121 @@ class CompletePurchaseView(APIView):
         total_price = float(validated_data.get('total_price', 0))
         plan_id = validated_data.get('plan_id')
         payment_method = validated_data.get('payment_method_id')
+        billing_cycle = validated_data.get('billing_cycle', 'monthly') # 'monthly' or 'monthly_subscription' (or 'quarterly' mapped to sub)
+
         external_ref = str(uuid.uuid4())
 
         # [DEBUG] Log incoming products
         raw_products = request.data.get('products', [])
-        val_products = validated_data.get('products', [])
-        logger.info(f"🛒 Checkout Initialized for {email}. Raw Products: {len(raw_products)} | Validated Products: {len(val_products)}")
-        if raw_products:
-             logger.info(f"📦 First Product IDs: {[p.get('id') for p in raw_products[:5]]}")
+        logger.info(f"🛒 Checkout Initialized for {email}. Cycle: {billing_cycle}")
 
-        # 2. Payment Payload Construction
-        payment_payload = {
-            "transaction_amount": total_price,
-            "description": f"ProtocoloMed - {plan_id}",
-            "payment_method_id": payment_method,
-            "payer": {
-                "email": email,
-                "first_name": first_name,
-                "last_name": last_name,
-                "identification": {"type": "CPF", "number": cpf}
-            },
-            "external_reference": external_ref
-        }
-        
-
-        # 3. Get or Create User (Before Payment to get Customer ID)
+        # 2. Get or Create User
         try:
              user = self._get_or_create_user(request, validated_data)
         except ValueError as e:
              return Response({"error": str(e)}, status=400)
 
-        # 3. Process Payment
+        # 3. Process Payment OR Subscription
         financial_service = FinancialService()
         payment_result = None
-
-        logger.info(f"🚀 Processing Simple Payment ({payment_method}) for {email}")
+        is_subscription = False
         
-        # Prepare Simple Payment Payload for ALL methods (Credit Card & Pix)
-        if payment_method != 'pix':
-            payment_payload["token"] = validated_data.get('token')
-            payment_payload["installments"] = validated_data.get('installments', 1)
+        # Decide Strategy based on cycle
+        # We assume 'quarterly' now means SUBSCRIPTION in the frontend, OR explicit 'subscription' flag
+        # For safety, let's treat 'quarterly' -> Subscription (Monthly Charge) as per last instruction
+        is_subscription_flow = (billing_cycle == 'quarterly') and (payment_method != 'pix')
+
+        if is_subscription_flow:
+            logger.info(f"🔄 Starting Subscription Flow for {email}")
+            
+            # Prepare User Data for Customer Creation
+            user_data_mp = {
+                "email": email,
+                "first_name": first_name,
+                "last_name": last_name,
+                "identification": {"type": "CPF", "number": cpf}
+            }
+            
+            # Prepare Subscription Config
+            sub_config = {
+                "reason": f"ProtocoloMed - {plan_id} (Assinatura)",
+                "external_reference": external_ref,
+                "transaction_amount": total_price # Full monthly amount
+            }
+            
+            token = validated_data.get('token')
+            if not token:
+                return Response({"error": "Token do cartão obrigatório para assinatura."}, status=400)
+
+            # EXECUTE SUBSCRIPTION
+            payment_result = financial_service.execute_transparent_subscription(user_data_mp, sub_config, token)
+            is_subscription = True
+            
         else:
-            # [PIX] Set Expiration to 30 minutes
-            expiration_time = (datetime.utcnow() + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000-00:00")
-            payment_payload["date_of_expiration"] = expiration_time
-            logger.info(f"⏳ Pix Expiration set to: {expiration_time}")
+            # ORIGINAL ONE-OFF FLOW
+            logger.info(f"🚀 Processing One-Off Payment ({payment_method}) for {email}")
+            
+            payment_payload = {
+                "transaction_amount": total_price,
+                "description": f"ProtocoloMed - {plan_id}",
+                "payment_method_id": payment_method,
+                "payer": {
+                    "email": email,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "identification": {"type": "CPF", "number": cpf}
+                },
+                "external_reference": external_ref
+            }
 
-        # UNIFIED CALL - Direct Payment (No Subscription/Customer extraction)
-        payment_result = financial_service.process_direct_payment(payment_payload)
+            if payment_method != 'pix':
+                payment_payload["token"] = validated_data.get('token')
+                payment_payload["installments"] = validated_data.get('installments', 1)
+            else:
+                expiration_time = (datetime.utcnow() + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000-00:00")
+                payment_payload["date_of_expiration"] = expiration_time
 
-        # Retry Logic (Generic International or other specific errors)
-        if payment_method != 'pix' and payment_result and 'cause' in payment_result:
-            causes = payment_result.get('cause', [])
-            if isinstance(causes, list) and any(str(c.get('code')) == '10114' for c in causes):
-                logger.warning("⚠️ Retry 1x (Internacional)...")
-                payment_payload['installments'] = 1
-                payment_payload['external_reference'] = f"{external_ref}_retry"
-                payment_result = financial_service.process_direct_payment(payment_payload)
+            # EXECUTE PAYMENT
+            payment_result = financial_service.process_direct_payment(payment_payload)
+            
+            # Retry Logic (One-off only)
+            if payment_method != 'pix' and payment_result and 'cause' in payment_result:
+                causes = payment_result.get('cause', [])
+                if isinstance(causes, list) and any(str(c.get('code')) == '10114' for c in causes):
+                    logger.warning("⚠️ Retry 1x (Internacional)...")
+                    payment_payload['installments'] = 1
+                    payment_payload['external_reference'] = f"{external_ref}_retry"
+                    payment_result = financial_service.process_direct_payment(payment_payload)
 
-        # Evaluate Payment Success
+
+        # 4. Evaluate Success & Persist
         is_success = False
         status_mp = "rejected"
         mp_id_value = None
+        subscription_id_value = None
 
         if payment_result:
             status_mp = payment_result.get('status')
-            mp_id_value = str(payment_result.get('id', ''))
-            # Subscription success is 'authorized'
-            if status_mp in ['approved', 'in_process', 'authorized']: is_success = True
-            if payment_method == 'pix' and status_mp == 'pending': is_success = True
+            
+            if is_subscription:
+                subscription_id_value = str(payment_result.get('id', ''))
+                # Preapproval status: 'authorized' is success
+                if status_mp == 'authorized': is_success = True
+            else:
+                mp_id_value = str(payment_result.get('id', ''))
+                # Payment status: 'approved' or 'in_process' (pix pending)
+                if status_mp in ['approved', 'in_process', 'authorized']: is_success = True
+                if payment_method == 'pix' and status_mp == 'pending': is_success = True
 
         if not is_success:
             error_msg = self._extract_error_message(payment_result)
-            logger.error(f"❌ Payment Failed: {error_msg}")
-            return Response({"error": "Pagamento não realizado", "detail": error_msg}, status=400)
+            logger.error(f"❌ Transaction Failed: {error_msg}")
+            return Response({"error": "Falha na transação", "detail": error_msg}, status=400)
 
-        # 4. Persistence
+        # 5. Persistence Transaction
         try:
             with db_transaction.atomic():
-                # User is already created/retrieved
                 
-                # [FIX STATUS] Determine initial status explicitly
                 final_status = Transaction.Status.PENDING
                 if status_mp in ['approved', 'authorized']:
                     final_status = Transaction.Status.APPROVED
@@ -369,14 +409,15 @@ class CompletePurchaseView(APIView):
                     user=user, 
                     plan_type=plan_id, 
                     amount=total_price, 
-                    cycle=validated_data.get('billing_cycle'),
+                    cycle=billing_cycle,
                     external_reference=external_ref, 
                     status=final_status,
                     payment_type=Transaction.PaymentType.PIX if payment_method == 'pix' else Transaction.PaymentType.CREDIT_CARD,
-                    mercado_pago_id=mp_id_value
+                    mercado_pago_id=mp_id_value,
+                    subscription_id=subscription_id_value # New Field
                 )
 
-                # TRIGGER AUTOMATIC SUBSCRIPTION/PLAN ACTIVATION
+                # TRIGGER AUTOMATIC ACTIVATION
                 if transaction.status == Transaction.Status.APPROVED:
                     SubscriptionService.activate_subscription_from_transaction(transaction)
 
@@ -384,41 +425,37 @@ class CompletePurchaseView(APIView):
                 bitrix_success = False
                 deal_id = None
                 try:
-                    deal_id = self._handle_bitrix_integration(user, validated_data, payment_result, plan_id, total_price)
-                    if deal_id:
-                        bitrix_success = True
+                    # Pass correct ID (Subscription ID or Payment ID) depending on flow
+                    integ_id = subscription_id_value if is_subscription else mp_id_value
+                    # Construct temp result wrapper for Bitrix
+                    bitrix_payment_result = payment_result.copy()
+                    bitrix_payment_result['id'] = integ_id
+                    
+                    deal_id = self._handle_bitrix_integration(user, validated_data, bitrix_payment_result, plan_id, total_price)
+                    if deal_id: bitrix_success = True
                 except Exception as e:
-                    logger.error(f"⚠️ Bitrix Sync Failed directly after purchase: {e}")
+                    logger.error(f"⚠️ Bitrix Sync Failed: {e}")
 
-                # Update Transaction with Sync Status
                 transaction.bitrix_sync_status = 'synced' if bitrix_success else 'failed'
                 if bitrix_success: transaction.bitrix_deal_id = str(deal_id)
-                # [MODIFICAÇÃO: Snapshot de Contexto para Resiliência]
-                # [OTIMIZAÇÃO] Salvar apenas dados essenciais para economizar espaço no DB
-                raw_products = request.data.get('products', [])
-                sanitized_products = [
-                    {
-                        "id": p.get("id"), 
-                        "name": p.get("name"), 
-                        "price": p.get("price")
-                    } for p in raw_products
-                ]
-
+                
+                # Metadata Snapshot
+                sanitized_products = [{"id": p.get("id"), "name": p.get("name"), "price": p.get("price")} for p in raw_products]
                 meta_data = {
                     "payment_response": self._sanitize_payment_data(payment_result),
                     "original_products": sanitized_products, 
-                    "questionnaire_snapshot": validated_data.get('questionnaire_data', {})
+                    "questionnaire_snapshot": validated_data.get('questionnaire_data', {}),
+                    "is_subscription": is_subscription
                 }
-                # Fix: Convert Decimals to float/str for JSON serialization
                 transaction.mp_metadata = self._make_json_serializable(meta_data)
                 transaction.save()
 
-                # [FIX CACHE] Limpar cache do protocolo para refletir mudança imediata (Standard -> Plus)
+                # Cache Clear
                 from django.core.cache import cache
                 cache.delete(f"user_protocol_{user.id}")
                 cache.delete(f"user_profile_full_{user.id}")
 
-                # Return Success Response
+                # Response Construction
                 refresh = RefreshToken.for_user(user)
                 response_data = {
                     "status": "success", 
