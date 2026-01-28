@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useClientData } from "@/hooks/useClientData";
-import api from "@/lib/api";
+import api, { financial } from "@/lib/api";
 import { PRODUCT_IMAGES } from "@/lib/client-constants";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -62,8 +62,13 @@ const PlanSelection = () => {
     }, [location.state, isUpgrade, activeProtocol, currentProtocol]);
 
     const answers = useMemo(() => {
-        return getStateOrLocal('answers') || (isUpgrade && clientAnswers ? clientAnswers : {});
-    }, [location.state, isUpgrade, clientAnswers]);
+        // [FIX] Sempre tenta recuperar do backend (clientAnswers) se não tiver no state/local
+        // Isso resolve o problema de quem vem do Dashboard para finalizar compra
+        const local = getStateOrLocal('answers');
+        if (local && Object.keys(local).length > 0) return local;
+
+        return clientAnswers || {};
+    }, [location.state, clientAnswers]);
 
     // [MODIFICADO] Total price se não vier (calculado depois anyway)
     const total_price = getStateOrLocal('total_price') || (isUpgrade ? 150.00 : 0);
@@ -87,7 +92,7 @@ const PlanSelection = () => {
     const [acceptedContract, setAcceptedContract] = useState(false);
 
     const [selectedPlan, setSelectedPlan] = useState<"standard" | "plus">(getStateOrLocal('planId') || "plus");
-    const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly">(getStateOrLocal('billingCycle') || "monthly");
+    const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly" | "one_off">(getStateOrLocal('billingCycle') || "one_off");
     const [loading, setLoading] = useState(false);
 
     // [MODIFICADO] Estado para Preços Dinâmicos (Vindo do Bitrix)
@@ -95,6 +100,13 @@ const PlanSelection = () => {
 
     // [NOVO] Estado do Método de Pagamento
     const [paymentMethod, setPaymentMethod] = useState<"credit_card" | "pix">("credit_card");
+
+    // [NOVO] Coupon State
+    const [couponCode, setCouponCode] = useState("");
+    const [discountAmount, setDiscountAmount] = useState(0);
+    const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
+    const [couponSuccess, setCouponSuccess] = useState(false);
+
 
     // --- ANALYTICS (GA4) ---
     // Track View Item List (Ao carregar e ter preços)
@@ -214,10 +226,7 @@ const PlanSelection = () => {
             base += planPrices.standard;
         }
 
-        // [FIX PRICE] Se for Assinatura (antigo trimestral), aplica 10% de desconto no valor MENSAL
-        if (billingCycle === "quarterly") {
-            base = base * 0.90;
-        }
+
         return base.toFixed(2);
     };
 
@@ -256,6 +265,44 @@ const PlanSelection = () => {
                     }));
                 }
             } catch (error) { console.log("Erro CEP"); }
+        }
+    };
+
+    const handleApplyCoupon = async () => {
+        if (!couponCode) return;
+        setIsValidatingCoupon(true);
+        setCouponSuccess(false); // Reset
+        setDiscountAmount(0);
+
+        try {
+            const currentTotal = parseFloat(getPrice(selectedPlan));
+            const res = await financial.validateCoupon(couponCode, currentTotal);
+
+            if (res.data.valid) {
+                setDiscountAmount(res.data.discount_amount);
+                setCouponSuccess(true);
+                toast({
+                    title: "Cupom Aplicado!",
+                    description: `Economia de R$ ${res.data.discount_amount.toFixed(2)}`,
+                    className: "bg-green-50 border-green-200 text-green-800"
+                });
+            } else {
+                toast({
+                    variant: "destructive",
+                    title: "Cupom Inválido",
+                    description: res.data.message
+                });
+                setDiscountAmount(0);
+            }
+        } catch (error) {
+            console.error(error);
+            toast({
+                variant: "destructive",
+                title: "Erro",
+                description: "Não foi possível validar o cupom."
+            });
+        } finally {
+            setIsValidatingCoupon(false);
         }
     };
 
@@ -390,48 +437,33 @@ const PlanSelection = () => {
                     neighborhood: formData.neighborhood, complement: formData.complement,
                     city: formData.city, state: formData.state
                 },
-                questionnaire_data: answers || {}
+                questionnaire_data: answers || {},
+                coupon_code: couponSuccess ? couponCode : undefined
             };
 
             const mpKey = import.meta.env.VITE_MERCADO_PAGO_PUBLIC_KEY;
 
             if (paymentMethod === 'credit_card') {
-                // @ts-ignore
-                const mp = new window.MercadoPago(mpKey);
+                // [MIGRATION ASAAS] Pass-Through Strategy (HTTPS Direct)
+                // Não geramos token no frontend. Enviamos dados para o backend via túnel seguro.
+                console.log("💳 Preparando payload Asaas (Pass-Through)...");
 
-                try {
-                    const cleanCpf = formData.cpf.replace(/[^\d]/g, "");
-                    console.log("💳 Gerando Token para CPF clean:", cleanCpf);
-
-                    const cardToken = await mp.createCardToken({
-                        cardNumber: formData.cardNumber.replace(/\s/g, ""),
-                        cardholderName: formData.cardName.trim(), // Ensure no extra spaces
-                        cardExpirationMonth: formData.cardMonth,
-                        cardExpirationYear: "20" + formData.cardYear,
-                        securityCode: formData.cardCvv,
-                        identificationType: "CPF",
-                        identificationNumber: cleanCpf
-                    });
-
-                    payload.token = cardToken.id;
-                    payload.installments = 1;
-
-                    const bin = formData.cardNumber.replace(/\s/g, "").substring(0, 6);
-                    try {
-                        const paymentMethodsHelper = await mp.getPaymentMethods({ bin });
-                        if (paymentMethodsHelper.results && paymentMethodsHelper.results.length > 0) {
-                            payload.payment_method_id = paymentMethodsHelper.results[0].id;
-                        } else {
-                            const firstDigit = formData.cardNumber.replace(/\s/g, "")[0];
-                            payload.payment_method_id = firstDigit === "5" ? "master" : "visa";
-                        }
-                    } catch (e) {
-                        const firstDigit = formData.cardNumber.replace(/\s/g, "")[0];
-                        payload.payment_method_id = firstDigit === "5" ? "master" : "visa";
+                payload.credit_card = {
+                    holderName: formData.cardName.trim(),
+                    number: formData.cardNumber.replace(/\s/g, ""),
+                    expiryMonth: formData.cardMonth,
+                    expiryYear: "20" + formData.cardYear, // Asaas espera 4 dígitos (ex: 2028)
+                    ccv: formData.cardCvv,
+                    holderInfo: {
+                        name: formData.full_name,
+                        email: formData.email,
+                        cpfCnpj: formData.cpf.replace(/[^\d]/g, ""),
+                        postalCode: formData.cep.replace(/[^\d]/g, ""),
+                        addressNumber: formData.number,
+                        phone: formData.phone.replace(/[^\d]/g, "")
                     }
-                } catch (err) {
-                    throw new Error("Dados do cartão inválidos.");
-                }
+                };
+                payload.payment_method_id = 'credit_card'; // Identificador genérico para o Backend
             }
 
             const response = await api.post("/financial/purchase/", payload);
@@ -580,8 +612,8 @@ const PlanSelection = () => {
                     </Card>
 
                     <div className="flex justify-center gap-4 mb-8">
-                        <Button variant={billingCycle === "monthly" ? "default" : "outline"} onClick={() => setBillingCycle("monthly")}>Pagamento Único</Button>
-                        <Button variant={billingCycle === "quarterly" ? "default" : "outline"} onClick={() => setBillingCycle("quarterly")}>Assinatura (Cobrança Mensal)</Button>
+                        <Button variant={billingCycle === "one_off" ? "default" : "outline"} onClick={() => setBillingCycle("one_off")}>Pagamento Único</Button>
+                        <Button variant={billingCycle === "monthly" ? "default" : "outline"} onClick={() => { setBillingCycle("monthly"); setPaymentMethod("credit_card"); }}>Assinatura (Cobrança Mensal)</Button>
                     </div>
                     <div className="grid md:grid-cols-2 gap-8">
                         {!location.state?.isUpgrade && (
@@ -595,7 +627,7 @@ const PlanSelection = () => {
                                         <p className="text-sm text-gray-500 mb-1">Total Estimado</p>
                                         <p className="text-4xl font-bold text-blue-900">R$ {getPrice("standard")}</p>
                                         <p className="text-sm text-green-600 font-medium mt-2">
-                                            {billingCycle === 'quarterly' ? 'Cobrado mensalmente (Assinatura -10%)' : 'Cobrado hoje'}
+                                            {billingCycle === 'monthly' ? 'Cobrado mensalmente' : 'Cobrado hoje'}
                                         </p>
                                     </div>
                                     <ul className="space-y-2 text-sm text-gray-600">
@@ -620,7 +652,7 @@ const PlanSelection = () => {
                                     <p className="text-sm text-gray-500 mb-1">Total Estimado</p>
                                     <p className="text-4xl font-bold text-green-700">R$ {getPrice("plus")}</p>
                                     <p className="text-sm text-green-600 font-medium mt-2">
-                                        {billingCycle === 'quarterly' ? 'Cobrado mensalmente (Assinatura -10%)' : 'Cobrado mensalmente'}
+                                        {billingCycle === 'monthly' ? 'Cobrado mensalmente' : 'Cobrado hoje'}
                                     </p>
                                 </div>
                                 <ul className="space-y-2 text-sm text-gray-600">
@@ -684,7 +716,17 @@ const PlanSelection = () => {
                     <CardHeader className="bg-gray-50/50 border-b pb-6">
                         <div className="flex justify-between items-start">
                             <div><CardTitle className="flex items-center gap-2"><Lock className="w-5 h-5 text-green-600" /> Finalizar Compra</CardTitle><CardDescription>Dados seguros.</CardDescription></div>
-                            <div className="text-right"><p className="text-sm text-gray-500">Total</p><p className="text-2xl font-bold text-green-700">R$ {getPrice(selectedPlan)}</p></div>
+                            <div className="text-right">
+                                <p className="text-sm text-gray-500">Total</p>
+                                {discountAmount > 0 ? (
+                                    <>
+                                        <p className="text-sm text-gray-400 line-through">R$ {getPrice(selectedPlan)}</p>
+                                        <p className="text-2xl font-bold text-green-700">R$ {(parseFloat(getPrice(selectedPlan)) - discountAmount).toFixed(2)}</p>
+                                    </>
+                                ) : (
+                                    <p className="text-2xl font-bold text-green-700">R$ {getPrice(selectedPlan)}</p>
+                                )}
+                            </div>
                         </div>
                     </CardHeader>
                     <CardContent className="pt-6">
@@ -781,10 +823,34 @@ const PlanSelection = () => {
                             <form onSubmit={handleFinalizePayment} className="space-y-6">
                                 <div className="space-y-4">
                                     <h3 className="text-md font-semibold flex items-center gap-2 text-gray-700"><CreditCard className="w-4 h-4" /> Pagamento</h3>
+
+                                    {/* CUPON AREA */}
+                                    <div className="flex gap-2 items-end bg-gray-50 p-3 rounded-lg border border-dashed border-gray-300">
+                                        <div className="flex-1 space-y-1">
+                                            <Label className="text-xs text-gray-500">Possui Cupom de Desconto?</Label>
+                                            <Input
+                                                placeholder="Ex: VERAO2026"
+                                                value={couponCode}
+                                                onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                                                disabled={couponSuccess}
+                                                className={couponSuccess ? "border-green-500 text-green-700 bg-green-50" : ""}
+                                            />
+                                        </div>
+                                        {couponSuccess ? (
+                                            <Button type="button" variant="outline" onClick={() => { setCouponSuccess(false); setDiscountAmount(0); setCouponCode(""); }} className="text-red-500 hover:text-red-700">
+                                                <X className="w-4 h-4" />
+                                            </Button>
+                                        ) : (
+                                            <Button type="button" onClick={handleApplyCoupon} disabled={!couponCode || isValidatingCoupon} variant="secondary">
+                                                {isValidatingCoupon ? <Loader2 className="w-4 h-4 animate-spin" /> : "Aplicar"}
+                                            </Button>
+                                        )}
+                                    </div>
+
                                     <div className="space-y-2"><Label>CPF do Titular</Label><Input id="cpf" placeholder="000.000.000-00" value={formData.cpf} onChange={handleInputChange} maxLength={14} required /></div>
 
                                     {/* MÉTODOS DE PAGAMENTO */}
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className={`grid ${billingCycle === 'one_off' ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
                                         <div
                                             className={`border rounded-lg p-4 cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${paymentMethod === 'credit_card' ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}
                                             onClick={() => setPaymentMethod('credit_card')}
@@ -792,13 +858,16 @@ const PlanSelection = () => {
                                             <CreditCard className={`w-6 h-6 ${paymentMethod === 'credit_card' ? 'text-blue-600' : 'text-gray-400'}`} />
                                             <span className={`text-sm font-medium ${paymentMethod === 'credit_card' ? 'text-blue-900' : 'text-gray-500'}`}>Cartão de Crédito</span>
                                         </div>
-                                        <div
-                                            className={`border rounded-lg p-4 cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${paymentMethod === 'pix' ? 'border-green-600 bg-green-50' : 'border-gray-200 hover:bg-gray-50'}`}
-                                            onClick={() => setPaymentMethod('pix')}
-                                        >
-                                            <QrCode className={`w-6 h-6 ${paymentMethod === 'pix' ? 'text-green-600' : 'text-gray-400'}`} />
-                                            <span className={`text-sm font-medium ${paymentMethod === 'pix' ? 'text-green-900' : 'text-gray-500'}`}>Pix</span>
-                                        </div>
+
+                                        {billingCycle === 'one_off' && (
+                                            <div
+                                                className={`border rounded-lg p-4 cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${paymentMethod === 'pix' ? 'border-green-600 bg-green-50' : 'border-gray-200 hover:bg-gray-50'}`}
+                                                onClick={() => setPaymentMethod('pix')}
+                                            >
+                                                <QrCode className={`w-6 h-6 ${paymentMethod === 'pix' ? 'text-green-600' : 'text-gray-400'}`} />
+                                                <span className={`text-sm font-medium ${paymentMethod === 'pix' ? 'text-green-900' : 'text-gray-500'}`}>Pix</span>
+                                            </div>
+                                        )}
                                     </div>
 
                                     {paymentMethod === 'credit_card' && (
@@ -834,7 +903,7 @@ const PlanSelection = () => {
 
                                 </div>
                                 <Button type="submit" className={`w-full h-12 text-lg shadow-md ${paymentMethod === 'pix' ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'}`} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin mr-2" /> : (paymentMethod === 'pix' ? `Gerar Pix R$ ${getPrice(selectedPlan)}` : `Pagar R$ ${getPrice(selectedPlan)}`)}
+                                    {loading ? <Loader2 className="animate-spin mr-2" /> : (paymentMethod === 'pix' ? `Gerar Pix R$ ${(parseFloat(getPrice(selectedPlan)) - discountAmount).toFixed(2)}` : `Pagar R$ ${(parseFloat(getPrice(selectedPlan)) - discountAmount).toFixed(2)}`)}
                                 </Button>
                             </form>
                         )}

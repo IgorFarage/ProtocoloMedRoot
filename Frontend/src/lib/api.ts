@@ -21,4 +21,9 @@ export const auth = {
         api.post('/accounts/password_reset/confirm/', { uid, token, new_password })
 };
 
+export const financial = {
+    validateCoupon: (code: string, amount: number) =>
+        api.post<{ valid: boolean, discount_amount: number, final_price: number, message: string }>('/financial/coupon/validate/', { code, amount }),
+};
+
 export default api;

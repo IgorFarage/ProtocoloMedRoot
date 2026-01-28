@@ -52,6 +52,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Integrações
     id_bitrix = models.CharField(max_length=50, null=True, blank=True, help_text="ID do contato no CRM")
     customer_id_mp = models.CharField(max_length=50, null=True, blank=True, help_text="ID do Cliente no Mercado Pago")
+    asaas_customer_id = models.CharField(max_length=50, null=True, blank=True, help_text="ID do Cliente no Asaas")
     
     # Lógica de Negócio
     current_plan = models.CharField(

@@ -170,3 +170,10 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 RESEND_API_KEY = os.getenv('RESEND_API_KEY')
 MERCADO_PAGO_ACCESS_TOKEN = os.getenv('MERCADO_PAGO_ACCESS_TOKEN')
+ASAAS_API_KEY = os.getenv('ASAAS_API_KEY')
+ASAAS_API_URL = os.getenv('ASAAS_API_URL', 'https://sandbox.asaas.com/api/v3')
+
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:8080',
+    'http://127.0.0.1:8080',
+]

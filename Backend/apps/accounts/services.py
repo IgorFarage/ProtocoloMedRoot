@@ -230,13 +230,23 @@ class BitrixService:
             
             # 4. Dados de Pagamento (Sem mover Stage)
             if payment_data:
-                if payment_data.get('id'): 
-                    fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_ID"]] = str(payment_data.get('id'))
+                # [ASAAS MIGRATION] Prioritize Asaas ID
+                p_id = payment_data.get('asaas_payment_id') or payment_data.get('mercado_pago_id') or payment_data.get('id')
+                if p_id: 
+                    fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_ID"]] = str(p_id)
                 if payment_data.get('date_created'): 
                     fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_DATE"]] = str(payment_data.get('date_created'))
                 
                 if payment_data.get('status'):
-                    status_map = {"approved": "Aprovado", "in_process": "Em análise", "pending": "Pendente", "rejected": "Recusado"}
+                    status_map = {
+                        "approved": "Aprovado", 
+                        "in_process": "Em análise", 
+                        "pending": "Pendente", 
+                        "rejected": "Recusado",
+                        "confirmed": "Aprovado",
+                        "received": "Aprovado",
+                        "active": "Aprovado"
+                    }
                     raw_status = str(payment_data.get('status')).lower()
                     fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_STATUS"]] = status_map.get(raw_status, raw_status)
                     
@@ -476,14 +486,31 @@ class BitrixService:
             payment_status = payment_status_raw[0] if isinstance(payment_status_raw, list) and payment_status_raw else str(payment_status_raw)
             if payment_status == 'None': payment_status = None
 
-            # [VALIDAÇÃO RIGOROSA] Só ativa se estiver Aprovado
-            if payment_status != "Aprovado":
-                logger.info(f"ℹ️ Plano Inativo/Pendente: Status no Bitrix é '{payment_status}' (Deal {deal_id})")
-                if user.current_plan != 'none':
-                    user.current_plan = 'none'
-                    user.save(update_fields=['current_plan'])
+            # [VALIDAÇÃO RIGOROSA - FIX]
+            # Se o status no Bitrix não for um dos aprovados, NUNCA reverter automaticamente se o usuário já tiver plano ativo localmente.
+            # Motivo: O Bitrix pode estar desatualizado ou com custom field diferente, e não queremos bloquear o usuário que já pagou.
+            
+            valid_statuses = {'aprovado', 'approved', 'active', 'confirmed', 'received', 'received_in_cash', 'pago'}
+            
+            is_bitrix_approved = str(payment_status).lower() in valid_statuses
+            
+            if not is_bitrix_approved:
+                logger.warning(f"⚠️ Divergência de Status: Bitrix diz '{payment_status}' (Deal {deal_id}), mas User local é '{user.current_plan}'.")
                 
-                return {"plan": "none", "payment_status": payment_status or "Pendente"}
+                # SÓ reverte se o usuário local estiver como 'none' ou se quisermos forçar.
+                # Para segurança do checkout, se o usuário já tem plano, assumimos que o banco local está certo (pois foi setado pelo Webhook/Sync Confirmado)
+                # e o Bitrix que está atrasado.
+                
+                # return {"plan": user.current_plan, "payment_status": payment_status or "Pendente"}
+                
+                # Se quiser manter a lógica de sync, mas sem destruir o acesso:
+                if user.current_plan == 'none':
+                     return {"plan": "none", "payment_status": payment_status or "Pendente"}
+                else:
+                     # Mantém o plano local como Source of Truth temporária
+                     return {"plan": user.current_plan, "payment_status": payment_status or "Divergente"}
+
+            # Se Bitrix diz que é Aprovado, continuamos para atualizar/confirmar o tipo de plano
             
             # Obter produtos
             rows_resp = BitrixService._safe_request('GET', 'crm.deal.productrows.get.json', params={"id": deal_id})
@@ -500,6 +527,17 @@ class BitrixService:
             has_standard = any(int(r.get("PRODUCT_ID", 0)) == id_standard for r in rows)
             
             new_plan = 'plus' if has_plus else ('standard' if has_standard else 'none')
+            
+            # [SAFEGUARD] Se o pagamento está Aprovado, mas não achamos o ID do plano (ex: Deal criado apenas com produtos físicos),
+            # NÃO devemos derrubar o plano do usuário para 'none'.
+            if new_plan == 'none' and is_bitrix_approved:
+                if user.current_plan in ['standard', 'plus']:
+                    new_plan = user.current_plan # Mantém o que já estava
+                    logger.info(f"ℹ️ Deal Aprovado sem Produto de Plano. Mantendo plano local: {new_plan}")
+                elif rows: 
+                    # Se tem produtos ( remédios) mas não tem o item "Plano", assume Standard para liberar acesso
+                    new_plan = 'standard'
+                    logger.warning(f"⚠️ Deal Aprovado sem Produto de Plano. Assumindo Standard por haver {len(rows)} itens.")
             
             if user.current_plan != new_plan:
                 user.current_plan = new_plan
@@ -738,13 +776,21 @@ class BitrixService:
                                  if prot: prods = prot.get('products', [])
                         
                         if prods:
+                            # [ASAAS MIGRATION] Pass correct ID
+                            final_payment_id = transaction.asaas_payment_id or transaction.mercado_pago_id
+                            
                             BitrixService.prepare_deal_payment(
                                 user=user,
                                 products_list=prods,
                                 plan_title=f"ProtocoloMed - {transaction.plan_type}",
                                 total_amount=float(transaction.amount),
                                 answers=None, # Não precisa re-enviar respostas
-                                payment_data={"status": "approved", "id": transaction.mercado_pago_id}
+                                payment_data={
+                                    "status": "approved", 
+                                    "id": final_payment_id,
+                                    "asaas_payment_id": transaction.asaas_payment_id,
+                                    "mercado_pago_id": transaction.mercado_pago_id
+                                }
                             )
 
                 return True

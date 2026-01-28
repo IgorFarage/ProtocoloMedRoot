@@ -1,227 +1,230 @@
-import mercadopago
-import os
+import requests
 import json
 import logging
+import os
+from datetime import datetime, timedelta
+from decimal import Decimal
+from django.conf import settings
+from .models import Coupon, Transaction
 
 logger = logging.getLogger(__name__)
 
-class FinancialService:
+class AsaasService:
     def __init__(self):
-        token = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
-        if not token:
-            print("⚠️ AVISO: MERCADO_PAGO_ACCESS_TOKEN não configurado no .env")
-        self.sdk = mercadopago.SDK(token)
-        print(f"🔑 SDK Iniciado com Token: {token[:10]}... (Verifique se é TEST-...)")
+        self.api_key = settings.ASAAS_API_KEY
+        self.base_url = settings.ASAAS_API_URL
+        
+        if not self.api_key:
+            logger.warning("⚠️ ASAAS_API_KEY não configurada!")
 
-    def process_direct_payment(self, payment_data):
+        self.headers = {
+            "access_token": self.api_key,
+            "Content-Type": "application/json",
+            "User-Agent": "ProtocoloMed-Backend/1.0"
+        }
+
+    STATUS_MAPPING = {
+        'PENDING': Transaction.Status.PENDING,
+        'AWAITING_RISK_ANALYSIS': Transaction.Status.PENDING,
+        'CONFIRMED': Transaction.Status.APPROVED,
+        'RECEIVED': Transaction.Status.APPROVED,
+        'RECEIVED_IN_CASH': Transaction.Status.APPROVED,
+        'OVERDUE': Transaction.Status.REJECTED,
+        'REFUNDED': Transaction.Status.REFUNDED,
+        'REFUND_REQUESTED': Transaction.Status.REFUNDED,
+        'CHARGEBACK_REQUESTED': Transaction.Status.REJECTED,
+        'CHARGEBACK_DISPUTE': Transaction.Status.REJECTED,
+        'AWAITING_CHARGEBACK_REVERSAL': Transaction.Status.PENDING,
+        'DUNNING_REQUESTED': Transaction.Status.PENDING,
+        'DUNNING_RECEIVED': Transaction.Status.APPROVED,
+        'PAYMENT_CONFIRMED': Transaction.Status.APPROVED,
+        'PAYMENT_RECEIVED': Transaction.Status.APPROVED,
+        'PAYMENT_RECEIVED_IN_CASH': Transaction.Status.APPROVED,
+        'PAYMENT_OVERDUE': Transaction.Status.REJECTED,
+        'PAYMENT_REFUNDED': Transaction.Status.REFUNDED,
+        'PAYMENT_CHARGEBACK_REQUESTED': Transaction.Status.REJECTED
+    }
+
+    @staticmethod
+    def map_status(asaas_status):
+        return AsaasService.STATUS_MAPPING.get(asaas_status, Transaction.Status.PENDING)
+
+    def _request(self, method, endpoint, payload=None):
         """
-        Envia o pagamento (one-time) para o Mercado Pago.
+        Wrapper centralizado para logs sanitizados e tratamento de erros.
         """
+        url = f"{self.base_url}/{endpoint}"
+        
+        # LOG SANITIZADO (PCI-DSS)
+        safe_payload = None
+        if payload:
+            safe_payload = payload.copy()
+            if "creditCard" in safe_payload:
+                safe_payload["creditCard"] = "***SANITIZED***"
+            if "creditCardHolderInfo" in safe_payload:
+                 safe_payload["creditCardHolderInfo"] = "***SANITIZED***"
+
+        logger.info(f"🚀 Asaas Request [{method}] {url} - Payload: {json.dumps(safe_payload)}")
+        # Debugging the auth/redirect issue
+        masked_key = self.api_key[:10] + "..." if self.api_key else "None"
+        print(f"DEBUG: Calling {url} | Key starts with: {masked_key}")
+
         try:
-            print(f"🚀 Enviando Payload MP (Pagamento Único): {json.dumps(payment_data, indent=2)}")
-            payment_response = self.sdk.payment().create(payment_data)
-            print(f"📥 Resposta MP: {json.dumps(payment_response, indent=2)}")
+            # [FIX] allow_redirects=False to see if we are being redirected to login
+            response = requests.request(method, url, headers=self.headers, json=payload, timeout=30, allow_redirects=False)
             
-            if "response" in payment_response:
-                response_content = payment_response["response"]
-                
-                if payment_response.get("status") == 400:
-                    print(f"❌ Erro 400 do Mercado Pago. Detalhes: {json.dumps(response_content, indent=2)}")
-                
-                return response_content
-            
-            print(f"❌ Erro Crítico MP (Sem response): {payment_response}")
-            return None
+            if response.is_redirect:
+                print(f"DEBUG: Redirected to {response.headers.get('Location')}")
+                logger.error(f"❌ Asaas Redirects to: {response.headers.get('Location')}")
+                return {"error": True, "details": "Redirected", "location": response.headers.get('Location')}
 
+            response.raise_for_status()
+            try:
+                data = response.json()
+            except ValueError: # requests.json() raises ValueError (or JSONDecodeError) on failure
+                logger.error(f"❌ Asaas Non-JSON Response: {response.text}")
+                return {"error": True, "details": "Invalid JSON from Asaas", "raw": response.text}
+
+            # Logger response (cuidado com dados sensíveis no retorno também, embora Asaas geralmente retorne mascarado)
+            logger.info(f"📥 Asaas Response [{response.status_code}]: {data.get('id', 'OK') if isinstance(data, dict) else 'List/Other'}") 
+            return data
+        except requests.exceptions.HTTPError as e:
+            error_content = e.response.text
+            logger.error(f"❌ Asaas HTTP Error {e.response.status_code}: {error_content}")
+            try:
+                return {"error": True, "details": e.response.json()}
+            except:
+                return {"error": True, "details": error_content}
         except Exception as e:
-            print(f"❌ Exceção no SDK Mercado Pago: {e}")
-            return None
+            logger.exception(f"❌ Asaas Critical Error: {str(e)}")
+            return {"error": True, "details": str(e)}
 
-    def get_or_create_customer(self, email, first_name=None, last_name=None, cpf=None):
+    def get_or_create_customer(self, user_data):
         """
-        Busca um cliente por e-mail ou cria um novo com dados completos.
+        Busca cliente no Asaas pelo CPF ou Email. Se não existir, cria.
+        user_data: {name, email, cpf, phone, ...}
         """
-        try:
-            print(f"🔎 Buscando Customer por email: {email}")
-            search = self.sdk.customer().search({"email": email})
-            
-            if search.get("status") == 200 and search["response"]["results"]:
-                customer = search["response"]["results"][0]
-                print(f"✅ Customer Encontrado: {customer['id']}")
-                return customer
-            
-            print(f"🆕 Criando Novo Customer para: {email}")
-            customer_data = {"email": email}
-            if first_name:
-                customer_data["first_name"] = first_name
-            if last_name:
-                customer_data["last_name"] = last_name
-            if cpf:
-                 customer_data["identification"] = {"type": "CPF", "number": cpf}
+        # 1. Search by CPF
+        cpf = user_data.get('cpf', '').replace('.', '').replace('-', '')
+        search_res = self._request("GET", f"customers?cpfCnpj={cpf}")
+        
+        if search_res and 'data' in search_res and len(search_res['data']) > 0:
+            return search_res['data'][0]['id']
 
-            new_customer = self.sdk.customer().create(customer_data)
-            
-            if new_customer.get("status") == 201:
-                print(f"✅ Customer Criado: {new_customer['response']['id']}")
-                return new_customer["response"]
-            
-            print(f"❌ Erro ao criar customer: {new_customer}")
-            return None
-        except Exception as e:
-            print(f"❌ Exceção get_or_create_customer: {e}")
-            return None
+        # 2. Search by Email (Fallback)
+        email = user_data.get('email')
+        search_res_email = self._request("GET", f"customers?email={email}")
+        
+        if search_res_email and 'data' in search_res_email and len(search_res_email['data']) > 0:
+             return search_res_email['data'][0]['id']
 
-    def save_card(self, customer_id, token, payment_method_id=None):
-        """
-        Salva o cartão no Customer para uso em assinaturas.
-        """
-        try:
-            logging.info(f"💾 Salvando Cartão {token} no Customer {customer_id}")
-            payload = {"token": token}
-            # Simples version for Sandbox stability
-            # if payment_method_id:
-            #    payload["payment_method_id"] = payment_method_id
-                
-            card = self.sdk.card().create(customer_id, payload)
-            
-            if card.get("status") == 200 or card.get("status") == 201:
-                print(f"✅ Cartão Salvo ID: {card['response']['id']}")
-                return card["response"]
-            
-            print(f"❌ Erro ao salvar cartão: {card}")
-            return None
-        except Exception as e:
-            print(f"❌ Exceção save_card: {e}")
-            return None
+        # 3. Create
+        payload = {
+            "name": user_data.get('name'),
+            "email": email,
+            "cpfCnpj": cpf,
+            "mobilePhone": user_data.get('phone'),
+            "notificationDisabled": True # Nós cuidamos das notificações
+        }
+        create_res = self._request("POST", "customers", payload)
+        
+        if 'id' in create_res:
+            return create_res['id']
+        return None
 
-    def execute_transparent_subscription(self, user_data: dict, subscription_config: dict, token: str) -> dict:
+    def create_payment(self, customer_id, billing_type, value, due_date=None, card_data=None, description="Pedido ProtocoloMed"):
         """
-        Cria uma assinatura (Preapproval) com VÍNCULO EXPLÍCITO DE PAYER.
-        Fluxo: Customer -> Save Card -> Preapproval (payload com payer.id).
+        Cria uma cobrança avulsa (Pix ou Cartão).
+        billing_type: "PIX" ou "CREDIT_CARD"
         """
-        try:
-            # 1. Obter ou Criar Cliente
-            cpf_val = user_data.get('cpf') or user_data.get('identification', {}).get('number')
-            
-            customer = self.get_or_create_customer(
-                email=user_data['email'],
-                first_name=user_data.get('first_name'),
-                last_name=user_data.get('last_name'),
-                cpf=cpf_val
-            )
-            if not customer:
-                return {"error": "Falha ao gerenciar Customer no MP"}
-            
-            customer_id = customer['id']
-            
-            # 2. Salvar Cartão (CRÍTICO)
-            card = self.save_card(customer_id, token)
-            
-            if not card or 'id' not in card:
-                 print(f"❌ Falha crítica: Cartão não foi salvo. Resposta save_card: {card}")
-                 return {"error": "Não foi possível salvar o cartão. Verifique os dados."}
+        payload = {
+            "customer": customer_id,
+            "billingType": billing_type,
+            "value": float(value),
+            "dueDate": due_date or (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
+            "description": description
+        }
 
-            card_id = card['id']
-            print(f"✅ Cartão Salvo com Sucesso! ID: {card_id}")
-
-            # 3. Criar Assinatura (Preapproval)
-            import datetime
-            start_date = (datetime.datetime.now() + datetime.timedelta(minutes=1)).isoformat() + "Z"
-            
-            amount = subscription_config.get('transaction_amount') or subscription_config.get('amount')
-            
-            preapproval_payload = {
-                "back_url": "https://protocolomed.com.br/payment-success",
-                "reason": subscription_config.get("reason", "Assinatura"),
-                "external_reference": subscription_config.get("external_reference"),
-                "auto_recurring": {
-                    "frequency": 1, 
-                    "frequency_type": "months",
-                    "start_date": start_date,
-                    "transaction_amount": float(amount),
-                    "currency_id": "BRL"
-                },
-                # VÍNCULO EXPLÍCITO: OBRIGATÓRIO PARA SANDBOX + CARD_ID
-                "payer": {
-                    "id": customer_id,
-                    "email": user_data.get("email")
-                },
-                "card_token_id": token,     # ID do cartão salvo (ex: 17694...)
-                "status": "authorized" 
+        if billing_type == "CREDIT_CARD" and card_data:
+            payload["creditCard"] = {
+                "holderName": card_data.get("holderName"),
+                "number": card_data.get("number"),
+                "expiryMonth": card_data.get("expiryMonth"),
+                "expiryYear": card_data.get("expiryYear"),
+                "ccv": card_data.get("ccv")
             }
+            payload["creditCardHolderInfo"] = card_data.get("holderInfo", {})
 
-            print(f"🚀 Enviando Payload Assinatura MP (Com Payer ID): {json.dumps(preapproval_payload, indent=2)}")
-            
-            response = self.sdk.preapproval().create(preapproval_payload)
-            response_content = response.get("response", {})
-            status = response.get("status")
+        response = self._request("POST", "payments", payload)
+        
+        # [PIX ENRICHMENT] Se for Pix, busca o Payload e QR Code
+        if billing_type == "PIX" and response and "id" in response:
+            try:
+                pix_data = self._request("GET", f"payments/{response['id']}/pixQrCode")
+                if pix_data:
+                     response.update(pix_data) # Merge 'encodedImage', 'payload', 'expirationDate'
+            except Exception as e:
+                logger.error(f"❌ Erro ao buscar QRCode Pix Asaas: {e}")
+                
+        return response
 
-            if status == 201:
-                print(f"✅ Assinatura Criada: {response_content.get('id')}")
-                return response_content
-            
-            error_msg = response_content.get("message", "Erro na criação da assinatura")
-            print(f"❌ Erro MP Assinatura (Status {status}): {json.dumps(response_content, indent=2)}")
-            
-            return {"error": error_msg, "details": response_content}
-
-        except Exception as e:
-            print(f"❌ Erro Crítico execute_transparent_subscription: {e}")
-            return {"error": str(e)}
-
-    def create_subscription(self, subscription_data):
+    def create_subscription(self, customer_id, value, cycle_months, card_data, description="Assinatura ProtocoloMed"):
         """
-        Cria uma assinatura (Preapproval) sem plano no Mercado Pago.
+        Cria uma assinatura no Asaas.
+        cycle_months: 1 (Mensal) ou 3 (Trimestral)
+        """
+        cycle_map = {1: "MONTHLY", 3: "QUARTERLY"}
+        
+        payload = {
+            "customer": customer_id,
+            "billingType": "CREDIT_CARD",
+            "value": float(value),
+            "cycle": cycle_map.get(cycle_months, "MONTHLY"),
+            "description": description,
+            "creditCard": {
+                "holderName": card_data.get("holderName"),
+                "number": card_data.get("number"),
+                "expiryMonth": card_data.get("expiryMonth"),
+                "expiryYear": card_data.get("expiryYear"),
+                "ccv": card_data.get("ccv")
+            },
+            "creditCardHolderInfo": card_data.get("holderInfo", {})
+        }
+
+        return self._request("POST", "subscriptions", payload)
+
+    def validate_coupon_logic(self, code, user, original_amount):
+        """
+        Mantém a lógica de cupom local (banco de dados), independente do gateway.
         """
         try:
-            print(f"🚀 Enviando Payload Assinatura MP: {json.dumps(subscription_data, indent=2)}")
-            # Garantir status authorized
-            subscription_data["status"] = "authorized"
-            
-            response = self.sdk.preapproval().create(subscription_data)
-            print(f"📥 Resposta Assinatura MP: {json.dumps(response, indent=2)}")
+            coupon = Coupon.objects.get(code=code)
+        except Coupon.DoesNotExist:
+            return False, "Cupom não encontrado.", Decimal(0), original_amount, None
 
-            if "response" in response:
-                return response["response"]
-            
-            if response.get("status") == 400 or response.get("status") == 404:
-                 print(f"❌ Erro MP Assinatura: {json.dumps(response, indent=2)}")
-            
-            return None
+        is_valid, msg = coupon.is_valid_for_user(user)
+        if not is_valid: return False, msg, Decimal(0), original_amount, None
 
-        except Exception as e:
-            print(f"❌ Exceção ao criar Assinatura: {e}")
-            return None
+        if original_amount < coupon.min_purchase_value:
+             return False, f"Mínimo para este cupom: R$ {coupon.min_purchase_value}", Decimal(0), original_amount, None
 
-    def get_payment_info(self, payment_id):
-        """
-        Busca detalhes de uma transação pelo ID (usado no Webhook).
-        """
-        try:
-            payment_response = self.sdk.payment().get(payment_id)
-            if "response" in payment_response:
-                return payment_response["response"]
-            return None
-        except Exception as e:
-            print(f"❌ Erro ao buscar pagamento {payment_id}: {e}")
-            return None
-    def process_payment_approval(self, payment_id: str, transaction_obj):
-        """
-        Valida o pagamento e ativa a assinatura/pedido via Store Service.
-        """
-        from apps.store.services import SubscriptionService
+        # Check user usage limit
+        if user and user.is_authenticated:
+            # TODO: Ajustar filtro para considerar sucesso no modelo Asaas (approved/received)
+            user_usage = Transaction.objects.filter(user=user, coupon=coupon, status=Transaction.Status.APPROVED).count()
+            if user_usage >= coupon.max_uses_per_user:
+                return False, "Você já atingiu o limite de uso deste cupom.", Decimal(0), original_amount, None
+
+        # Calculate
+        discount = Decimal(0)
+        original_amount = Decimal(str(original_amount))
         
-        # 1. Update Transaction Status
-        transaction_obj.status = transaction_obj.Status.APPROVED
-        transaction_obj.mercado_pago_id = payment_id
-        transaction_obj.save()
+        if coupon.discount_type == Coupon.DiscountType.PERCENTAGE:
+            discount = original_amount * (coupon.value / 100)
+        else:
+            discount = coupon.value
+
+        if discount > original_amount: discount = original_amount
+        final_price = original_amount - discount
         
-        # 2. Trigger Store/Subscription Logic
-        try:
-            SubscriptionService.activate_subscription_from_transaction(transaction_obj)
-            logger.info(f"✅ Assinatura ativada para Transaction {transaction_obj.id}")
-        except Exception as e:
-            logger.error(f"❌ Erro ao ativar assinatura para Transaction {transaction_obj.id}: {e}")
-            # Não falhamos o request inteiro, mas logamos o erro crítico de consistência
-        
-        return True
+        return True, "Cupom aplicado com sucesso!", discount, final_price, coupon

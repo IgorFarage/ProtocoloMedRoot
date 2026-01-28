@@ -99,6 +99,8 @@ class Command(BaseCommand):
                 "created_at": t.created_at,
                 "payment_type": t.payment_type,
                 "subscription_id_mp": t.subscription_id,
+                "asaas_payment_id": t.asaas_payment_id, # [ASAAS ADAPTATION]
+                "asaas_subscription_id": t.asaas_subscription_id, # [ASAAS ADAPTATION]
                 "metadata_snapshot": t.mp_metadata # Crucial para ver os produtos
             })
 

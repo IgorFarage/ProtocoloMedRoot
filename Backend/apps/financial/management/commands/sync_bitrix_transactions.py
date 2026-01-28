@@ -76,10 +76,14 @@ class Command(BaseCommand):
 
                 # 5. Envio do Deal (Forçando Status Aprovado)
                 real_status = 'approved' if transaction.status == Transaction.Status.APPROVED else 'pending'
-                mp_id = transaction.mercado_pago_id or meta.get("payment_response", {}).get('id')
+                
+                # [ASAAS MIGRATION]
+                p_id = transaction.asaas_payment_id or transaction.mercado_pago_id or meta.get("payment_response", {}).get('id')
                 
                 payment_info = {
-                    "id": mp_id,
+                    "id": p_id,
+                    "asaas_payment_id": transaction.asaas_payment_id,
+                    "mercado_pago_id": transaction.mercado_pago_id,
                     "date_created": str(transaction.created_at),
                     "status": real_status
                 }

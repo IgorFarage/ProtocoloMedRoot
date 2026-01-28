@@ -33,10 +33,10 @@ export default function DashboardStandard() {
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        <Alert className="bg-primary/5 border-primary/20">
-                            <AlertTitle>Em Análise</AlertTitle>
-                            <AlertDescription>
-                                Seu protocolo está sendo validado por nossa equipe médica.
+                        <Alert className="bg-green-50 border-green-200">
+                            <AlertTitle className="text-green-800">Plano Ativo</AlertTitle>
+                            <AlertDescription className="text-green-700">
+                                Seu protocolo está liberado e em andamento.
                             </AlertDescription>
                         </Alert>
                         <div className="flex gap-4">

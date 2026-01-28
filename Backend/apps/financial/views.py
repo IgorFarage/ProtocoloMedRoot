@@ -8,9 +8,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Transaction
-from .services import FinancialService
-from .serializers import PurchaseSerializer
+from .models import Transaction, Coupon
+from .services import AsaasService 
+from .serializers import PurchaseSerializer, CouponValidateSerializer
 from apps.accounts.serializers import RegisterSerializer
 from apps.store.services import SubscriptionService
 import os
@@ -104,8 +104,100 @@ class ProcessTransparentPaymentView(APIView):
 class WebhookView(APIView):
     permission_classes = [AllowAny]
     def post(self, request):
-        topic = request.query_params.get("topic") or request.data.get("type")
-        mp_id = request.query_params.get("id") or request.data.get("data", {}).get("id")
+        data = request.data
+        topic = request.query_params.get("topic") or data.get("type")
+        
+        # --- [HANDLER] ASAAS WEBHOOK ---
+        # Asaas payload typically has "event" (e.g., PAYMENT_CONFIRMED) and "payment" object
+        if 'event' in data and 'payment' in data:
+            event = data.get('event')
+            payment_data = data.get('payment')
+            payment_id = payment_data.get('id')
+            subscription_id = payment_data.get('subscription') 
+            external_reference = payment_data.get('externalReference')
+
+            logger.info(f"🔔 [Webhook] Asaas Event: {event} | ID: {payment_id} | Ref: {external_reference}")
+
+            # 1. Encontrar Transação
+            transaction = None
+            if external_reference:
+                transaction = Transaction.objects.filter(external_reference=external_reference).first()
+            
+            if not transaction and payment_id:
+                transaction = Transaction.objects.filter(asaas_payment_id=payment_id).first()
+                
+            if not transaction and subscription_id:
+                 # Se for renovação de assinatura, pode não ter transação criada ainda?
+                 # Por enquanto focamos em atualizar status de existente
+                 transaction = Transaction.objects.filter(asaas_subscription_id=subscription_id).order_by('-created_at').first()
+
+            if transaction:
+                # 2. Mapear Status (Centralizado)
+                new_status = AsaasService.map_status(event)
+                
+                # 3. Atualizar e Disparar Ações
+                # Só processamos mudanças de status relevantes (Aprovado/Rejeitado/Estornado)
+                # Ignoramos PENDING se já estiver PENDING, mas se vier APPROVED é ação nova.
+                if new_status and transaction.status != new_status:
+                    # Se for status final ou mudança importante
+                    transaction.status = new_status
+                    # Salva ID do Asaas se não tiver
+                    if not transaction.asaas_payment_id: transaction.asaas_payment_id = payment_id
+                    transaction.save()
+                    
+                    logger.info(f"   ✅ Transaction {transaction.id} updated to {new_status}")
+
+                    if new_status == Transaction.Status.APPROVED:
+                        # Ativa Assinatura
+                        try:
+                            SubscriptionService.activate_subscription_from_transaction(transaction)
+                            logger.info(f"      📦 Subscription activated.")
+                        except Exception as e:
+                            logger.error(f"      ❌ Subscription Activation Error: {e}")
+
+                        # Sync Bitrix
+                        if transaction.bitrix_sync_status != 'synced' and BitrixService:
+                            try:
+                                logger.info("      🔄 Triggering Bitrix Sync from Asaas Webhook...")
+                                
+                                # Snapshot de Produtos
+                                products_list = []
+                                if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
+                                    products_list = transaction.mp_metadata.get('original_products', [])
+                                
+                                # Fallback
+                                if not products_list:
+                                    from apps.accounts.models import UserQuestionnaire
+                                    last_q = UserQuestionnaire.objects.filter(user=transaction.user).order_by('-created_at').first()
+                                    if last_q:
+                                        prot = BitrixService.generate_protocol(last_q.answers)
+                                        products_list = prot.get('products', [])
+
+                                deal_id = BitrixService.prepare_deal_payment(
+                                    user=transaction.user,
+                                    products_list=products_list,
+                                    plan_title=f"ProtocoloMed - {transaction.plan_type}",
+                                    total_amount=float(transaction.amount),
+                                    answers=None,
+                                    payment_data={
+                                        "status": "approved",
+                                        "id": payment_id,
+                                        "asaas_payment_id": payment_id,
+                                        "date_created": datetime.now().isoformat()
+                                    }
+                                )
+                                if deal_id:
+                                    transaction.bitrix_deal_id = str(deal_id)
+                                    transaction.bitrix_sync_status = 'synced'
+                                    transaction.save()
+                                    logger.info(f"      ✅ Bitrix Synced. Deal: {deal_id}")
+                            except Exception as be:
+                                logger.error(f"      ❌ Bitrix Sync Error: {be}")
+
+            return Response({"status": "received"}, status=200)
+
+        # --- [HANDLER] MERCADO PAGO LEGACY ---
+        mp_id = request.query_params.get("id") or data.get("data", {}).get("id")
         if topic == "payment" and mp_id:
             try:
                 financial_service = FinancialService()
@@ -122,14 +214,14 @@ class WebhookView(APIView):
                             # [NOVO] Ativa Assinatura/Plano
                             try:
                                 SubscriptionService.activate_subscription_from_transaction(transaction)
-                                logger.info(f"✅ [Webhook] Subscription activated for user {transaction.user.email}")
+                                logger.info(f"✅ [Webhook-MP] Subscription activated for user {transaction.user.email}")
                             except Exception as sub_err:
-                                logger.error(f"❌ [Webhook] Subscription Activation Failed: {sub_err}")
+                                logger.error(f"❌ [Webhook-MP] Subscription Activation Failed: {sub_err}")
 
                             # [NOVO] Sincroniza com Bitrix (se falhou antes)
                             if transaction.bitrix_sync_status != 'synced' and BitrixService:
                                 try:
-                                    logger.info("🔄 [Webhook] Retrying Bitrix Sync...")
+                                    logger.info("🔄 [Webhook-MP] Retrying Bitrix Sync...")
                                     
                                     # 1. Reconstrói lista de produtos do Metadata
                                     products_list = []
@@ -165,27 +257,21 @@ class WebhookView(APIView):
                                         transaction.bitrix_deal_id = str(deal_id)
                                         transaction.bitrix_sync_status = 'synced'
                                         transaction.save()
-                                        logger.info(f"✅ [Webhook] Bitrix Sync Success! Deal: {deal_id}")
+                                        logger.info(f"✅ [Webhook-MP] Bitrix Sync Success! Deal: {deal_id}")
                                     else:
-                                        logger.warning("⚠️ [Webhook] Bitrix Sync returned no Deal ID.")
+                                        logger.warning("⚠️ [Webhook-MP] Bitrix Sync returned no Deal ID.")
 
                                 except Exception as bitrix_err:
-                                     logger.error(f"❌ [Webhook] Bitrix Sync Retry Failed: {bitrix_err}")
+                                     logger.error(f"❌ [Webhook-MP] Bitrix Sync Retry Failed: {bitrix_err}")
 
                         elif status in ["pending", "in_process"]:
-                            # [FIX] Garante que status Pendente também sincroniza com Bitrix (para corrigir falhas iniciais)
                             if transaction.bitrix_sync_status != 'synced' and BitrixService:
                                 try:
-                                    logger.info(f"🔄 [Webhook] Syncing Pending Status for {transaction.external_reference}...")
-                                    
-                                    # [REUSE] Lógica de Sync (Simplificada)
                                     payment_info_bitrix = {
                                         "id": str(mp_id),
                                         "status": status,
                                         "date_created": datetime.now().isoformat()
                                     }
-                                    
-                                    # Recria produtos (Fallback básico)
                                     products_list = []
                                     if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
                                         products_list = transaction.mp_metadata.get('original_products', [])
@@ -198,15 +284,12 @@ class WebhookView(APIView):
                                         answers=None,
                                         payment_data=payment_info_bitrix
                                     )
-                                    
                                     if deal_id:
                                         transaction.bitrix_deal_id = str(deal_id)
                                         transaction.bitrix_sync_status = 'synced'
                                         transaction.save()
-                                        logger.info(f"✅ [Webhook] Bitrix Sync (Pending) Success! Deal: {deal_id}")
-
                                 except Exception as e:
-                                    logger.error(f"❌ [Webhook] Pending Sync Failed: {e}")
+                                    logger.error(f"❌ [Webhook-MP] Pending Sync Failed: {e}")
 
                         elif status == "rejected": 
                             transaction.status = Transaction.Status.REJECTED
@@ -239,6 +322,30 @@ class PlanPricesView(APIView):
             "plus": price_plus
         })
 
+class ValidateCouponView(APIView):
+    permission_classes = [AllowAny] # Permite validar antes de logar
+    
+    def post(self, request):
+        serializer = CouponValidateSerializer(data=request.data)
+        if not serializer.is_valid():
+             return Response(serializer.errors, status=400)
+        
+        code = serializer.validated_data['code']
+        amount = serializer.validated_data['amount']
+        user = request.user if request.user.is_authenticated else None
+
+        service = AsaasService()
+        is_valid, msg, discount, final_price, _ = service.validate_coupon_logic(code, user, amount)
+
+        if not is_valid:
+            return Response({"valid": False, "message": msg}, status=200) # Retornamos 200 com valid: False
+
+        return Response({
+            "valid": True, 
+            "message": msg,
+            "discount_amount": float(discount),
+            "final_price": float(final_price)
+        }, status=200)
 
 # --- VIEW 5: STATUS DA TRANSAÇÃO ---
 class TransactionStatusView(APIView):
@@ -247,6 +354,57 @@ class TransactionStatusView(APIView):
     def get(self, request, external_ref):
         try:
             transaction = Transaction.objects.get(external_reference=external_ref)
+            
+            # [FIX] Force Check Asaas if Pending (Webhook latency fallback)
+            if transaction.status == Transaction.Status.PENDING and transaction.asaas_payment_id:
+                try:
+                    asaas_service = AsaasService()
+                    # Pega pagamento atualizado
+                    payment_data = asaas_service._request("GET", f"payments/{transaction.asaas_payment_id}")
+                    if payment_data and 'status' in payment_data:
+                        new_status_asaas = payment_data['status']
+                        new_status_mapped = AsaasService.map_status(new_status_asaas)
+                        
+                        if transaction.status != new_status_mapped:
+                            logger.info(f"🔄 Check-Status: Updating {transaction.external_reference} from {transaction.status} to {new_status_mapped}")
+                            transaction.status = new_status_mapped
+                            transaction.save()
+                            
+                            # Trigger Activation if Approved
+                            if transaction.status == Transaction.Status.APPROVED:
+                                SubscriptionService.activate_subscription_from_transaction(transaction)
+                                
+                                # [FIX] Sync Bitrix Payment Status
+                                try:
+                                    meta = transaction.mp_metadata or {}
+                                    products = meta.get('original_products', [])
+                                    # Fallback questionnaire check handled inside prepare_deal_payment ideally, 
+                                    # but let's pass what we have.
+                                    
+                                    # Need to import here to avoid circular dependency if any (though usually safe in method)
+                                    from apps.accounts.services import BitrixService
+                                    
+                                    payment_data_bitrix = {
+                                        "status": "approved", # Explicitly approved
+                                        "id": transaction.asaas_payment_id,
+                                        "date_created": transaction.created_at.strftime("%Y-%m-%dT%H:%M:%S%z")
+                                    }
+                                    
+                                    BitrixService.prepare_deal_payment(
+                                        user=transaction.user,
+                                        products_list=products,
+                                        plan_title=f"ProtocoloMed - {transaction.plan_type}",
+                                        total_amount=float(transaction.amount),
+                                        answers=None, # Already synced at checkout
+                                        payment_data=payment_data_bitrix
+                                    )
+                                    logger.info(f"✅ Bitrix Updated for Manual Check: {transaction.external_reference}")
+                                except Exception as e:
+                                    logger.error(f"⚠️ Bitrix Manual Sync Failed: {e}")
+
+                except Exception as e:
+                    logger.error(f"⚠️ Failed to force-check Asaas status: {e}")
+
             return Response({
                 "status": transaction.status,
                 "payment_type": transaction.payment_type,
@@ -273,7 +431,8 @@ class CompletePurchaseView(APIView):
         import re
         full_name_raw = validated_data.get('full_name', '')
         # [FIX MP 107] Sanitize: Remove numbers and symbols, keep only letters/spaces
-        safe_name = re.sub(r'[^a-zA-Z\u00C0-\u00FF\s]', '', full_name_raw).strip() # Include accents
+        # [MODIFIED] Use raw name as requested by user (no aggressive regex)
+        safe_name = full_name_raw.strip()
         if not safe_name: safe_name = "Cliente"
 
         full_name_list = safe_name.split()
@@ -282,6 +441,7 @@ class CompletePurchaseView(APIView):
         cpf = validated_data.get('cpf')
         
         total_price = float(validated_data.get('total_price', 0))
+        original_amount = total_price  # Guarda o valor original recebido do front (customizado ou não)
         plan_id = validated_data.get('plan_id')
         payment_method = validated_data.get('payment_method_id')
         billing_cycle = validated_data.get('billing_cycle', 'monthly') # 'monthly' or 'monthly_subscription' (or 'quarterly' mapped to sub)
@@ -297,130 +457,164 @@ class CompletePurchaseView(APIView):
              user = self._get_or_create_user(request, validated_data)
         except ValueError as e:
              return Response({"error": str(e)}, status=400)
+        
+        # 3. COUPON VALIDATION (Override Price)
+        coupon_code = validated_data.get('coupon_code')
+        coupon_instance = None
+        discount_amount = 0.0
 
-        # 3. Process Payment OR Subscription
-        financial_service = FinancialService()
+        if coupon_code:
+            # [FIX] Use AsaasService logic (FinancialService removed)
+            asaas_service = AsaasService()
+            is_valid, msg, discount, final_price_val, coupon_inst = asaas_service.validate_coupon_logic(coupon_code, user, total_price)
+            if is_valid:
+                logger.info(f"🏷️ Cupom {coupon_code} aplicado! Desconto: {discount}. Novo Valor: {final_price_val}")
+                total_price = float(final_price_val)
+                discount_amount = float(discount)
+                coupon_instance = coupon_inst
+            else:
+                 logger.warning(f"⚠️ Cupom {coupon_code} inválido na finalização: {msg}")
+                 # Decisão: Prosseguir sem desconto ou bloquear? 
+                 # Melhor prosseguir avisando, mas o cliente já viu no front. Se mudou algo, cobramos o cheio.
+
+        # 4. Integrate with Asaas
+        asaas_service = AsaasService()
         payment_result = None
         is_subscription = False
+        asaas_payment_id = None
+        asaas_subscription_id = None
+        final_status = Transaction.Status.PENDING
+
+        try:
+             # 4.1 Get/Create Customer
+             customer_data = {
+                 "name": safe_name,
+                 "email": email,
+                 "cpf": cpf,
+                 "phone": validated_data.get('phone') or request.data.get('phone') or '' # Try both sources
+             }
+             customer_id_asaas = asaas_service.get_or_create_customer(customer_data)
+             
+             if not customer_id_asaas:
+                 return Response({"error": "Erro ao criar cliente no Asaas."}, status=500)
+             
+             # Save Asaas ID to User
+             if user.asaas_customer_id != customer_id_asaas:
+                 user.asaas_customer_id = customer_id_asaas
+                 user.save()
+
+             # 4.2 Prepare Card Data (Pass-Through - RAM only)
+             card_data = None
+             if payment_method == 'credit_card':
+                 # FRONTEND DEVE ENVIAR ESSA ESTRUTURA
+                 # "credit_card": { "holderName": "...", "number": "...", "expiryMonth": "...", "expiryYear": "...", "ccv": "..." }
+                 card_raw = request.data.get('credit_card', {})
+                 if not card_raw:
+                     return Response({"error": "Dados do cartão obrigatórios."}, status=400)
+                 
+                 card_data = {
+                     "holderName": card_raw.get('holderName'),
+                     "number": card_raw.get('number'),
+                     "expiryMonth": card_raw.get('expiryMonth'),
+                     "expiryYear": card_raw.get('expiryYear'),
+                     "ccv": card_raw.get('ccv'),
+                     "holderInfo": card_raw.get('holderInfo', {}) # {name, email, cpf, postalCode, ...}
+                 }
+
+             # 4.3 Decide: Subscription vs Payment
+             # [FIX] 'one_off' must force single payment
+             is_subscription_flow = (billing_cycle in ['monthly', 'quarterly']) and (payment_method == 'credit_card')
+             
+             if is_subscription_flow:
+                 cycle_months = 3 if billing_cycle == 'quarterly' else 1
+                 logger.info(f"🔄 Starting Asaas Subscription Flow ({cycle_months}m) for {email}")
+                 
+                 response = asaas_service.create_subscription(
+                     customer_id=customer_id_asaas, 
+                     value=total_price, 
+                     cycle_months=cycle_months, 
+                     card_data=card_data,
+                     description=f"Assinatura ProtocoloMed - {plan_id}"
+                 )
+                 
+                 if response and 'id' in response:
+                     is_subscription = True
+                     asaas_subscription_id = response['id']
+                     payment_result = response
+                     if response.get('status') == 'ACTIVE':
+                         final_status = Transaction.Status.APPROVED
+                 else:
+                     return Response({"error": "Erro ao criar assinatura.", "detail": response}, status=400)
+
+             else:
+                 # One-off Payment (Pix or Credit Card Single)
+                 logger.info(f"🚀 Processing Asaas One-Off ({payment_method}) for {email}")
+                 billing_type = "PIX" if payment_method == 'pix' else "CREDIT_CARD"
+                 
+                 response = asaas_service.create_payment(
+                     customer_id=customer_id_asaas,
+                     billing_type=billing_type,
+                     value=total_price,
+                     card_data=card_data, # Ignored if PIX
+                     description=f"Pedido ProtocoloMed - {plan_id}"
+                 )
+
+                 if response and 'id' in response:
+                     asaas_payment_id = response['id']
+                     payment_result = response
+                     status_asaas = response.get('status')
+                     
+                     if status_asaas in ['CONFIRMED', 'RECEIVED']:
+                         final_status = Transaction.Status.APPROVED
+                     elif status_asaas == 'PENDING':
+                         final_status = Transaction.Status.PENDING
+                     else:
+                         final_status = Transaction.Status.REJECTED  # Ou pending/failed
+                         
+                 else:
+                      return Response({"error": "Erro ao criar cobrança.", "detail": response}, status=400)
         
-        # Decide Strategy based on cycle
-        # We assume 'quarterly' now means SUBSCRIPTION in the frontend, OR explicit 'subscription' flag
-        # For safety, let's treat 'quarterly' -> Subscription (Monthly Charge) as per last instruction
-        is_subscription_flow = (billing_cycle == 'quarterly') and (payment_method != 'pix')
-
-        if is_subscription_flow:
-            logger.info(f"🔄 Starting Subscription Flow for {email}")
-            
-            # Prepare User Data for Customer Creation
-            user_data_mp = {
-                "email": email,
-                "first_name": first_name,
-                "last_name": last_name,
-                "identification": {"type": "CPF", "number": cpf}
-            }
-            
-            # Prepare Subscription Config
-            sub_config = {
-                "reason": f"ProtocoloMed - {plan_id} (Assinatura)",
-                "external_reference": external_ref,
-                "transaction_amount": total_price # Full monthly amount
-            }
-            
-            token = validated_data.get('token')
-            if not token:
-                return Response({"error": "Token do cartão obrigatório para assinatura."}, status=400)
-
-            # EXECUTE SUBSCRIPTION
-            payment_result = financial_service.execute_transparent_subscription(user_data_mp, sub_config, token)
-            is_subscription = True
-            
-        else:
-            # ORIGINAL ONE-OFF FLOW
-            logger.info(f"🚀 Processing One-Off Payment ({payment_method}) for {email}")
-            
-            payment_payload = {
-                "transaction_amount": total_price,
-                "description": f"ProtocoloMed - {plan_id}",
-                "payment_method_id": payment_method,
-                "payer": {
-                    "email": email,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "identification": {"type": "CPF", "number": cpf}
-                },
-                "external_reference": external_ref
-            }
-
-            if payment_method != 'pix':
-                payment_payload["token"] = validated_data.get('token')
-                payment_payload["installments"] = validated_data.get('installments', 1)
-            else:
-                expiration_time = (datetime.utcnow() + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000-00:00")
-                payment_payload["date_of_expiration"] = expiration_time
-
-            # EXECUTE PAYMENT
-            payment_result = financial_service.process_direct_payment(payment_payload)
-            
-            # Retry Logic (One-off only)
-            if payment_method != 'pix' and payment_result and 'cause' in payment_result:
-                causes = payment_result.get('cause', [])
-                if isinstance(causes, list) and any(str(c.get('code')) == '10114' for c in causes):
-                    logger.warning("⚠️ Retry 1x (Internacional)...")
-                    payment_payload['installments'] = 1
-                    payment_payload['external_reference'] = f"{external_ref}_retry"
-                    payment_result = financial_service.process_direct_payment(payment_payload)
-
-
-        # 4. Evaluate Success & Persist
-        is_success = False
-        status_mp = "rejected"
-        mp_id_value = None
-        subscription_id_value = None
-
-        if payment_result:
-            status_mp = payment_result.get('status')
-            
-            if is_subscription:
-                subscription_id_value = str(payment_result.get('id', ''))
-                # Preapproval status: 'authorized' is success
-                if status_mp == 'authorized': is_success = True
-            else:
-                mp_id_value = str(payment_result.get('id', ''))
-                # Payment status: 'approved' or 'in_process' (pix pending)
-                if status_mp in ['approved', 'in_process', 'authorized']: is_success = True
-                if payment_method == 'pix' and status_mp == 'pending': is_success = True
-
-        if not is_success:
-            error_msg = self._extract_error_message(payment_result)
-            logger.error(f"❌ Transaction Failed: {error_msg}")
-            return Response({"error": "Falha na transação", "detail": error_msg}, status=400)
+        except Exception as e:
+            logger.exception(f"❌ Asaas Flow Error: {e}")
+            return Response({"error": "Erro interno no processamento."}, status=500)
 
         # 5. Persistence Transaction
         try:
             with db_transaction.atomic():
-                
-                final_status = Transaction.Status.PENDING
-                if status_mp in ['approved', 'authorized']:
-                    final_status = Transaction.Status.APPROVED
-                elif status_mp == 'rejected':
-                    final_status = Transaction.Status.REJECTED
-                    
                 transaction = Transaction.objects.create(
                     user=user, 
                     plan_type=plan_id, 
-                    amount=total_price, 
+                    amount=original_amount, # Salva o valor original (antes do desconto/cupom)
+                    paid_amount=total_price, # Salva o valor final pago
                     cycle=billing_cycle,
                     external_reference=external_ref, 
                     status=final_status,
                     payment_type=Transaction.PaymentType.PIX if payment_method == 'pix' else Transaction.PaymentType.CREDIT_CARD,
-                    mercado_pago_id=mp_id_value,
-                    subscription_id=subscription_id_value # New Field
+                    asaas_payment_id=asaas_payment_id,
+                    asaas_subscription_id=asaas_subscription_id,
+                    coupon=coupon_instance, 
+                    discount_amount=discount_amount 
                 )
+                
+                # INCREMENT COUPON USAGE
+                if coupon_instance and final_status in [Transaction.Status.APPROVED, Transaction.Status.PENDING]:
+                    # Consideramos 'Pending' como uso também para evitar race condition no Pix?
+                    # Melhor contar apenas Approved ou incrementar agora e decrementar se falhar/cancelar?
+                    # Por simplicidade e segurança, incrementamos. Admin pode corrigir.
+                    from django.db.models import F
+                    coupon_instance.current_uses = F('current_uses') + 1
+                    coupon_instance.save()
 
                 # TRIGGER AUTOMATIC ACTIVATION
                 if transaction.status == Transaction.Status.APPROVED:
                     SubscriptionService.activate_subscription_from_transaction(transaction)
 
+                # LEGACY MAPPING FOR COMPATIBILITY (Bitrix & Response)
+                # O Frontend e o Bitrix esperam algumas variáveis com nomes antigos do MP ou padronizados.
+                mp_id_value = asaas_payment_id
+                subscription_id_value = asaas_subscription_id
+                status_mp = payment_result.get('status') if payment_result else 'unknown'
+                
                 # Bitrix Integration
                 bitrix_success = False
                 deal_id = None
@@ -442,10 +636,11 @@ class CompletePurchaseView(APIView):
                 # Metadata Snapshot
                 sanitized_products = [{"id": p.get("id"), "name": p.get("name"), "price": p.get("price")} for p in raw_products]
                 meta_data = {
-                    "payment_response": self._sanitize_payment_data(payment_result),
+                    "payment_response": payment_result, # [ASAAS ADAPTATION] Save full JSON
                     "original_products": sanitized_products, 
                     "questionnaire_snapshot": validated_data.get('questionnaire_data', {}),
-                    "is_subscription": is_subscription
+                    "is_subscription": is_subscription,
+                    "coupon_code": coupon_code 
                 }
                 transaction.mp_metadata = self._make_json_serializable(meta_data)
                 transaction.save()
@@ -459,19 +654,20 @@ class CompletePurchaseView(APIView):
                 refresh = RefreshToken.for_user(user)
                 response_data = {
                     "status": "success", 
-                    "payment_status": status_mp,
+                    "payment_status": str(status_mp).lower(),
                     "access": str(refresh.access_token), 
                     "user": {"id": user.id, "email": user.email},
                     "order_id": external_ref
                 }
                 
                 if payment_method == 'pix':
-                    poi = payment_result.get('point_of_interaction', {}).get('transaction_data', {})
-                    response_data['pix_data'] = {
-                        "qr_code": poi.get('qr_code'),
-                        "qr_code_base64": poi.get('qr_code_base64'),
-                        "ticket_url": poi.get('ticket_url')
-                    }
+                     # [ASAAS ADAPTATION]
+                     # Asaas retorna: 'encodedImage' (base64) e 'payload' (copia e cola)
+                     response_data['pix_data'] = {
+                         "qr_code": payment_result.get('payload'), # Copia e Cola
+                         "qr_code_base64": payment_result.get('encodedImage'), # Imagem Base64
+                         "ticket_url": payment_result.get('invoiceUrl') # Link da Fatura
+                     }
 
                 return Response(response_data, status=201)
 

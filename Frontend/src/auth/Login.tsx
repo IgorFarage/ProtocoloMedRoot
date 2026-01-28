@@ -138,7 +138,7 @@ const Login = () => {
           <CardFooter className="flex justify-center">
             <div className="text-sm text-muted-foreground">
               Ainda não tem conta?{" "}
-              <Link to="/questionnaire" className="text-primary hover:underline font-medium">
+              <Link to="/questionario" className="text-primary hover:underline font-medium">
                 Fazer avaliação gratuita
               </Link>
             </div>

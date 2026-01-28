@@ -1,6 +1,10 @@
 from rest_framework import serializers
 from .models import Transaction
 
+class CouponValidateSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=50)
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+
 class AddressSerializer(serializers.Serializer):
     street = serializers.CharField(max_length=255)
     number = serializers.CharField(max_length=20)
@@ -26,8 +30,11 @@ class PurchaseSerializer(serializers.Serializer):
     plan_id = serializers.CharField(max_length=50) # 'standard', 'plus' or custom
     products = ProductItemSerializer(many=True, required=False)
     total_price = serializers.DecimalField(max_digits=10, decimal_places=2)
-    billing_cycle = serializers.ChoiceField(choices=['monthly', 'quarterly'], default='monthly')
+    billing_cycle = serializers.ChoiceField(choices=['monthly', 'quarterly', 'one_off'], default='monthly')
     
+    # Coupon
+    coupon_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
+
     # Address
     address_data = AddressSerializer()
     

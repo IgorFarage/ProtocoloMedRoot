@@ -32,15 +32,29 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (token) {
       try {
         const decoded: any = jwtDecode(token);
-        // Opcional: Aqui você pode fazer um "api.get('/accounts/me/')" 
-        // para buscar os dados frescos do banco
+        // Define estado inicial rápido (cache do token)
         setUser({
           id: decoded.user_id,
           email: decoded.email || '',
           full_name: decoded.full_name || '',
           role: decoded.role || 'patient',
-          plan: decoded.current_plan || 'none' // [NOVO] Lê do token
+          plan: decoded.current_plan || 'none'
         });
+
+        // [NOVO] Busca dados frescos do servidor (Source of Truth) para garantir status do plano atualizado
+        api.get('/accounts/profile/')
+          .then(res => {
+            const p = res.data;
+            setUser(prev => ({
+              ...prev!,
+              plan: p.plan || 'none',
+              full_name: p.name || prev?.full_name || ''
+            }));
+          })
+          .catch(err => {
+            console.error("Erro ao atualizar perfil:", err);
+            // Se falhar (401), o interceptor ou o próximo request cuidará do logout se necessário
+          });
       } catch (err) {
         logout();
       }
