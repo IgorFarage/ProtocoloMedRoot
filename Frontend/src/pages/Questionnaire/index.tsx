@@ -19,6 +19,7 @@ import { X } from "lucide-react";
 // API e Utils
 import api from "@/lib/api";
 import NotFound from "../NotFound";
+import { analytics } from "@/lib/analytics";
 
 // --- IMPORTS LOCAIS ---
 import { questions } from "./data";
@@ -40,6 +41,9 @@ const Questionnaire = () => {
 
     // Carrega respostas salvas ao iniciar (Persistência básica)
     useEffect(() => {
+        // GA4: Início do funil
+        analytics.trackEvent("questionnaire_start", { step: '1' });
+
         const saved = sessionStorage.getItem('quiz_answers');
         if (saved) {
             setAnswers(JSON.parse(saved));
@@ -120,6 +124,11 @@ const Questionnaire = () => {
         localStorage.setItem('quiz_answers', JSON.stringify(answers));
 
         try {
+            // GA4 Tracking: Conclusão do Questionário
+            analytics.trackEvent("questionnaire_complete", {
+                result: "success"
+            });
+
             // Envia respostas para o Backend processar o protocolo
             const response = await api.post('/accounts/recommendation/', { answers });
             setProtocolData(response.data);
@@ -133,12 +142,18 @@ const Questionnaire = () => {
 
         } catch (error) {
             console.error("Erro ao gerar recomendação:", error);
+            // GA4 Error Tracking
+            analytics.trackEvent("exception", {
+                description: "questionnaire_submit_error",
+                fatal: false
+            });
             // Fallback simples caso a API falhe
             alert("Ocorreu um erro ao processar suas respostas. Tente novamente.");
         } finally {
             setLoadingRec(false);
         }
     };
+
 
     const handleBack = () => {
         if (currentStep > 0) {

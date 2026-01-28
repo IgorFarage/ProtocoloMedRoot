@@ -4,6 +4,7 @@ import { CheckCircle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useClientData } from "@/hooks/useClientData";
+import { analytics } from "@/lib/analytics";
 
 const PaymentSuccess = () => {
     const navigate = useNavigate();
@@ -13,12 +14,23 @@ const PaymentSuccess = () => {
     const { orderId, status } = (location.state as any) || {};
 
     useEffect(() => {
+        // GA4: Conversão Real
+        if (orderId) {
+            analytics.trackEvent("purchase", {
+                transaction_id: orderId,
+                value: 150.00, // TODO: Tentar pegar valor real do state se disponível
+                currency: "BRL",
+                status: status
+            });
+        }
+
         // Limpa estados de compra anteriores para evitar loops
         window.history.replaceState({}, document.title);
 
         // [FIX UPGRADE] Força atualização dos dados (Protocolo e Plano)
         refreshData();
     }, []);
+
 
     return (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">

@@ -77,26 +77,41 @@ class Command(BaseCommand):
             
             answers = questionnaire.answers
 
-            # 2. Regenerar Protocolo
-            protocol = BitrixService.generate_protocol(answers)
-            if not protocol or 'products' not in protocol:
-                self.stdout.write(self.style.ERROR("   ❌ Falha ao gerar protocolo."))
-                return
+            # 2. Obter Produtos (Preferência: Snapshot da Compra > Regenerado)
+            last_trans = Transaction.objects.filter(user=user, status=Transaction.Status.APPROVED).order_by('-created_at').first()
+            products_generated = []
 
-            products_generated = protocol['products']
+            # Tenta pegar do Metadata (O que o cliente REALMENTE comprou)
+            if last_trans and last_trans.mp_metadata:
+                if isinstance(last_trans.mp_metadata, dict):
+                    products_generated = last_trans.mp_metadata.get('original_products', [])
+                    if products_generated:
+                        self.stdout.write(f"   ✅ Usando Snapshot de Produtos da Transação {last_trans.external_reference}")
+
+            # Fallback: Regenerar do Questionário
+            if not products_generated:
+                self.stdout.write("   ⚠️ Snapshot não encontrado. Regenerando protocolo padrão...")
+                protocol = BitrixService.generate_protocol(answers)
+                if not protocol or 'products' not in protocol:
+                    self.stdout.write(self.style.ERROR("   ❌ Falha ao gerar protocolo."))
+                    return
+                products_generated = protocol['products']
             
             # Adicionar Plano (Se o user tiver transaction aprovada com plano)
-            last_trans = Transaction.objects.filter(user=user, status=Transaction.Status.APPROVED).order_by('-created_at').first()
-            
             plan_slug = user.current_plan
             if last_trans: 
                  plan_slug = last_trans.plan_type
             
-            # Buscar info do plano se não for 'none'
+            # Buscar info do plano se não for 'none' E se já não estiver na lista (evita duplicidade)
             if plan_slug and plan_slug != 'none':
-                plan_details = BitrixService.get_plan_details(plan_slug)
-                if plan_details:
-                    products_generated.append(plan_details)
+                # Verifica se o ID do plano já está nos produtos
+                plan_id_bitrix = BitrixConfig.PLAN_IDS.get(plan_slug)
+                already_has_plan = any(str(p.get('id','')) == str(plan_id_bitrix) for p in products_generated)
+                
+                if not already_has_plan:
+                    plan_details = BitrixService.get_plan_details(plan_slug)
+                    if plan_details:
+                        products_generated.append(plan_details)
 
             # Recalcular Total
             final_total = sum(float(p['price']) for p in products_generated)

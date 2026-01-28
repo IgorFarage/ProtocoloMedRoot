@@ -11,8 +11,8 @@ import { Loader2, CreditCard, MapPin, User, ArrowLeft, Lock, QrCode, Copy, Check
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/auth/AuthProvider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
 import { Checkbox } from "@/components/ui/checkbox";
+import { analytics } from "@/lib/analytics";
 
 const PlanSelection = () => {
     const location = useLocation();
@@ -21,7 +21,7 @@ const PlanSelection = () => {
     const { loginWithToken } = useAuth();
 
     // [FIX UPGRADE] Recupera dados em tempo real se disponível
-    const { activeProtocol, answers: clientAnswers, profile: clientProfile } = useClientData();
+    const { activeProtocol, answers: clientAnswers, profile: clientProfile, currentProtocol } = useClientData();
 
     // --- LÓGICA DE RECUPERAÇÃO DE DADOS (Blindagem) ---
     const getStateOrLocal = (key: string) => {
@@ -43,10 +43,23 @@ const PlanSelection = () => {
 
     const isUpgrade = location.state?.isUpgrade;
 
-    // [MODIFICADO] Se for Upgrade, tenta pegar do UseClientData senão usa o padrão
     const products = useMemo(() => {
-        return getStateOrLocal('products') || (isUpgrade && activeProtocol?.products ? activeProtocol.products : []);
-    }, [location.state, isUpgrade, activeProtocol]);
+        // 1. Tenta recuperar do State/LocalStorage (Checkout em andamento)
+        const saved = getStateOrLocal('products');
+        if (saved) return saved;
+
+        // 2. Se for Upgrade ou tiver protocolo ativo, usa ele
+        if (activeProtocol?.products && activeProtocol.products.length > 0) {
+            return activeProtocol.products;
+        }
+
+        // 3. FALLBACK DE OURO: Usa o protocolo calculado na hora via Respostas (useClientData)
+        if (currentProtocol && currentProtocol.length > 0) {
+            return currentProtocol;
+        }
+
+        return [];
+    }, [location.state, isUpgrade, activeProtocol, currentProtocol]);
 
     const answers = useMemo(() => {
         return getStateOrLocal('answers') || (isUpgrade && clientAnswers ? clientAnswers : {});
@@ -67,33 +80,33 @@ const PlanSelection = () => {
         }
     }, [products, answers, isUpgrade]);
 
-    // --- LÓGICA DE STEPS (Multistep) ---
-    // 1 (Plan Selection) -> 2 (Checkout: Register) -> 3 (Checkout: Address) -> 4 (Checkout: Payment)
-    // OBS: O código original usava 'step' como 1 (Selecao) e 2 (Checkout Unico).
-    // Vamos remapear para: 
-    // 0: Selecao de Plano
-    // 1: Cadastro (Dados Pessoais)
-    // 2: Endereço
-    // 3: Pagamento
-
+    // --- ESTADOS DO COMPONENTE ---
     const [profile, setProfile] = useState<any>(null);
     const [currentStep, setCurrentStep] = useState<0 | 1 | 2 | 3>(getStateOrLocal('step') || 0);
     const [acceptedTerms, setAcceptedTerms] = useState(false);
     const [acceptedContract, setAcceptedContract] = useState(false);
-    // Verifica login via Perfil confirmado
-    // useEffect REMOVED: Não queremos pular automaticamente, para permitir edição.
-    // useEffect(() => {
-    //    if (profile && currentStep === 1) {
-    //        setCurrentStep(2);
-    //    }
-    // }, [currentStep, profile]);
-
 
     const [selectedPlan, setSelectedPlan] = useState<"standard" | "plus">(getStateOrLocal('planId') || "plus");
     const [billingCycle, setBillingCycle] = useState<"monthly" | "quarterly">(getStateOrLocal('billingCycle') || "monthly");
     const [loading, setLoading] = useState(false);
 
+    // [MODIFICADO] Estado para Preços Dinâmicos (Vindo do Bitrix)
+    const [planPrices, setPlanPrices] = useState({ standard: 0, plus: 150.00 }); // Fallback inicial
 
+    // [NOVO] Estado do Método de Pagamento
+    const [paymentMethod, setPaymentMethod] = useState<"credit_card" | "pix">("credit_card");
+
+    // --- ANALYTICS (GA4) ---
+    // Track View Item List (Ao carregar e ter preços)
+    useEffect(() => {
+        analytics.trackEvent("view_item_list", {
+            item_list_name: "Planos de Assinatura",
+            items: [
+                { item_id: "standard", item_name: "Plano Standard", price: planPrices.standard },
+                { item_id: "plus", item_name: "Plano Plus", price: planPrices.plus }
+            ]
+        });
+    }, [planPrices]);
 
     // Fetch profile if logged in
     useEffect(() => {
@@ -119,10 +132,9 @@ const PlanSelection = () => {
         cardName: "", cardNumber: "", cardMonth: "", cardYear: "", cardCvv: ""
     });
 
-    // Auto-preenchimento com dados do perfil (Caso usuário já esteja logado)
+    // Auto-preenchimento com dados do perfil
     useEffect(() => {
         if (profile) {
-            // Tentativa de extrair número do endereço se vier junto (Bitrix style: "Rua X, 123")
             let street = profile.address?.street || "";
             let num = "";
             if (street.includes(",")) {
@@ -133,34 +145,27 @@ const PlanSelection = () => {
 
             setFormData(prev => ({
                 ...prev,
-                full_name: prev.full_name || profile.name || "",
-                email: prev.email || profile.email || "",
-                phone: prev.phone || profile.phone || "",
-
-                // Endereço
-                cep: prev.cep || profile.address?.zip || "",
-                address: prev.address || street,
-                city: prev.city || profile.address?.city || "",
-                state: prev.state || profile.address?.state || "",
-                neighborhood: prev.neighborhood || profile.address?.neighborhood || "",
-                number: prev.number || num || "S/N", // Fallback para passar na validação
+                full_name: profile.name || prev.full_name || "",
+                email: profile.email || prev.email || "",
+                phone: profile.phone || prev.phone || "",
+                cep: profile.address?.zip || prev.cep || "",
+                address: street || prev.address || "",
+                city: profile.address?.city || prev.city || "",
+                state: profile.address?.state || prev.state || "",
+                neighborhood: profile.address?.neighborhood || prev.neighborhood || "",
+                number: prev.number || "S/N",
                 complement: prev.complement || "",
             }));
 
-            // Auto-advance se vier do Registro
             if (location.state?.fromRegister && currentStep === 1) {
-                console.log("🚀 Vindo do registro -> Avançando para endereço (Step 2)");
                 setCurrentStep(2);
             }
         }
     }, [profile, currentStep, location.state]);
 
-
-
     // --- LÓGICA DE CUSTOMIZAÇÃO DO PROTOCOLO ---
     const [activeProductIds, setActiveProductIds] = useState<string[]>([]);
 
-    // Inicializa todos os produtos como ativos ao carregar
     useEffect(() => {
         if (products && Array.isArray(products) && products.length > 0) {
             setActiveProductIds(products.map((p: any) => p.id));
@@ -169,25 +174,16 @@ const PlanSelection = () => {
 
     const toggleProduct = (productId: string) => {
         setActiveProductIds(prev =>
-            prev.includes(productId)
-                ? prev.filter(id => id !== productId) // Remove
-                : [...prev, productId] // Adiciona
+            prev.includes(productId) ? prev.filter(id => id !== productId) : [...prev, productId]
         );
     };
 
-    // Calcula o total dos produtos ativos
     const productsTotal = useMemo(() => {
         if (!products || !Array.isArray(products)) return 0;
         return products
             .filter((p: any) => activeProductIds.includes(p.id))
             .reduce((sum: number, p: any) => sum + (parseFloat(p.price) || 0), 0);
     }, [products, activeProductIds]);
-
-    // [MODIFICADO] Estado para Preços Dinâmicos (Vindo do Bitrix)
-    const [planPrices, setPlanPrices] = useState({ standard: 0, plus: 150.00 }); // Fallback inicial
-
-    // [NOVO] Estado do Método de Pagamento
-    const [paymentMethod, setPaymentMethod] = useState<"credit_card" | "pix">("credit_card");
 
     useEffect(() => {
         const fetchPrices = async () => {
@@ -208,36 +204,25 @@ const PlanSelection = () => {
     }, []);
 
     const getPrice = (plan: "standard" | "plus") => {
-        // [MODIFICAÇÃO UPGRADE]
-        // Se for upgrade, ignora produtos e cobra preço fixo da diferença (Baseado no preço do Plus)
-        // OBS: Aqui assumimos que o upgrade custa o valor do plano Plus.
         if (location.state?.isUpgrade && plan === 'plus') {
             return planPrices.plus.toFixed(2);
         }
-
         let base = productsTotal;
-
         if (plan === 'plus') {
             base += planPrices.plus;
         } else {
             base += planPrices.standard;
         }
 
-        // Desconto Trimestral (10%)
+        // [FIX PRICE] Se for Assinatura (antigo trimestral), aplica 10% de desconto no valor MENSAL
         if (billingCycle === "quarterly") {
-            base = (base * 3) * 0.90;
+            base = base * 0.90;
         }
-
         return base.toFixed(2);
     };
 
     const formatCPF = (value: string) => {
-        return value
-            .replace(/\D/g, '')
-            .replace(/(\d{3})(\d)/, '$1.$2')
-            .replace(/(\d{3})(\d)/, '$1.$2')
-            .replace(/(\d{3})(\d{1,2})/, '$1-$2')
-            .replace(/(-\d{2})\d+?$/, '$1');
+        return value.replace(/\D/g, '').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})/, '$1-$2').replace(/(-\d{2})\d+?$/, '$1');
     };
 
     const formatPhone = (value: string) => {
@@ -248,10 +233,7 @@ const PlanSelection = () => {
     };
 
     const formatCEP = (value: string) => {
-        return value
-            .replace(/\D/g, '')
-            .replace(/^(\d{5})(\d)/, '$1-$2')
-            .replace(/(-\d{3})\d+?$/, '$1');
+        return value.replace(/\D/g, '').replace(/^(\d{5})(\d)/, '$1-$2').replace(/(-\d{3})\d+?$/, '$1');
     };
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -259,7 +241,6 @@ const PlanSelection = () => {
         if (e.target.id === 'cpf') value = formatCPF(value);
         if (e.target.id === 'phone') value = formatPhone(value);
         if (e.target.id === 'cep') value = formatCEP(value);
-
         setFormData({ ...formData, [e.target.id]: value });
     };
 
@@ -282,64 +263,64 @@ const PlanSelection = () => {
     const handleSelectPlan = (plan: "standard" | "plus") => {
         setSelectedPlan(plan);
 
-        // Se for Upgrade, mantém fluxo atual (vai direto pro pagamento se User existir)
+        analytics.trackEvent("add_to_cart", {
+            currency: "BRL",
+            value: getPrice(plan),
+            items: [{
+                item_id: plan,
+                item_name: `Plano ${plan === 'plus' ? 'Plus' : 'Standard'}`,
+                price: getPrice(plan),
+                quantity: 1
+            }]
+        });
+
         if (location.state?.isUpgrade) {
             setCurrentStep(3);
             return;
         }
 
-        // FLUXO UNIFICADO: Todos vão para Step 1
-        // - Se logado: Vê form "Confirme seus Dados" (com dados preenchidos)
-        // - Se deslogado: Vê form "Criar Conta" (campos de senha visíveis)
+        analytics.trackEvent("begin_checkout", {
+            currency: "BRL",
+            value: getPrice(plan),
+            items: [{ item_id: plan, item_name: `Plano ${plan}` }]
+        });
+
         setCurrentStep(1);
     };
 
-    // --- FUNÇÕES DE HANDLER POR ETAPA ---
-
-    // Etapa 1: Criar Conta / Confirmar Dados
     const handleCreateAccount = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
 
         try {
-            // Se já tem perfil logado, é uma ATUALIZAÇÃO
             if (profile) {
                 await api.put("/accounts/profile/update/", {
                     full_name: formData.full_name,
                     phone: formData.phone
                 });
-                // Atualiza state local para refletir (opcional)
                 toast({ title: "Dados Confirmados!", description: "Indo para endereço." });
                 setCurrentStep(2);
                 return;
             }
 
-            // SENÃO: CRIA CONTA NOVA
             if (formData.password.length < 6) throw new Error("Senha muito curta.");
             if (formData.password !== formData.confirmPassword) throw new Error("As senhas não conferem.");
 
-            // Chama /register apenas com dados básicos
             const payload = {
                 full_name: formData.full_name,
                 email: formData.email,
                 phone: formData.phone,
                 password: formData.password,
-                // questionnaire_data: answers // Enviamos respostas no cadastro inicial para garantir vínculo
-                // Mas wait! Se enviarmos agora, cria Lead. Ok.
                 questionnaire_data: answers
             };
 
             const res = await api.post("/accounts/register/", payload);
 
             if (res.status === 201) {
-                // Sucesso! Tenta logar automaticamente ou pega o token se vier (RegisterView nao retorna token padrao JWT, mas vamos supor q sim ou fazer login)
-                // A RegisterView do django nao retorna token JWT nativamente a menos que tenhamos alterado.
-                // Vamos forçar login.
                 const loginRes = await api.post("/accounts/login/", { email: formData.email, password: formData.password });
-                loginWithToken(loginRes.data.access, loginRes.data.user); // Salva no Context e LocalStorage
-
+                loginWithToken(loginRes.data.access, loginRes.data.user);
                 toast({ title: "Conta Criada!", description: "Dados salvos com sucesso." });
-                setCurrentStep(2); // Avança
+                setCurrentStep(2);
             }
 
         } catch (error: any) {
@@ -351,7 +332,6 @@ const PlanSelection = () => {
         }
     };
 
-    // Etapa 2: Salvar Endereço
     const handleSaveAddress = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
@@ -367,7 +347,7 @@ const PlanSelection = () => {
 
             await api.post("/accounts/update_address/", payload);
             toast({ title: "Endereço Salvo!", description: "Vamos para o pagamento." });
-            setCurrentStep(3); // Avança
+            setCurrentStep(3);
 
         } catch (error) {
             console.error(error);
@@ -377,19 +357,16 @@ const PlanSelection = () => {
         }
     };
 
-    // Etapa 3: Pagamento (Reutiliza lógica mas ajustada)
     const handleFinalizePayment = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
 
-        // Validação final de segurança
         if (!answers || Object.keys(answers).length === 0) {
             toast({ variant: "destructive", title: "Erro", description: "Dados do questionário perdidos. Refaça o quiz." });
             setLoading(false);
             return;
         }
 
-        // Filtra apenas produtos ativos
         const finalProducts = products.filter((p: any) => activeProductIds.includes(p.id));
 
         if (finalProducts.length === 0) {
@@ -400,46 +377,40 @@ const PlanSelection = () => {
 
         try {
             let payload: any = {
-                // Enviamos dados básicos caso precise (mas backend usa user logado)
                 plan_id: selectedPlan,
                 billing_cycle: billingCycle,
-                total_price: getPrice(selectedPlan), // Preço já recalculado
-                products: finalProducts, // Lista filtrada
-                cpf: formData.cpf, // Importante para o Pagamento
-                payment_method_id: paymentMethod === 'pix' ? 'pix' : undefined, // [PIX]
-
-                // Mapeamento Completo para PurchaseSerializer
+                total_price: getPrice(selectedPlan),
+                products: finalProducts,
+                cpf: formData.cpf,
+                payment_method_id: paymentMethod === 'pix' ? 'pix' : undefined,
                 full_name: formData.full_name,
                 email: formData.email,
                 address_data: {
-                    cep: formData.cep,
-                    street: formData.address,
-                    number: formData.number,
-                    neighborhood: formData.neighborhood,
-                    complement: formData.complement,
-                    city: formData.city,
-                    state: formData.state
+                    cep: formData.cep, street: formData.address, number: formData.number,
+                    neighborhood: formData.neighborhood, complement: formData.complement,
+                    city: formData.city, state: formData.state
                 },
                 questionnaire_data: answers || {}
             };
 
             const mpKey = import.meta.env.VITE_MERCADO_PAGO_PUBLIC_KEY;
-            console.log("🔑 Frontend Public Key:", mpKey);
 
-            // [PIX] Se for Pix, pula tokenização de cartão
             if (paymentMethod === 'credit_card') {
                 // @ts-ignore
                 const mp = new window.MercadoPago(mpKey);
 
                 try {
+                    const cleanCpf = formData.cpf.replace(/[^\d]/g, "");
+                    console.log("💳 Gerando Token para CPF clean:", cleanCpf);
+
                     const cardToken = await mp.createCardToken({
                         cardNumber: formData.cardNumber.replace(/\s/g, ""),
-                        cardholderName: formData.cardName,
+                        cardholderName: formData.cardName.trim(), // Ensure no extra spaces
                         cardExpirationMonth: formData.cardMonth,
                         cardExpirationYear: "20" + formData.cardYear,
                         securityCode: formData.cardCvv,
                         identificationType: "CPF",
-                        identificationNumber: formData.cpf.replace(/\D/g, "")
+                        identificationNumber: cleanCpf
                     });
 
                     payload.token = cardToken.id;
@@ -466,21 +437,19 @@ const PlanSelection = () => {
             const response = await api.post("/financial/purchase/", payload);
 
             if (response.data.status === "success" || response.status === 201) {
-                // Limpa o localStorage após sucesso
                 localStorage.removeItem('checkout_answers');
                 localStorage.removeItem('checkout_products');
                 localStorage.removeItem('checkout_total_price');
 
                 const status = response.data.payment_status || response.data.status;
 
-                // [PIX] Fluxo de Pendente
                 if (status === 'pending' && paymentMethod === 'pix') {
                     navigate("/pagamento/pendente", {
                         state: {
                             price: getPrice(selectedPlan),
                             status: status,
-                            pixData: response.data.pix_data, // Passa QR Code
-                            orderId: response.data.order_id // [NOVO] Para verificação de status
+                            pixData: response.data.pix_data,
+                            orderId: response.data.order_id
                         }
                     });
                 }
@@ -492,8 +461,6 @@ const PlanSelection = () => {
                         }
                     });
                 } else {
-                    // Atualiza Context com User atualizado se vier
-                    // loginWithToken(response.data.access, response.data.user); 
                     navigate("/pagamento/sucesso", {
                         state: {
                             orderId: response.data.order_id,
@@ -506,7 +473,6 @@ const PlanSelection = () => {
         } catch (error: any) {
             console.error(error);
             const msg = error.response?.data?.detail || error.response?.data?.error || error.message;
-            // Redireciona para tela de erro
             navigate("/pagamento/erro", {
                 state: {
                     message: msg,
@@ -514,10 +480,10 @@ const PlanSelection = () => {
                         shouldRetry: true,
                         planId: selectedPlan,
                         billingCycle: billingCycle,
-                        products: finalProducts, // Usa lista atualizada
+                        products: finalProducts,
                         answers: answers,
-                        total_price: getPrice(selectedPlan), // Usa preço atualizado
-                        step: 3 // Volta para o pagamento
+                        total_price: getPrice(selectedPlan),
+                        step: 3
                     }
                 }
             });
@@ -562,7 +528,6 @@ const PlanSelection = () => {
                                                         let localImg = null;
                                                         if (!remoteImg) {
                                                             const nameLower = (product.name || "").toLowerCase();
-                                                            // Mapeamento manual de nomes vindo do Bitrix para chaves do constants
                                                             if (nameLower.includes("minoxidil") && nameLower.includes("tópico")) localImg = PRODUCT_IMAGES["Loção Minoxidil 5%"];
                                                             else if (nameLower.includes("minoxidil") && (nameLower.includes("oral") || nameLower.includes("cápsula"))) localImg = PRODUCT_IMAGES["Minoxidil 2.5mg"];
                                                             else if (nameLower.includes("finasterida") && nameLower.includes("tópico")) localImg = PRODUCT_IMAGES["Loção Finasterida"];
@@ -615,8 +580,8 @@ const PlanSelection = () => {
                     </Card>
 
                     <div className="flex justify-center gap-4 mb-8">
-                        <Button variant={billingCycle === "monthly" ? "default" : "outline"} onClick={() => setBillingCycle("monthly")}>Mensal</Button>
-                        <Button variant={billingCycle === "quarterly" ? "default" : "outline"} onClick={() => setBillingCycle("quarterly")}>Trimestral (-10%)</Button>
+                        <Button variant={billingCycle === "monthly" ? "default" : "outline"} onClick={() => setBillingCycle("monthly")}>Pagamento Único</Button>
+                        <Button variant={billingCycle === "quarterly" ? "default" : "outline"} onClick={() => setBillingCycle("quarterly")}>Assinatura (Cobrança Mensal)</Button>
                     </div>
                     <div className="grid md:grid-cols-2 gap-8">
                         {!location.state?.isUpgrade && (
@@ -630,7 +595,7 @@ const PlanSelection = () => {
                                         <p className="text-sm text-gray-500 mb-1">Total Estimado</p>
                                         <p className="text-4xl font-bold text-blue-900">R$ {getPrice("standard")}</p>
                                         <p className="text-sm text-green-600 font-medium mt-2">
-                                            {billingCycle === 'quarterly' ? 'Cobrado a cada 3 meses' : 'Cobrado mensalmente'}
+                                            {billingCycle === 'quarterly' ? 'Cobrado mensalmente (Assinatura -10%)' : 'Cobrado hoje'}
                                         </p>
                                     </div>
                                     <ul className="space-y-2 text-sm text-gray-600">
@@ -655,7 +620,7 @@ const PlanSelection = () => {
                                     <p className="text-sm text-gray-500 mb-1">Total Estimado</p>
                                     <p className="text-4xl font-bold text-green-700">R$ {getPrice("plus")}</p>
                                     <p className="text-sm text-green-600 font-medium mt-2">
-                                        {billingCycle === 'quarterly' ? 'Cobrado a cada 3 meses' : 'Cobrado mensalmente'}
+                                        {billingCycle === 'quarterly' ? 'Cobrado mensalmente (Assinatura -10%)' : 'Cobrado mensalmente'}
                                     </p>
                                 </div>
                                 <ul className="space-y-2 text-sm text-gray-600">

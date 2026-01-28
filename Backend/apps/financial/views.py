@@ -130,22 +130,83 @@ class WebhookView(APIView):
                             if transaction.bitrix_sync_status != 'synced' and BitrixService:
                                 try:
                                     logger.info("🔄 [Webhook] Retrying Bitrix Sync...")
-                                    # Recria dados básicos para sync
-                                    validated_data = {
-                                        "full_name": transaction.user.get_full_name(),
-                                        "phone": transaction.user.profile.phone if hasattr(transaction.user, 'profile') else "",
-                                        "email": transaction.user.email,
-                                        "address_data": transaction.user.profile.address if hasattr(transaction.user, 'profile') else {}
-                                    }
-                                    # Precisamos extrair metadata se existir
-                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
-                                        orig_products = transaction.mp_metadata.get('original_products', [])
-                                        # TODO: Melhorar reconstrução se necessário
                                     
-                                    # Nota: O sync completo via webhook é complexo sem o payload original completo.
-                                    # Por enquanto, focamos na ATIVAÇÃO DO PLANO que é o crítico.
+                                    # 1. Reconstrói lista de produtos do Metadata
+                                    products_list = []
+                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
+                                        products_list = transaction.mp_metadata.get('original_products', [])
+                                    
+                                    # Fallback: Se não tiver no metadata (legado), tenta gerar do questionário
+                                    if not products_list:
+                                        from apps.accounts.models import UserQuestionnaire
+                                        last_q = UserQuestionnaire.objects.filter(user=transaction.user).order_by('-created_at').first()
+                                        if last_q:
+                                            protocol = BitrixService.generate_protocol(last_q.answers)
+                                            products_list = protocol.get('products', [])
+
+                                    # 2. Prepara dados de pagamento para o Bitrix
+                                    payment_info_bitrix = {
+                                        "id": str(mp_id),
+                                        "status": "approved", # Se entrou aqui, é porque foi aprovado
+                                        "date_created": datetime.now().isoformat()
+                                    }
+
+                                    # 3. Chama o serviço
+                                    deal_id = BitrixService.prepare_deal_payment(
+                                        user=transaction.user,
+                                        products_list=products_list,
+                                        plan_title=f"ProtocoloMed - {transaction.plan_type}",
+                                        total_amount=float(transaction.amount),
+                                        answers=None, # Não reenviamos respostas aqui
+                                        payment_data=payment_info_bitrix
+                                    )
+
+                                    if deal_id:
+                                        transaction.bitrix_deal_id = str(deal_id)
+                                        transaction.bitrix_sync_status = 'synced'
+                                        transaction.save()
+                                        logger.info(f"✅ [Webhook] Bitrix Sync Success! Deal: {deal_id}")
+                                    else:
+                                        logger.warning("⚠️ [Webhook] Bitrix Sync returned no Deal ID.")
+
                                 except Exception as bitrix_err:
                                      logger.error(f"❌ [Webhook] Bitrix Sync Retry Failed: {bitrix_err}")
+
+                        elif status in ["pending", "in_process"]:
+                            # [FIX] Garante que status Pendente também sincroniza com Bitrix (para corrigir falhas iniciais)
+                            if transaction.bitrix_sync_status != 'synced' and BitrixService:
+                                try:
+                                    logger.info(f"🔄 [Webhook] Syncing Pending Status for {transaction.external_reference}...")
+                                    
+                                    # [REUSE] Lógica de Sync (Simplificada)
+                                    payment_info_bitrix = {
+                                        "id": str(mp_id),
+                                        "status": status,
+                                        "date_created": datetime.now().isoformat()
+                                    }
+                                    
+                                    # Recria produtos (Fallback básico)
+                                    products_list = []
+                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
+                                        products_list = transaction.mp_metadata.get('original_products', [])
+
+                                    deal_id = BitrixService.prepare_deal_payment(
+                                        user=transaction.user,
+                                        products_list=products_list,
+                                        plan_title=f"ProtocoloMed - {transaction.plan_type}",
+                                        total_amount=float(transaction.amount),
+                                        answers=None,
+                                        payment_data=payment_info_bitrix
+                                    )
+                                    
+                                    if deal_id:
+                                        transaction.bitrix_deal_id = str(deal_id)
+                                        transaction.bitrix_sync_status = 'synced'
+                                        transaction.save()
+                                        logger.info(f"✅ [Webhook] Bitrix Sync (Pending) Success! Deal: {deal_id}")
+
+                                except Exception as e:
+                                    logger.error(f"❌ [Webhook] Pending Sync Failed: {e}")
 
                         elif status == "rejected": 
                             transaction.status = Transaction.Status.REJECTED
@@ -178,6 +239,22 @@ class PlanPricesView(APIView):
             "plus": price_plus
         })
 
+
+# --- VIEW 5: STATUS DA TRANSAÇÃO ---
+class TransactionStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, external_ref):
+        try:
+            transaction = Transaction.objects.get(external_reference=external_ref)
+            return Response({
+                "status": transaction.status,
+                "payment_type": transaction.payment_type,
+                "cycle": transaction.cycle
+            })
+        except Transaction.DoesNotExist:
+            return Response({"error": "Transação não encontrada."}, status=404)
+
 class CompletePurchaseView(APIView):
 
     permission_classes = [AllowAny]
@@ -193,7 +270,13 @@ class CompletePurchaseView(APIView):
         
         # Extract basic data
         email = validated_data.get('email')
-        full_name_list = validated_data.get('full_name').split()
+        import re
+        full_name_raw = validated_data.get('full_name', '')
+        # [FIX MP 107] Sanitize: Remove numbers and symbols, keep only letters/spaces
+        safe_name = re.sub(r'[^a-zA-Z\u00C0-\u00FF\s]', '', full_name_raw).strip() # Include accents
+        if not safe_name: safe_name = "Cliente"
+
+        full_name_list = safe_name.split()
         first_name = full_name_list[0]
         last_name = " ".join(full_name_list[1:]) if len(full_name_list) > 1 else "Client"
         cpf = validated_data.get('cpf')
@@ -201,98 +284,140 @@ class CompletePurchaseView(APIView):
         total_price = float(validated_data.get('total_price', 0))
         plan_id = validated_data.get('plan_id')
         payment_method = validated_data.get('payment_method_id')
+        billing_cycle = validated_data.get('billing_cycle', 'monthly') # 'monthly' or 'monthly_subscription' (or 'quarterly' mapped to sub)
+
         external_ref = str(uuid.uuid4())
 
         # [DEBUG] Log incoming products
         raw_products = request.data.get('products', [])
-        val_products = validated_data.get('products', [])
-        logger.info(f"🛒 Checkout Initialized for {email}. Raw Products: {len(raw_products)} | Validated Products: {len(val_products)}")
-        if raw_products:
-             logger.info(f"📦 First Product IDs: {[p.get('id') for p in raw_products[:5]]}")
+        logger.info(f"🛒 Checkout Initialized for {email}. Cycle: {billing_cycle}")
 
-        # 2. Payment Payload Construction
-        payment_payload = {
-            "transaction_amount": total_price,
-            "description": f"ProtocoloMed - {plan_id}",
-            "payment_method_id": payment_method,
-            "payer": {
-                "email": email,
-                "first_name": first_name,
-                "last_name": last_name,
-                "identification": {"type": "CPF", "number": cpf}
-            },
-            "external_reference": external_ref
-        }
-        
-
-        # 3. Get or Create User (Before Payment to get Customer ID)
+        # 2. Get or Create User
         try:
              user = self._get_or_create_user(request, validated_data)
         except ValueError as e:
              return Response({"error": str(e)}, status=400)
 
-        # 3. Process Payment
+        # 3. Process Payment OR Subscription
         financial_service = FinancialService()
         payment_result = None
-
-        logger.info(f"🚀 Processing Simple Payment ({payment_method}) for {email}")
+        is_subscription = False
         
-        # Prepare Simple Payment Payload for ALL methods (Credit Card & Pix)
-        if payment_method != 'pix':
-            payment_payload["token"] = validated_data.get('token')
-            payment_payload["installments"] = validated_data.get('installments', 1)
+        # Decide Strategy based on cycle
+        # We assume 'quarterly' now means SUBSCRIPTION in the frontend, OR explicit 'subscription' flag
+        # For safety, let's treat 'quarterly' -> Subscription (Monthly Charge) as per last instruction
+        is_subscription_flow = (billing_cycle == 'quarterly') and (payment_method != 'pix')
+
+        if is_subscription_flow:
+            logger.info(f"🔄 Starting Subscription Flow for {email}")
+            
+            # Prepare User Data for Customer Creation
+            user_data_mp = {
+                "email": email,
+                "first_name": first_name,
+                "last_name": last_name,
+                "identification": {"type": "CPF", "number": cpf}
+            }
+            
+            # Prepare Subscription Config
+            sub_config = {
+                "reason": f"ProtocoloMed - {plan_id} (Assinatura)",
+                "external_reference": external_ref,
+                "transaction_amount": total_price # Full monthly amount
+            }
+            
+            token = validated_data.get('token')
+            if not token:
+                return Response({"error": "Token do cartão obrigatório para assinatura."}, status=400)
+
+            # EXECUTE SUBSCRIPTION
+            payment_result = financial_service.execute_transparent_subscription(user_data_mp, sub_config, token)
+            is_subscription = True
+            
         else:
-            # [PIX] Set Expiration to 30 minutes
-            expiration_time = (datetime.utcnow() + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000-00:00")
-            payment_payload["date_of_expiration"] = expiration_time
-            logger.info(f"⏳ Pix Expiration set to: {expiration_time}")
+            # ORIGINAL ONE-OFF FLOW
+            logger.info(f"🚀 Processing One-Off Payment ({payment_method}) for {email}")
+            
+            payment_payload = {
+                "transaction_amount": total_price,
+                "description": f"ProtocoloMed - {plan_id}",
+                "payment_method_id": payment_method,
+                "payer": {
+                    "email": email,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "identification": {"type": "CPF", "number": cpf}
+                },
+                "external_reference": external_ref
+            }
 
-        # UNIFIED CALL - Direct Payment (No Subscription/Customer extraction)
-        payment_result = financial_service.process_direct_payment(payment_payload)
+            if payment_method != 'pix':
+                payment_payload["token"] = validated_data.get('token')
+                payment_payload["installments"] = validated_data.get('installments', 1)
+            else:
+                expiration_time = (datetime.utcnow() + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000-00:00")
+                payment_payload["date_of_expiration"] = expiration_time
 
-        # Retry Logic (Generic International or other specific errors)
-        if payment_method != 'pix' and payment_result and 'cause' in payment_result:
-            causes = payment_result.get('cause', [])
-            if isinstance(causes, list) and any(str(c.get('code')) == '10114' for c in causes):
-                logger.warning("⚠️ Retry 1x (Internacional)...")
-                payment_payload['installments'] = 1
-                payment_payload['external_reference'] = f"{external_ref}_retry"
-                payment_result = financial_service.process_direct_payment(payment_payload)
+            # EXECUTE PAYMENT
+            payment_result = financial_service.process_direct_payment(payment_payload)
+            
+            # Retry Logic (One-off only)
+            if payment_method != 'pix' and payment_result and 'cause' in payment_result:
+                causes = payment_result.get('cause', [])
+                if isinstance(causes, list) and any(str(c.get('code')) == '10114' for c in causes):
+                    logger.warning("⚠️ Retry 1x (Internacional)...")
+                    payment_payload['installments'] = 1
+                    payment_payload['external_reference'] = f"{external_ref}_retry"
+                    payment_result = financial_service.process_direct_payment(payment_payload)
 
-        # Evaluate Payment Success
+
+        # 4. Evaluate Success & Persist
         is_success = False
         status_mp = "rejected"
         mp_id_value = None
+        subscription_id_value = None
 
         if payment_result:
             status_mp = payment_result.get('status')
-            mp_id_value = str(payment_result.get('id', ''))
-            # Subscription success is 'authorized'
-            if status_mp in ['approved', 'in_process', 'authorized']: is_success = True
-            if payment_method == 'pix' and status_mp == 'pending': is_success = True
+            
+            if is_subscription:
+                subscription_id_value = str(payment_result.get('id', ''))
+                # Preapproval status: 'authorized' is success
+                if status_mp == 'authorized': is_success = True
+            else:
+                mp_id_value = str(payment_result.get('id', ''))
+                # Payment status: 'approved' or 'in_process' (pix pending)
+                if status_mp in ['approved', 'in_process', 'authorized']: is_success = True
+                if payment_method == 'pix' and status_mp == 'pending': is_success = True
 
         if not is_success:
             error_msg = self._extract_error_message(payment_result)
-            logger.error(f"❌ Payment Failed: {error_msg}")
-            return Response({"error": "Pagamento não realizado", "detail": error_msg}, status=400)
+            logger.error(f"❌ Transaction Failed: {error_msg}")
+            return Response({"error": "Falha na transação", "detail": error_msg}, status=400)
 
-        # 4. Persistence
+        # 5. Persistence Transaction
         try:
             with db_transaction.atomic():
-                # User is already created/retrieved
                 
+                final_status = Transaction.Status.PENDING
+                if status_mp in ['approved', 'authorized']:
+                    final_status = Transaction.Status.APPROVED
+                elif status_mp == 'rejected':
+                    final_status = Transaction.Status.REJECTED
+                    
                 transaction = Transaction.objects.create(
                     user=user, 
                     plan_type=plan_id, 
                     amount=total_price, 
-                    cycle=validated_data.get('billing_cycle'),
+                    cycle=billing_cycle,
                     external_reference=external_ref, 
-                    status=Transaction.Status.APPROVED if is_success else Transaction.Status.PENDING,
+                    status=final_status,
                     payment_type=Transaction.PaymentType.PIX if payment_method == 'pix' else Transaction.PaymentType.CREDIT_CARD,
-                    mercado_pago_id=mp_id_value
+                    mercado_pago_id=mp_id_value,
+                    subscription_id=subscription_id_value # New Field
                 )
 
-                # TRIGGER AUTOMATIC SUBSCRIPTION/PLAN ACTIVATION
+                # TRIGGER AUTOMATIC ACTIVATION
                 if transaction.status == Transaction.Status.APPROVED:
                     SubscriptionService.activate_subscription_from_transaction(transaction)
 
@@ -300,41 +425,37 @@ class CompletePurchaseView(APIView):
                 bitrix_success = False
                 deal_id = None
                 try:
-                    deal_id = self._handle_bitrix_integration(user, validated_data, payment_result, plan_id, total_price)
-                    if deal_id:
-                        bitrix_success = True
+                    # Pass correct ID (Subscription ID or Payment ID) depending on flow
+                    integ_id = subscription_id_value if is_subscription else mp_id_value
+                    # Construct temp result wrapper for Bitrix
+                    bitrix_payment_result = payment_result.copy()
+                    bitrix_payment_result['id'] = integ_id
+                    
+                    deal_id = self._handle_bitrix_integration(user, validated_data, bitrix_payment_result, plan_id, total_price)
+                    if deal_id: bitrix_success = True
                 except Exception as e:
-                    logger.error(f"⚠️ Bitrix Sync Failed directly after purchase: {e}")
+                    logger.error(f"⚠️ Bitrix Sync Failed: {e}")
 
-                # Update Transaction with Sync Status
                 transaction.bitrix_sync_status = 'synced' if bitrix_success else 'failed'
                 if bitrix_success: transaction.bitrix_deal_id = str(deal_id)
-                # [MODIFICAÇÃO: Snapshot de Contexto para Resiliência]
-                # [OTIMIZAÇÃO] Salvar apenas dados essenciais para economizar espaço no DB
-                raw_products = request.data.get('products', [])
-                sanitized_products = [
-                    {
-                        "id": p.get("id"), 
-                        "name": p.get("name"), 
-                        "price": p.get("price")
-                    } for p in raw_products
-                ]
-
+                
+                # Metadata Snapshot
+                sanitized_products = [{"id": p.get("id"), "name": p.get("name"), "price": p.get("price")} for p in raw_products]
                 meta_data = {
                     "payment_response": self._sanitize_payment_data(payment_result),
                     "original_products": sanitized_products, 
-                    "questionnaire_snapshot": validated_data.get('questionnaire_data', {})
+                    "questionnaire_snapshot": validated_data.get('questionnaire_data', {}),
+                    "is_subscription": is_subscription
                 }
-                # Fix: Convert Decimals to float/str for JSON serialization
                 transaction.mp_metadata = self._make_json_serializable(meta_data)
                 transaction.save()
 
-                # [FIX CACHE] Limpar cache do protocolo para refletir mudança imediata (Standard -> Plus)
+                # Cache Clear
                 from django.core.cache import cache
                 cache.delete(f"user_protocol_{user.id}")
                 cache.delete(f"user_profile_full_{user.id}")
 
-                # Return Success Response
+                # Response Construction
                 refresh = RefreshToken.for_user(user)
                 response_data = {
                     "status": "success", 
@@ -357,21 +478,6 @@ class CompletePurchaseView(APIView):
         except Exception as e:
             logger.exception(f"❌ Internal Consistency Error: {e}")
             return Response({"error": "Erro ao finalizar pedido (consistência)."}, status=500)
-
-class TransactionStatusView(APIView):
-    permission_classes = [IsAuthenticated] # Or [AllowAny] if we want to allow public check with valid UUID
-
-    def get(self, request, external_ref):
-        try:
-            # Busca por external_reference para segurança (UUID difícil de chutar)
-            transaction = Transaction.objects.get(external_reference=external_ref)
-            return Response({
-                "status": transaction.status,
-                "payment_type": transaction.payment_type,
-                "cycle": transaction.cycle
-            })
-        except Transaction.DoesNotExist:
-            return Response({"error": "Transação não encontrada."}, status=404)
 
     def _sanitize_payment_data(self, payment_result):
         """

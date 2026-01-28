@@ -148,7 +148,16 @@ class UpdateAddressView(APIView):
             else:
                 print("⚠️ Usuário sem ID Bitrix, endereço não sincronizado.")
 
-            # 2. (Opcional) Poderíamos salvar localmente se tivéssemos modelo de endereço
+            # 2. Salva localmente (Cache/Persistência)
+            user.cep = address_data.get('cep')
+            user.street = address_data.get('street')
+            user.number = address_data.get('number')
+            user.neighborhood = address_data.get('neighborhood')
+            user.city = address_data.get('city')
+            user.state = address_data.get('state')
+            user.complement = address_data.get('complement')
+            user.save()
+            print(f"✅ Endereço salvo localmente para {user.email}")
             
             # 3. Limpar Cache do Perfil
             from django.core.cache import cache
@@ -181,6 +190,16 @@ class UserProfileView(APIView):
             "email": user.email,
             "role": user.role,
             "plan": user.current_plan,
+            "phone": user.phone,
+            "address": {
+                "street": user.street,
+                "number": user.number,
+                "city": user.city,
+                "state": user.state,
+                "zip": user.cep,
+                "neighborhood": user.neighborhood,
+                "complement": user.complement
+            }
         }
 
         # [NOVO] Verificar se existe transação Pendente (Para mostrar no Dashboard)
@@ -198,7 +217,30 @@ class UserProfileView(APIView):
             profile_data['plan'] = user.current_plan
 
             bitrix_data = BitrixService.get_contact_data(user)
-            profile_data.update(bitrix_data) # Mescla phone e address no JSON
+            
+            # [AUTO-HEAL] Persistência: Se o banco local estiver vazio, trazer do Bitrix
+            updated_local = False
+            
+            if not user.phone and bitrix_data.get('phone'):
+                user.phone = bitrix_data['phone']
+                updated_local = True
+
+            bx_addr = bitrix_data.get('address', {})
+            if not user.street and bx_addr.get('street'):
+                user.street = bx_addr.get('street')
+                user.city = bx_addr.get('city')
+                user.state = bx_addr.get('state')
+                user.cep = bx_addr.get('zip')
+                user.neighborhood = bx_addr.get('neighborhood')
+                # Bitrix pode juntar numero/comp, mas tentamos o básico
+                updated_local = True
+
+            if updated_local:
+                user.save()
+                print(f"🔧 Auto-healing: Dados de Contato recuperados do Bitrix p/ {user.email}")
+
+            # Mescla para o frontend (Prioriza Bitrix se vier algo novo, mas local já está no default)
+            profile_data.update(bitrix_data) 
         except Exception as e:
             print(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
             # Não falha o request, apenas vai sem os dados extras
@@ -248,6 +290,16 @@ class UserProtocolView(APIView):
         result = BitrixService.get_client_protocol(user)
         
         if not result or "error" in result:
+             # [FALLBACK] Se não achou Deal (User Inativo), gera sugestão baseada nas respostas
+             # Isso garante que o Frontend receba produtos com preços reais do catálogo
+             last_q = UserQuestionnaire.objects.filter(user=user).order_by('-created_at').first()
+             if last_q:
+                 suggested = BitrixService.generate_protocol(last_q.answers)
+                 if suggested and not "error" in suggested:
+                     # Salva no Cache e retorna como sucesso
+                     cache.set(cache_key, suggested, 600)
+                     return Response(suggested, status=status.HTTP_200_OK)
+
              error_msg = result.get('error') if result else 'Erro desconhecido'
              print(f"⚠️ UserProtocolView Warning: {error_msg} for user {user.email}")
              return Response(result or {"error": "Erro ao buscar protocolo"}, status=status.HTTP_400_BAD_REQUEST)
@@ -325,3 +377,49 @@ class BitrixWebhookView(APIView):
             print(f"❌ Erro processando Webhook: {e}")
         
         return Response({"status": "received"}, status=status.HTTP_200_OK)
+
+# 7. Password Reset Views
+from .services import PasswordResetService
+
+class PasswordResetRequestView(APIView):
+    """
+    Endpoint para solicitar redefinição de senha.
+    Payload: {"email": "user@example.com"}
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({"error": "E-mail é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Chama serviço (sempre retorna True por segurança)
+        PasswordResetService.request_password_reset(email)
+        
+        return Response({
+            "message": "Se o e-mail estiver cadastrado, você receberá um link de redefinição."
+        }, status=status.HTTP_200_OK)
+
+class PasswordResetConfirmView(APIView):
+    """
+    Endpoint para confirmar nova senha.
+    Payload: {"uid": "...", "token": "...", "new_password": "..."}
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        uid = request.data.get('uid')
+        token = request.data.get('token')
+        new_password = request.data.get('new_password')
+
+        if not all([uid, token, new_password]):
+            return Response({"error": "Todos os campos são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+
+        success = PasswordResetService.confirm_password_reset(uid, token, new_password)
+        
+        if success:
+            return Response({"message": "Senha redefinida com sucesso."}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "Token inválido ou expirado."}, status=status.HTTP_400_BAD_REQUEST)
