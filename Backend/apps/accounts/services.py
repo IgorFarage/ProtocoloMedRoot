@@ -162,7 +162,7 @@ class BitrixService:
             return None
 
     @staticmethod
-    def prepare_deal_payment(user: Any, products_list: List[Dict], plan_title: str, total_amount: float, answers: Optional[Dict] = None, payment_data: Optional[Dict] = None) -> Optional[str]:
+    def prepare_deal_payment(user: Any, products_list: List[Dict], plan_title: str, total_amount: float, answers: Optional[Dict] = None, payment_data: Optional[Dict] = None, coupon_code: Optional[str] = None) -> Optional[str]:
         """
         Cria ou atualiza Deal.
         CORREÇÃO CRÍTICA: Busca também Deals em 'WON' (Ganhos), evitando pegar Deals antigos (34) em vez do atual (448).
@@ -227,6 +227,10 @@ class BitrixService:
             }
             if answers_json_string: 
                 fields_to_save[BitrixConfig.DEAL_FIELDS["ANSWERS_JSON"]] = answers_json_string
+            
+            # [COUPON MAPPING]
+            if coupon_code:
+                fields_to_save["UF_CRM_1769706209"] = coupon_code
             
             # 4. Dados de Pagamento (Sem mover Stage)
             if payment_data:

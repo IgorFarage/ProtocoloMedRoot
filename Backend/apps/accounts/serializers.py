@@ -3,6 +3,9 @@ from .models import User, UserQuestionnaire
 from django.db import transaction
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .services import BitrixService
+import logging
+
+logger = logging.getLogger(__name__)
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
 
@@ -27,7 +30,7 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
             self.user.refresh_from_db()
         except Exception as e:
             # Não bloquear login se falhar sync
-            print(f"Erro sync Bitrix login: {e}")
+            logger.warning(f"Erro sync Bitrix login: {e}")
 
         data['user'] = {
             'id': self.user.id,
@@ -85,7 +88,7 @@ class RegisterSerializer(serializers.ModelSerializer):
                 )
                 
                 # 3. Integração Bitrix (Sua lógica original preservada)
-                print(f"🔄 Tentando registrar no Bitrix para o user ID: {user.id}")
+                logger.info(f"🔄 Tentando registrar no Bitrix para o user ID: {user.id}")
                 
                 try:
                     bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
@@ -93,15 +96,15 @@ class RegisterSerializer(serializers.ModelSerializer):
                     if bitrix_id:
                         user.id_bitrix = str(bitrix_id)
                         user.save(update_fields=['id_bitrix'])
-                        print(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
+                        logger.info(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
                     else:
-                        print("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
+                        logger.warning("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
                 except Exception as e:
-                    print(f"⚠️ Erro não fatal na integração com Bitrix: {e}")
+                    logger.warning(f"⚠️ Erro não fatal na integração com Bitrix: {e}")
             
             else:
                 # Caso opcional: Se quiser criar Lead no Bitrix apenas com Nome/Email mesmo sem respostas
                 # você pode colocar uma lógica aqui. Por enquanto, deixei passando direto para não dar erro.
-                print(f"ℹ️ Usuário {user.id} criado sem dados de questionário inicial.")
+                logger.info(f"ℹ️ Usuário {user.id} criado sem dados de questionário inicial.")
             
         return user

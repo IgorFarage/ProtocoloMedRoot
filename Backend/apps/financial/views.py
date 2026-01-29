@@ -69,43 +69,20 @@ class CreateCheckoutView(APIView):
             return Response({"error": "Erro interno."}, status=500)
 
 
-# --- VIEW 2: PROCESSAMENTO ISOLADO ---
-class ProcessTransparentPaymentView(APIView):
-    permission_classes = [AllowAny] 
-    def post(self, request):
-        try:
-            payment_data = request.data
-            if not payment_data.get("token") and payment_data.get("payment_method_id") != "pix":
-                return Response({"error": "Token obrigatório."}, status=400)
-            
-            financial_service = FinancialService()
-            payload = {
-                "transaction_amount": float(payment_data.get("transaction_amount", 0)),
-                "token": payment_data.get("token"),
-                "description": payment_data.get("description", "Compra"),
-                "installments": int(payment_data.get("installments", 1)),
-                "payment_method_id": payment_data.get("payment_method_id"),
-                "payer": payment_data.get("payer"),
-                "external_reference": payment_data.get("external_reference")
-            }
-            if payload["payment_method_id"] == "pix":
-                payload.pop("token", None)
-                payload.pop("installments", None)
-
-            payment_response = financial_service.process_direct_payment(payload)
-            if payment_response: return Response(payment_response, status=200) 
-            return Response({"error": "Erro Gateway."}, status=400)
-        except Exception as e: 
-            logger.exception("Error processing transparent payment")
-            return Response({"error": str(e)}, status=500)
-
-
 # --- VIEW 3: WEBHOOK ---
 class WebhookView(APIView):
     permission_classes = [AllowAny]
     def post(self, request):
+        import os
+        allowed_token = os.getenv('ASAAS_WEBHOOK_ACCESS_TOKEN')
+        incoming_token = request.headers.get('asaas-access-token')
+
+        if allowed_token:
+            if not incoming_token or incoming_token != allowed_token:
+                logger.warning(f"⛔ Webhook bloqueado: Token inválido ou ausente. (Recebido: {incoming_token})")
+                return Response({"error": "Forbidden"}, status=403)
+        
         data = request.data
-        topic = request.query_params.get("topic") or data.get("type")
         
         # --- [HANDLER] ASAAS WEBHOOK ---
         # Asaas payload typically has "event" (e.g., PAYMENT_CONFIRMED) and "payment" object
@@ -127,9 +104,9 @@ class WebhookView(APIView):
                 transaction = Transaction.objects.filter(asaas_payment_id=payment_id).first()
                 
             if not transaction and subscription_id:
-                 # Se for renovação de assinatura, pode não ter transação criada ainda?
-                 # Por enquanto focamos em atualizar status de existente
-                 transaction = Transaction.objects.filter(asaas_subscription_id=subscription_id).order_by('-created_at').first()
+                    # Se for renovação de assinatura, pode não ter transação criada ainda?
+                    # Por enquanto focamos em atualizar status de existente
+                    transaction = Transaction.objects.filter(asaas_subscription_id=subscription_id).order_by('-created_at').first()
 
             if transaction:
                 # 2. Mapear Status (Centralizado)
@@ -196,109 +173,7 @@ class WebhookView(APIView):
 
             return Response({"status": "received"}, status=200)
 
-        # --- [HANDLER] MERCADO PAGO LEGACY ---
-        mp_id = request.query_params.get("id") or data.get("data", {}).get("id")
-        if topic == "payment" and mp_id:
-            try:
-                financial_service = FinancialService()
-                payment_info = financial_service.get_payment_info(mp_id)
-                if payment_info:
-                    ext_ref = payment_info.get("external_reference")
-                    status = payment_info.get("status")
-                    transaction = Transaction.objects.filter(external_reference=ext_ref).first()
-                    if transaction:
-                        if status == "approved":
-                            transaction.status = Transaction.Status.APPROVED
-                            transaction.save() # Salva antes para garantir
-
-                            # [NOVO] Ativa Assinatura/Plano
-                            try:
-                                SubscriptionService.activate_subscription_from_transaction(transaction)
-                                logger.info(f"✅ [Webhook-MP] Subscription activated for user {transaction.user.email}")
-                            except Exception as sub_err:
-                                logger.error(f"❌ [Webhook-MP] Subscription Activation Failed: {sub_err}")
-
-                            # [NOVO] Sincroniza com Bitrix (se falhou antes)
-                            if transaction.bitrix_sync_status != 'synced' and BitrixService:
-                                try:
-                                    logger.info("🔄 [Webhook-MP] Retrying Bitrix Sync...")
-                                    
-                                    # 1. Reconstrói lista de produtos do Metadata
-                                    products_list = []
-                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
-                                        products_list = transaction.mp_metadata.get('original_products', [])
-                                    
-                                    # Fallback: Se não tiver no metadata (legado), tenta gerar do questionário
-                                    if not products_list:
-                                        from apps.accounts.models import UserQuestionnaire
-                                        last_q = UserQuestionnaire.objects.filter(user=transaction.user).order_by('-created_at').first()
-                                        if last_q:
-                                            protocol = BitrixService.generate_protocol(last_q.answers)
-                                            products_list = protocol.get('products', [])
-
-                                    # 2. Prepara dados de pagamento para o Bitrix
-                                    payment_info_bitrix = {
-                                        "id": str(mp_id),
-                                        "status": "approved", # Se entrou aqui, é porque foi aprovado
-                                        "date_created": datetime.now().isoformat()
-                                    }
-
-                                    # 3. Chama o serviço
-                                    deal_id = BitrixService.prepare_deal_payment(
-                                        user=transaction.user,
-                                        products_list=products_list,
-                                        plan_title=f"ProtocoloMed - {transaction.plan_type}",
-                                        total_amount=float(transaction.amount),
-                                        answers=None, # Não reenviamos respostas aqui
-                                        payment_data=payment_info_bitrix
-                                    )
-
-                                    if deal_id:
-                                        transaction.bitrix_deal_id = str(deal_id)
-                                        transaction.bitrix_sync_status = 'synced'
-                                        transaction.save()
-                                        logger.info(f"✅ [Webhook-MP] Bitrix Sync Success! Deal: {deal_id}")
-                                    else:
-                                        logger.warning("⚠️ [Webhook-MP] Bitrix Sync returned no Deal ID.")
-
-                                except Exception as bitrix_err:
-                                     logger.error(f"❌ [Webhook-MP] Bitrix Sync Retry Failed: {bitrix_err}")
-
-                        elif status in ["pending", "in_process"]:
-                            if transaction.bitrix_sync_status != 'synced' and BitrixService:
-                                try:
-                                    payment_info_bitrix = {
-                                        "id": str(mp_id),
-                                        "status": status,
-                                        "date_created": datetime.now().isoformat()
-                                    }
-                                    products_list = []
-                                    if transaction.mp_metadata and isinstance(transaction.mp_metadata, dict):
-                                        products_list = transaction.mp_metadata.get('original_products', [])
-
-                                    deal_id = BitrixService.prepare_deal_payment(
-                                        user=transaction.user,
-                                        products_list=products_list,
-                                        plan_title=f"ProtocoloMed - {transaction.plan_type}",
-                                        total_amount=float(transaction.amount),
-                                        answers=None,
-                                        payment_data=payment_info_bitrix
-                                    )
-                                    if deal_id:
-                                        transaction.bitrix_deal_id = str(deal_id)
-                                        transaction.bitrix_sync_status = 'synced'
-                                        transaction.save()
-                                except Exception as e:
-                                    logger.error(f"❌ [Webhook-MP] Pending Sync Failed: {e}")
-
-                        elif status == "rejected": 
-                            transaction.status = Transaction.Status.REJECTED
-                            transaction.save()
-                        
-                        transaction.mercado_pago_id = str(mp_id)
-                        transaction.save()
-            except Exception as e: logger.error(f"Webhook Error: {e}")
-        return Response({"status": "received"}, status=200)
+        return Response({"status": "ignored"}, status=200)
 
 
 # --- VIEW 4: COMPRA COMPLETA (REFACTORED) ---
@@ -477,6 +352,12 @@ class CompletePurchaseView(APIView):
                  # Decisão: Prosseguir sem desconto ou bloquear? 
                  # Melhor prosseguir avisando, mas o cliente já viu no front. Se mudou algo, cobramos o cheio.
 
+        # 4. IMPLEMENTAÇÃO DE PISO (ASAAS MÍNIMO R$ 5,00)
+        # O Asaas rejeita transações menores que R$ 5,00.
+        if 0 < total_price < 5.00:
+             logger.warning(f"⚠️ Valor original R$ {total_price} insuficiente para Asaas (Min R$ 5,00).")
+             return Response({"error": "O valor mínimo para transação é R$ 5,00. Adicione mais itens ao carrinho."}, status=400)
+
         # 4. Integrate with Asaas
         asaas_service = AsaasService()
         payment_result = None
@@ -625,7 +506,7 @@ class CompletePurchaseView(APIView):
                     bitrix_payment_result = payment_result.copy()
                     bitrix_payment_result['id'] = integ_id
                     
-                    deal_id = self._handle_bitrix_integration(user, validated_data, bitrix_payment_result, plan_id, total_price)
+                    deal_id = self._handle_bitrix_integration(user, validated_data, bitrix_payment_result, plan_id, total_price, coupon_code)
                     if deal_id: bitrix_success = True
                 except Exception as e:
                     logger.error(f"⚠️ Bitrix Sync Failed: {e}")
@@ -744,7 +625,7 @@ class CompletePurchaseView(APIView):
              return register_serializer.save()
         raise ValueError("Invalid User Data for Creation")
 
-    def _handle_bitrix_integration(self, user, validated_data, payment_result, plan_id, total_price):
+    def _handle_bitrix_integration(self, user, validated_data, payment_result, plan_id, total_price, coupon_code=None):
         """
         Tenta realizar a integração completa. Retorna o Deal ID se sucesso, ou lança exceção.
         """
@@ -793,5 +674,6 @@ class CompletePurchaseView(APIView):
             f"ProtocoloMed - {plan_id}", 
             total_price, 
             validated_data.get('questionnaire_data'), 
-            payment_data=payment_info_bitrix
+            payment_data=payment_info_bitrix,
+            coupon_code=coupon_code
         )

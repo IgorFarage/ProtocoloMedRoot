@@ -1,5 +1,6 @@
 # Backend/apps/accounts/views.py
 
+import logging
 from rest_framework import status, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -12,6 +13,8 @@ from .serializers import (
     UserQuestionnaireSerializer
 )
 from .services import BitrixService
+
+logger = logging.getLogger(__name__)
 
 # 1. View de Login Customizada (Envia nome e role no token)
 class MyTokenObtainPairView(TokenObtainPairView):
@@ -28,21 +31,21 @@ class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
 
     def post(self, request, *args, **kwargs):
-        print("📝 Iniciando Registro de Usuário...")
+        logger.info("📝 Iniciando Registro de Usuário...")
         serializer = self.get_serializer(data=request.data)
         
         if serializer.is_valid():
             try:
                 # 1. Salva no Banco Local
                 user = serializer.save()
-                print(f"✅ Usuário Local Criado: {user.email}")
+                logger.info(f"✅ Usuário Local Criado: {user.email}")
 
                 # 2. Envia para o Bitrix
                 try:
                     answers = request.data.get('questionnaire_data', {})
                     address_data = request.data.get('address_data', {}) # <--- CAPTURA O ENDEREÇO
                     
-                    print("🚀 Enviando dados (Lead + Endereço) para o Bitrix...")
+                    logger.info("🚀 Enviando dados (Lead + Endereço) para o Bitrix...")
                     
                     # Passamos o endereço para a função create_lead
                     bitrix_id = BitrixService.create_lead(user, answers, address_data)
@@ -50,10 +53,10 @@ class RegisterView(generics.CreateAPIView):
                     if bitrix_id:
                         user.id_bitrix = str(bitrix_id)
                         user.save()
-                        print(f"✅ Bitrix Vinculado! ID: {bitrix_id}")
+                        logger.info(f"✅ Bitrix Vinculado! ID: {bitrix_id}")
                     
                 except Exception as e_bitrix:
-                    print(f"❌ Erro Bitrix: {e_bitrix}")
+                    logger.error(f"❌ Erro Bitrix: {e_bitrix}")
 
                 return Response({
                     "message": "Sucesso",
@@ -61,6 +64,7 @@ class RegisterView(generics.CreateAPIView):
                 }, status=status.HTTP_201_CREATED)
 
             except Exception as e:
+                logger.exception("Erro interno no registro")
                 return Response({"erro_interno": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -111,7 +115,7 @@ class SubscribeView(APIView):
             )
         except Exception as e:
             # Logar o erro real no console do servidor para debug
-            print(f"Erro no Checkout: {e}")
+            logger.error(f"Erro no Checkout: {e}")
             return Response(
                 {"error": "Erro ao processar assinatura."}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -136,7 +140,7 @@ class UpdateAddressView(APIView):
         user = request.user
         address_data = request.data.get('address_data')
 
-        print(f"📍 Atualizando endereço para usuário {user.email}...")
+        logger.info(f"📍 Atualizando endereço para usuário {user.email}...")
 
         if not address_data:
             return Response({"error": "Dados de endereço obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
@@ -146,7 +150,7 @@ class UpdateAddressView(APIView):
             if user.id_bitrix:
                 BitrixService.update_contact_address(user.id_bitrix, address_data)
             else:
-                print("⚠️ Usuário sem ID Bitrix, endereço não sincronizado.")
+                logger.warning("⚠️ Usuário sem ID Bitrix, endereço não sincronizado.")
 
             # 2. Salva localmente (Cache/Persistência)
             user.cep = address_data.get('cep')
@@ -157,7 +161,7 @@ class UpdateAddressView(APIView):
             user.state = address_data.get('state')
             user.complement = address_data.get('complement')
             user.save()
-            print(f"✅ Endereço salvo localmente para {user.email}")
+            logger.info(f"✅ Endereço salvo localmente para {user.email}")
             
             # 3. Limpar Cache do Perfil
             from django.core.cache import cache
@@ -166,7 +170,7 @@ class UpdateAddressView(APIView):
             return Response({"message": "Endereço atualizado com sucesso."}, status=status.HTTP_200_OK)
 
         except Exception as e:
-            print(f"❌ Erro UpdateAddressView: {e}")
+            logger.error(f"❌ Erro UpdateAddressView: {e}")
             return Response({"error": "Erro interno."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class UserProfileView(APIView):
@@ -237,12 +241,12 @@ class UserProfileView(APIView):
 
             if updated_local:
                 user.save()
-                print(f"🔧 Auto-healing: Dados de Contato recuperados do Bitrix p/ {user.email}")
+                logger.info(f"🔧 Auto-healing: Dados de Contato recuperados do Bitrix p/ {user.email}")
 
             # Mescla para o frontend (Prioriza Bitrix se vier algo novo, mas local já está no default)
             profile_data.update(bitrix_data) 
         except Exception as e:
-            print(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
+            logger.warning(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
             # Não falha o request, apenas vai sem os dados extras
 
         pending_tx = Transaction.objects.filter(
@@ -301,7 +305,7 @@ class UserProtocolView(APIView):
                      return Response(suggested, status=status.HTTP_200_OK)
 
              error_msg = result.get('error') if result else 'Erro desconhecido'
-             print(f"⚠️ UserProtocolView Warning: {error_msg} for user {user.email}")
+             logger.warning(f"⚠️ UserProtocolView Warning: {error_msg} for user {user.email}")
              return Response(result or {"error": "Erro ao buscar protocolo"}, status=status.HTTP_400_BAD_REQUEST)
 
         # 3. Salva no Cache por 10 minutos (600s)
@@ -338,7 +342,7 @@ class UserUpdateView(APIView):
                 if user.id_bitrix:
                     # TODO: Implementar update_contact_data no BitrixService se necessário
                     # Por enquanto apenas logamos, pois o update_address foca no endereço
-                    print(f"ℹ️ Dados locais atualizados para {user.email}. Bitrix sync pendente.")
+                    logger.info(f"ℹ️ Dados locais atualizados para {user.email}. Bitrix sync pendente.")
             except:
                 pass
 
@@ -364,7 +368,7 @@ class BitrixWebhookView(APIView):
         # Se não configurado secret, loga warning mas (por enquanto) processa ou rejeita? 
         # R: Rejeita (Forbidden) se secret existir. Se não existir, é perigoso deixar aberto.
         if secret and incoming_token != secret:
-            print(f"⛔ Tentativa de Webhook com Token Inválido: {incoming_token}")
+            logger.warning(f"⛔ Tentativa de Webhook com Token Inválido: {incoming_token}")
             return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
         # 2. Processamento Assíncrono (Idealmente) ou Rápido
@@ -374,7 +378,7 @@ class BitrixWebhookView(APIView):
             BitrixService.process_incoming_webhook(request.data)
         except Exception as e:
             # Nunca retornar erro 500 para o Bitrix, senão ele desativa o webhook
-            print(f"❌ Erro processando Webhook: {e}")
+            logger.error(f"❌ Erro processando Webhook: {e}")
         
         return Response({"status": "received"}, status=status.HTTP_200_OK)
 

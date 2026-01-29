@@ -65,16 +65,15 @@ class AsaasService:
                  safe_payload["creditCardHolderInfo"] = "***SANITIZED***"
 
         logger.info(f"🚀 Asaas Request [{method}] {url} - Payload: {json.dumps(safe_payload)}")
-        # Debugging the auth/redirect issue
-        masked_key = self.api_key[:10] + "..." if self.api_key else "None"
-        print(f"DEBUG: Calling {url} | Key starts with: {masked_key}")
+        # Debugging the auth/redirect issue (masked key logging kept as debug if vital, else removed)
+        # masked_key = self.api_key[:10] + "..." if self.api_key else "None"
+        # logger.debug(f"DEBUG: Calling {url} | Key starts with: {masked_key}")
 
         try:
             # [FIX] allow_redirects=False to see if we are being redirected to login
             response = requests.request(method, url, headers=self.headers, json=payload, timeout=30, allow_redirects=False)
             
             if response.is_redirect:
-                print(f"DEBUG: Redirected to {response.headers.get('Location')}")
                 logger.error(f"❌ Asaas Redirects to: {response.headers.get('Location')}")
                 return {"error": True, "details": "Redirected", "location": response.headers.get('Location')}
 

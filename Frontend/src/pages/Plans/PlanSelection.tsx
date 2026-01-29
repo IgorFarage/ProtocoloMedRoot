@@ -26,12 +26,12 @@ const PlanSelection = () => {
     // --- LÓGICA DE RECUPERAÇÃO DE DADOS (Blindagem) ---
     const getStateOrLocal = (key: string) => {
         if (location.state && location.state[key] !== undefined) {
-            console.log(`📍 [PlanSelection] Found state for ${key}:`, location.state[key]);
+
             return location.state[key];
         }
         const local = localStorage.getItem(`checkout_${key}`);
         if (local) {
-            console.log(`💾 [PlanSelection] Found localStorage for ${key}:`, local);
+
             try {
                 return JSON.parse(local);
             } catch {
@@ -75,10 +75,7 @@ const PlanSelection = () => {
 
     // Debug no Console do Navegador
     useEffect(() => {
-        console.log("📍 [DEBUG FRONTEND] Dados recuperados:");
-        console.log(" - Is Upgrade:", isUpgrade);
-        console.log(" - Products:", products ? products.length : 0);
-        console.log(" - Answers:", answers ? Object.keys(answers).length : 0);
+
 
         if (!answers || Object.keys(answers).length === 0) {
             console.warn("⚠️ ALERTA: Respostas vazias! O JSON não será gerado.");

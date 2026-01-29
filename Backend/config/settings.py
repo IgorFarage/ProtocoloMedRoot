@@ -36,15 +36,45 @@ load_dotenv(BASE_DIR / '.env')
 
 
 # ==============================================================================
-# 2. SEGURANÇA E CONEXÃO
+# 2. SEGURANÇA E CONEXÃO (DYNAMIC ENVIRONMENT)
 # ==============================================================================
+
+# Definição do Ambiente (Padrão: 'development')
+ENVIRONMENT = os.getenv('DJANGO_ENV', 'development')
+
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG') == 'True'
+if ENVIRONMENT == 'production':
+    # --- PROD SETTINGS ---
+    print("🔒 Loading Production Settings")
+    DEBUG = False
+    
+    # Hosts e CORS restritos (Lê do .env)
+    ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
+    CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+    CORS_ALLOW_ALL_ORIGINS = False
+    
+    # Security / SSL (PCI-DSS Compliance)
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000 # 1 Ano
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
-ALLOWED_HOSTS = ['*']
+else:
+    # --- DEV SETTINGS ---
+    print("🚧 Loading Development Settings")
+    DEBUG = True
+    ALLOWED_HOSTS = ['*']
+    CORS_ALLOW_ALL_ORIGINS = True
+    
+    # Disable SSL for Localhost
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
 
 
 # Application definition
