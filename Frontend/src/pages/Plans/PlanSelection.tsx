@@ -501,7 +501,29 @@ const PlanSelection = () => {
 
         } catch (error: any) {
             console.error(error);
-            const msg = error.response?.data?.detail || error.response?.data?.error || error.message;
+            let msg = "Erro desconhecido.";
+            if (error.response?.data) {
+                const data = error.response.data;
+                if (typeof data === 'string') {
+                    msg = data;
+                } else if (data.detail) {
+                    msg = data.detail;
+                } else if (data.error) {
+                    msg = data.error;
+                } else {
+                    // Tenta extrair mensagens de validação (ex: {email: ["Erro..."]})
+                    const parts = [];
+                    for (const [key, value] of Object.entries(data)) {
+                        const fieldName = key.charAt(0).toUpperCase() + key.slice(1);
+                        const errorText = Array.isArray(value) ? value.join(" ") : String(value);
+                        parts.push(`${fieldName}: ${errorText}`);
+                    }
+                    if (parts.length > 0) msg = parts.join(" | ");
+                    else msg = error.message;
+                }
+            } else {
+                msg = error.message;
+            }
             navigate("/pagamento/erro", {
                 state: {
                     message: msg,
