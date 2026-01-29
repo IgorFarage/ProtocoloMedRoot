@@ -371,8 +371,27 @@ const PlanSelection = () => {
 
         } catch (error: any) {
             console.error(error);
-            const msg = error.response?.data?.email ? "E-mail já cadastrado." : "Erro ao criar conta.";
-            toast({ variant: "destructive", title: "Erro", description: msg });
+            let msg = "Erro ao criar conta.";
+
+            if (error.response?.data) {
+                const data = error.response.data;
+                if (typeof data === 'string') {
+                    msg = data;
+                } else {
+                    const parts = [];
+                    for (const [key, value] of Object.entries(data)) {
+                        // Ignora campos técnicos se necessário, ou formata
+                        const fieldName = key === 'detail' || key === 'error' ? '' : key.charAt(0).toUpperCase() + key.slice(1) + ': ';
+                        const errorText = Array.isArray(value) ? value.join(" ") : String(value);
+                        parts.push(`${fieldName}${errorText}`);
+                    }
+                    if (parts.length > 0) msg = parts.join(" | ");
+                }
+            } else if (error.message) {
+                msg = error.message;
+            }
+
+            toast({ variant: "destructive", title: "Erro no Cadastro", description: msg });
         } finally {
             setLoading(false);
         }
