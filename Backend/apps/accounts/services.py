@@ -338,8 +338,8 @@ class BitrixService:
                         "category_id": p.get("SECTION_ID")
                     })
             
-            # Salva no Cache por 1 hora
-            cache.set(cache_key, catalog, 3600)
+            # Salva no Cache por 5 minutos (Era 1h)
+            cache.set(cache_key, catalog, 300)
             return catalog
         except Exception: return []
 
@@ -458,7 +458,7 @@ class BitrixService:
             if prod and 'result' in prod:
                 p = prod['result']
                 data = {"id": str(p.get("ID")), "name": p.get("NAME"), "price": float(p.get("PRICE") or 0)}
-                cache.set(cache_key, data, 3600)
+                cache.set(cache_key, data, 300)
                 return data
         except: pass
         return None
