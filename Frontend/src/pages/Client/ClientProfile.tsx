@@ -2,9 +2,28 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { useToast } from "@/hooks/use-toast";
-import { User, Mail, Phone, MapPin, Save, CreditCard, Building2, UserCircle, Wallet, Loader2, Edit2, X, Camera, Upload } from "lucide-react";
+import {
+    Card, CardContent, CardDescription, CardHeader, CardTitle,
+    CardFooter
+} from "@/components/ui/card";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from "@/components/ui/dialog"
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select"
+import { useToast } from "@/components/ui/use-toast";
+import { User as UserIcon, Mail, Phone, MapPin, Save, CreditCard, UserCircle, Wallet, Loader2, Edit2, X, Camera, Upload, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { useClientData } from "@/hooks/useClientData"; // [NOVO]
 import api from "@/lib/api";
@@ -17,6 +36,11 @@ const ClientProfile = () => {
     const [activeSection, setActiveSection] = useState<'personal' | 'payment'>('personal');
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+
+    // States for Cancellation
+    const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+    const [cancelReason, setCancelReason] = useState("");
+    const [isCanceling, setIsCanceling] = useState(false);
 
     const [formData, setFormData] = useState({
         name: "",
@@ -45,18 +69,42 @@ const ClientProfile = () => {
                 zip: profile.address?.zip || "",
                 country: profile.address?.country || "Brasil"
             }));
+
+            if (profile.payment_info?.has_card) {
+                setPaymentData(prev => ({
+                    ...prev,
+                    cardName: profile.payment_info!.cardName || "Cartão Salvo",
+                    cardNumber: profile.payment_info!.cardNumber || "**** **** **** ****"
+                }));
+            }
         }
     }, [profile, user]);
 
     const [paymentData, setPaymentData] = useState({
         cardName: user?.full_name || "",
-        cardNumber: "**** **** **** 1234",
-        expiry: "12/28",
-        cvv: "***",
-        bank: "Banco do Brasil",
-        agency: "1234-5",
-        account: "12345-6"
+        cardNumber: "**** **** **** 1234"
     });
+
+    const handleDeleteSubscription = async () => {
+        setIsCanceling(true);
+        try {
+            await api.post('/financial/cancel-subscription/', { reason: cancelReason });
+            toast({
+                title: "Assinatura Cancelada",
+                description: "Seu cancelamento foi agendado com sucesso.",
+            });
+            setIsCancelModalOpen(false);
+            window.location.reload();
+        } catch (error) {
+            toast({
+                variant: "destructive",
+                title: "Erro",
+                description: "Não foi possível cancelar sua assinatura. Tente novamente.",
+            });
+        } finally {
+            setIsCanceling(false);
+        }
+    };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
@@ -195,7 +243,7 @@ const ClientProfile = () => {
                                         <div className="space-y-2">
                                             <Label htmlFor="name">Nome Completo</Label>
                                             <div className="relative">
-                                                <User className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                <UserIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                                                 <Input
                                                     id="name"
                                                     name="name"
@@ -335,9 +383,16 @@ const ClientProfile = () => {
                                 <CardContent className="space-y-8">
                                     {/* Cartão de Crédito */}
                                     <div className="space-y-4">
-                                        <h3 className="text-lg font-medium flex items-center gap-2">
-                                            <CreditCard className="h-5 w-5" /> Cartão de Crédito
-                                        </h3>
+                                        <div className="flex items-center gap-2 justify-between">
+                                            <h3 className="text-lg font-medium flex items-center gap-2">
+                                                <CreditCard className="h-5 w-5" /> Cartão de Crédito
+                                            </h3>
+                                            {profile?.payment_info?.brand && (
+                                                <span className="text-xs font-bold uppercase bg-primary/10 text-primary px-2 py-1 rounded">
+                                                    {profile.payment_info.brand}
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="grid gap-4 border p-4 rounded-lg bg-gray-50/30">
                                             <div className="space-y-2">
                                                 <Label>Nome no Cartão</Label>
@@ -347,51 +402,118 @@ const ClientProfile = () => {
                                                 <Label>Número</Label>
                                                 <Input name="cardNumber" value={paymentData.cardNumber} onChange={handlePaymentChange} />
                                             </div>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-2">
-                                                    <Label>Validade</Label>
-                                                    <Input name="expiry" value={paymentData.expiry} onChange={handlePaymentChange} />
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <Label>CVV</Label>
-                                                    <Input name="cvv" type="password" value={paymentData.cvv} onChange={handlePaymentChange} />
-                                                </div>
-                                            </div>
                                         </div>
                                     </div>
-                                    {/* Dados Bancários */}
-                                    <div className="space-y-4">
-                                        <h3 className="text-lg font-medium flex items-center gap-2">
-                                            <Building2 className="h-5 w-5" /> Dados Bancários
-                                        </h3>
-                                        <div className="grid gap-4 border p-4 rounded-lg bg-gray-50/30">
-                                            <div className="space-y-2">
-                                                <Label>Banco</Label>
-                                                <Input name="bank" value={paymentData.bank} onChange={handlePaymentChange} />
+
+                                    {/* Detalhes do Plano */}
+                                    {profile?.plan_info && (
+                                        <div className="space-y-4 pt-4 border-t">
+                                            <h3 className="text-lg font-medium flex items-center gap-2">
+                                                <Wallet className="h-5 w-5" /> Detalhes do Plano
+                                            </h3>
+                                            <div className="bg-gray-50/50 rounded-lg p-4 border space-y-3">
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-sm text-gray-500">Plano Atual</span>
+                                                    <span className="font-medium">{profile.plan_info.name}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-sm text-gray-500">Ciclo</span>
+                                                    <span className="font-medium">{profile.plan_info.cycle}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-sm text-gray-500">Valor</span>
+                                                    <span className="font-medium">{profile.plan_info.price}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-sm text-gray-500">Tipo</span>
+                                                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                                        {profile.plan_info.is_subscription ? "Assinatura Recorrente" : "Pagamento Único"}
+                                                    </span>
+                                                </div>
                                             </div>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-2">
-                                                    <Label>Agência</Label>
-                                                    <Input name="agency" value={paymentData.agency} onChange={handlePaymentChange} />
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <Label>Conta</Label>
-                                                    <Input name="account" value={paymentData.account} onChange={handlePaymentChange} />
-                                                </div>
+
+                                        </div>
+                                    )}
+
+                                    {/* Cancel Button Block */}
+                                    {profile?.plan_info?.is_subscription &&
+                                        profile.plan_info.subscription_status !== 'canceled' &&
+                                        profile.plan_info.subscription_status !== 'grace_period' && (
+                                            <div className="flex justify-end pt-2">
+                                                <Button
+                                                    variant="destructive"
+                                                    type="button"
+                                                    className="w-full sm:w-auto"
+                                                    onClick={() => setIsCancelModalOpen(true)}
+                                                >
+                                                    Cancelar Assinatura
+                                                </Button>
+                                            </div>
+                                        )}
+
+                                    {/* Grace Period Warning */}
+                                    {profile?.plan_info?.subscription_status === 'grace_period' && (
+                                        <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-3">
+                                            <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                                            <div>
+                                                <h4 className="font-medium text-yellow-800">Assinatura Cancelada</h4>
+                                                <p className="text-sm text-yellow-700 mt-1">
+                                                    {profile.plan_info.warning || "Seu acesso será revogado em breve."}
+                                                </p>
                                             </div>
                                         </div>
-                                    </div>
+                                    )}
+
                                 </CardContent>
-                                <CardFooter className="flex justify-end bg-gray-50/50 p-4 rounded-b-lg">
-                                    <Button type="submit">
-                                        <Save className="mr-2 h-4 w-4" /> Salvar Pagamento
-                                    </Button>
-                                </CardFooter>
+                                {/* Botão SALVAR PAGAMENTO Removido */}
                             </form>
                         </Card>
                     )}
-
                 </div>
+
+                {/* MODAL DE CANCELAMENTO */}
+                <Dialog open={isCancelModalOpen} onOpenChange={setIsCancelModalOpen}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Tem certeza que deseja cancelar?</DialogTitle>
+                            <DialogDescription>
+                                Ao cancelar, você perderá acesso ao suporte médico contínuo e aos ajustes do seu protocolo.
+                                <br /><br />
+                                <strong>Seu acesso permanecerá ativo até o fim do período pago.</strong>
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        <div className="space-y-4 py-4">
+                            <div className="space-y-2">
+                                <Label>Por qual motivo você está nos deixando?</Label>
+                                <Select onValueChange={setCancelReason} value={cancelReason}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Selecione um motivo" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="financeiro">O valor está muito alto</SelectItem>
+                                        <SelectItem value="resultado">Já atingi os resultados esperados</SelectItem>
+                                        <SelectItem value="suporte">Não gostei do atendimento</SelectItem>
+                                        <SelectItem value="outros">Outros motivos</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setIsCancelModalOpen(false)}>
+                                Prefiro Continuar
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                onClick={handleDeleteSubscription}
+                                disabled={!cancelReason || isCanceling}
+                            >
+                                {isCanceling ? "Processando..." : "Confirmar Cancelamento"}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
             </div>
         </div>
     );

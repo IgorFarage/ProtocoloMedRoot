@@ -249,6 +249,65 @@ class UserProfileView(APIView):
             logger.warning(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
             # Não falha o request, apenas vai sem os dados extras
 
+        # [NOVO] Payment Info (Last Approved Credit Card)
+        last_cc_tx = Transaction.objects.filter(
+            user=user,
+            payment_type=Transaction.PaymentType.CREDIT_CARD,
+            status=Transaction.Status.APPROVED
+        ).order_by('-created_at').first()
+
+        payment_info = {
+            "has_card": False,
+            "cardName": "",
+            "cardNumber": "",
+            "brand": "",
+            "expiry": "" 
+        }
+
+        if last_cc_tx and last_cc_tx.mp_metadata:
+            # Asaas Response is stored in payment_response
+            resp = last_cc_tx.mp_metadata.get('payment_response', {})
+            # Try to get creditCard object (common in Subscription and Payment response)
+            cc_data = resp.get('creditCard')
+            
+            if cc_data:
+                payment_info = {
+                    "has_card": True,
+                    "cardName": "Cartão Salvo", # Asaas returns holderName? Often not in response, but let's check input
+                    "cardNumber": f"**** **** **** {cc_data.get('creditCardNumber', '****')}",
+                    "brand": cc_data.get('creditCardBrand', 'Desconhecido'),
+                    "expiry": "**/**" # Asaas usually masks this
+                }
+        
+        profile_data['payment_info'] = payment_info
+
+        # [NOVO] Plan Info for UI
+        # Try to get from last Approved Transaction or User
+        plan_name = user.current_plan.capitalize() if user.current_plan else "Nenhum"
+        
+        # Encontra última transação aprovada para saber ciclo/preço
+        last_success_tx = Transaction.objects.filter(
+            user=user, 
+            status=Transaction.Status.APPROVED
+        ).order_by('-created_at').first()
+
+        plan_info = {
+            "name": f"Plano {plan_name}",
+            "cycle": last_success_tx.get_cycle_display() if last_success_tx else "Mensal",
+            "price": f"R$ {last_success_tx.paid_amount}" if last_success_tx else "-",
+            "status": "Ativo",
+            "subscription_status": getattr(user, 'subscription_status', 'active'),
+            "access_until": user.access_valid_until.strftime("%d/%m/%Y") if user.access_valid_until else None,
+            "is_subscription": last_success_tx.asaas_subscription_id is not None if last_success_tx else False
+        }
+        
+        # Adjust Display Status for Grace Period
+        if user.subscription_status == 'grace_period':
+             plan_info['status'] = 'Cancelamento Agendado'
+             plan_info['warning'] = f"Seu acesso encerra em {plan_info['access_until']}"
+             
+        profile_data['plan_info'] = plan_info
+
         pending_tx = Transaction.objects.filter(
             user=user, 
             status=Transaction.Status.PENDING
@@ -256,6 +315,7 @@ class UserProfileView(APIView):
 
         bitrix_payment_status = bitrix_status_report.get('payment_status', 'Unknown')
         is_bitrix_pending = bitrix_payment_status in ['Pendente', 'Em análise', 'Em processo']
+
 
         if pending_tx or is_bitrix_pending:
             profile_data['pending_transaction'] = {

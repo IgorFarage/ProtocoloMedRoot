@@ -65,6 +65,27 @@ class User(AbstractBaseUser, PermissionsMixin):
         choices=RoleType.choices, 
         default=RoleType.PATIENT
     )
+    
+    # --- CICLO DE VIDA DA ASSINATURA ---
+    class SubscriptionStatus(models.TextChoices):
+        ACTIVE = 'active', 'Ativo'
+        PAST_DUE = 'past_due', 'Atrasado'
+        CANCELED = 'canceled', 'Cancelado'
+        GRACE_PERIOD = 'grace_period', 'Cancelamento Agendado'
+
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=SubscriptionStatus.choices,
+        default=SubscriptionStatus.ACTIVE
+    )
+    
+    cancel_reason = models.TextField(null=True, blank=True, help_text="Motivo do cancelamento informado pelo usuário")
+    
+    # Data limite do acesso (Grace Period)
+    access_valid_until = models.DateTimeField(null=True, blank=True, help_text="Data até quando o usuário mantém acesso após cancelar")
+    
+    # Data agendada para o 'Ceifador' rodar
+    scheduled_cancellation_date = models.DateTimeField(null=True, blank=True, help_text="Data efetiva para corte do serviço")
 
     # Armazena o protocolo atual (JSON simples para consulta rápida)
     recommended_medications = models.JSONField(default=list, blank=True)

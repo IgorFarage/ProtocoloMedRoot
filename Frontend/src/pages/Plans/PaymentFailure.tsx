@@ -34,8 +34,8 @@ const PaymentFailure = () => {
                     </p>
 
                     {message && (
-                        <div className="bg-red-50 p-4 rounded-md border border-red-100 text-sm text-red-800 font-medium break-words">
-                            {typeof message === 'object' ? JSON.stringify(message) : message}
+                        <div className="bg-red-50 p-4 rounded-md border border-red-100 text-sm text-red-800 font-medium">
+                            {message}
                         </div>
                     )}
 

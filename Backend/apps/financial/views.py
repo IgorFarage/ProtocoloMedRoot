@@ -410,6 +410,16 @@ class CompletePurchaseView(APIView):
              is_subscription_flow = (billing_cycle in ['monthly', 'quarterly']) and (payment_method == 'credit_card')
              
              if is_subscription_flow:
+                 # --- UPGRADE CHECK ---
+                 if user.subscription_status == 'active' and user.current_plan != plan_id and user.current_plan != 'none':
+                      logger.info(f"🔄 Processing Upgrade for {email} ({user.current_plan} -> {plan_id})")
+                      success_upg, msg_upg = asaas_service.upgrade_subscription(user, plan_id, total_price, card_data)
+                      if success_upg:
+                           return Response({"status": "success", "message": msg_upg, "upgrade": True}, status=200)
+                      else:
+                           return Response({"error": f"Falha no Upgrade: {msg_upg}"}, status=400)
+                 # ---------------------
+
                  cycle_months = 3 if billing_cycle == 'quarterly' else 1
                  logger.info(f"🔄 Starting Asaas Subscription Flow ({cycle_months}m) for {email}")
                  
@@ -680,3 +690,23 @@ class CompletePurchaseView(APIView):
             payment_data=payment_info_bitrix,
             coupon_code=coupon_code
         )
+
+# --- VIEW 6: CANCELAMENTO DE ASSINATURA ---
+class CancelSubscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        reason = request.data.get('reason', 'Não informado')
+        
+        # Security Check: User must have a plan to cancel
+        if user.current_plan == 'none' and user.subscription_status != 'active':
+             return Response({"error": "Você não possui uma assinatura ativa."}, status=400)
+
+        service = AsaasService()
+        success, message = service.cancel_subscription(user, reason)
+        
+        if success:
+             return Response({"status": "success", "message": message}, status=200)
+        else:
+             return Response({"error": message}, status=500)

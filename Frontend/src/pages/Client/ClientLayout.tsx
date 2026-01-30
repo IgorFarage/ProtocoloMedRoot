@@ -20,17 +20,18 @@ export default function ClientLayout() {
         );
     }
 
+    const hasActivePlan = profile?.plan && profile.plan !== 'none';
+    const isPlus = profile?.plan === 'plus';
+    const isPending = profile?.pending_transaction?.exists && !hasActivePlan;
+
     const navItems = [
         { label: "Visão Geral", path: "/dashboard", icon: LayoutDashboard },
         { label: "Meu Protocolo", path: "/SeuProtocolo", icon: FileText },
-        { label: "Canal Médico", path: "/agendamento", icon: MessageCircle },
+        // Canal Médico ONLY for Plus
+        ...(isPlus ? [{ label: "Canal Médico", path: "/agendamento", icon: MessageCircle }] : []),
         { label: "Histórico", path: "/historico", icon: Calendar },
         { label: "Minha Conta", path: "/perfil", icon: User },
     ];
-
-    const hasActivePlan = profile?.plan && profile.plan !== 'none';
-    const isPlus = profile?.plan === 'plus';
-    const isPending = profile?.pending_transaction?.exists && !hasActivePlan; // Só mostra pendente se não estiver ativo
 
     return (
         <div className="min-h-screen flex flex-col md:flex-row bg-gray-50/50">

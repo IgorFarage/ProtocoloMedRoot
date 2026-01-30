@@ -24,10 +24,27 @@ export interface UserProfile {
         neighborhood: string;
         country: string;
     };
+    plan_info?: {
+        name: string;
+        cycle: string;
+        price: string;
+        status: string;
+        subscription_status?: string;
+        warning?: string;
+        access_until?: string;
+        is_subscription: boolean;
+    };
     pending_transaction?: {
         exists: boolean;
         order_id?: string;
         payment_method?: string;
+    };
+    payment_info?: {
+        has_card: boolean;
+        cardName: string;
+        cardNumber: string;
+        brand: string;
+        expiry: string;
     };
 }
 

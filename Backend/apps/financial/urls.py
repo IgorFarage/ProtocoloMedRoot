@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import CreateCheckoutView, WebhookView, CompletePurchaseView, PlanPricesView, TransactionStatusView, ValidateCouponView
+from .views import CreateCheckoutView, WebhookView, CompletePurchaseView, PlanPricesView, TransactionStatusView, ValidateCouponView, CancelSubscriptionView
 
 urlpatterns = [
     path('checkout/', CreateCheckoutView.as_view(), name='checkout'),
@@ -9,4 +9,5 @@ urlpatterns = [
     path('purchase/', CompletePurchaseView.as_view(), name='complete_purchase'),
     path('check-status/<str:external_ref>/', TransactionStatusView.as_view(), name='check_transaction_status'),
     path('coupon/validate/', ValidateCouponView.as_view(), name='validate_coupon'),
+    path('cancel-subscription/', CancelSubscriptionView.as_view(), name='cancel_subscription'),
 ]
