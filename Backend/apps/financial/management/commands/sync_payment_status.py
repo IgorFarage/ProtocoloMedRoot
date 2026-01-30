@@ -12,7 +12,7 @@ from apps.financial.services import AsaasService
 logger = logging.getLogger(__name__)
 
 class Command(BaseCommand):
-    help = 'Sincroniza status do Mercado Pago para Transações Pendentes (Recuperador de Webhook Perdido)'
+    help = 'Sincroniza status de Pagamentos (Asaas + Mercado Pago) para Transações Pendentes (Recuperador de Webhook)'
 
     def add_arguments(self, parser):
         parser.add_argument('--dry-run', action='store_true', help='Apenas simula a verificação')
@@ -64,10 +64,9 @@ class Command(BaseCommand):
                         # Map Asaas Status -> Local (Centralized)
                         real_status = AsaasService.map_status(status_asaas)
                         
-                        # Fix: map_status might return 'pending' for 'PENDING', which is not a "final" status for recovery purposes
-                        # unless we want to confirm it is pending.
-                        # But the logic below checks `if real_status == 'approved'`.
-                        # 'OVERDUE' -> REJECTED.
+                        # [FIX] Force Approved for Confirmed/Received to be sure
+                        if status_asaas in ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED']:
+                            real_status = Transaction.Status.APPROVED
                         
                     else:
                          self.stdout.write(self.style.WARNING("      ⚠️ Asaas ID não encontrado na API."))

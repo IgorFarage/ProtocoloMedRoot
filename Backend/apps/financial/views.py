@@ -118,6 +118,9 @@ class WebhookView(APIView):
                 if new_status and transaction.status != new_status:
                     # Se for status final ou mudança importante
                     transaction.status = new_status
+                else:
+                    logger.info(f"   ⚠️ Transaction {transaction.id} ignored: Status unchanged ({transaction.status} -> {new_status})")
+
                     # Salva ID do Asaas se não tiver
                     if not transaction.asaas_payment_id: transaction.asaas_payment_id = payment_id
                     transaction.save()
