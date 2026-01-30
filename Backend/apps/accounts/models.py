@@ -60,6 +60,20 @@ class User(AbstractBaseUser, PermissionsMixin):
         choices=PlanType.choices, 
         default=PlanType.NONE
     )
+
+    # Agendamento de Troca de Plano (Downgrade)
+    scheduled_plan = models.CharField(
+        max_length=20,
+        choices=PlanType.choices,
+        null=True,
+        blank=True,
+        help_text="Plano agendado para a próxima renovação."
+    )
+    scheduled_transition_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Data prevista para a troca de plano."
+    )
     role = models.CharField(
         max_length=10, 
         choices=RoleType.choices, 

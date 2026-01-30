@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,17 +24,18 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { useToast } from "@/components/ui/use-toast";
-import { User as UserIcon, Mail, Phone, MapPin, Save, CreditCard, UserCircle, Wallet, Loader2, Edit2, X, Camera, Upload, AlertTriangle } from "lucide-react";
+import { User as UserIcon, Mail, Phone, MapPin, Save, CreditCard, UserCircle, Wallet, Loader2, Edit2, X, Camera, Upload, AlertTriangle, Award, Check } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { useClientData } from "@/hooks/useClientData"; // [NOVO]
 import api from "@/lib/api";
 
 const ClientProfile = () => {
     const { toast } = useToast();
+    const navigate = useNavigate();
     const { user } = useAuth();
     const { profile, loading } = useClientData(); // [NOVO] Hook de Dados
 
-    const [activeSection, setActiveSection] = useState<'personal' | 'payment'>('personal');
+    const [activeSection, setActiveSection] = useState<'personal' | 'payment' | 'subscription'>('personal');
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
@@ -41,6 +43,19 @@ const ClientProfile = () => {
     const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
     const [cancelReason, setCancelReason] = useState("");
     const [isCanceling, setIsCanceling] = useState(false);
+
+    // [NOVO] States for Downgrade
+    const [isDowngradeModalOpen, setIsDowngradeModalOpen] = useState(false);
+    const [isDowngrading, setIsDowngrading] = useState(false);
+
+    // [NOVO] Preços Dinâmicos
+    const [planPrices, setPlanPrices] = useState<{ standard: number, plus: number } | null>(null);
+
+    useEffect(() => {
+        api.get('/financial/plans/prices/')
+            .then(resp => setPlanPrices(resp.data))
+            .catch(err => console.error("Erro ao buscar preços", err));
+    }, []);
 
     const [formData, setFormData] = useState({
         name: "",
@@ -103,6 +118,28 @@ const ClientProfile = () => {
             });
         } finally {
             setIsCanceling(false);
+        }
+    };
+
+    const handleDowngrade = async () => {
+        setIsDowngrading(true);
+        try {
+            await api.post('/financial/downgrade-subscription/');
+            toast({
+                title: "Downgrade Agendado",
+                description: "Sua mudança para o plano Standard ocorrerá na próxima renovação.",
+                className: "bg-green-600 text-white"
+            });
+            setIsDowngradeModalOpen(false);
+            window.location.reload();
+        } catch (error: any) {
+            toast({
+                variant: "destructive",
+                title: "Erro",
+                description: error.response?.data?.error || "Não foi possível agendar o downgrade.",
+            });
+        } finally {
+            setIsDowngrading(false);
         }
     };
 
@@ -219,6 +256,13 @@ const ClientProfile = () => {
                             onClick={() => setActiveSection('payment')}
                         >
                             <Wallet className="w-5 h-5" /> Pagamento
+                        </Button>
+                        <Button
+                            variant={activeSection === 'subscription' ? 'secondary' : 'ghost'}
+                            className="w-full justify-start gap-3"
+                            onClick={() => setActiveSection('subscription')}
+                        >
+                            <Award className="w-5 h-5" /> Assinatura
                         </Button>
                     </CardContent>
                 </Card>
@@ -404,69 +448,166 @@ const ClientProfile = () => {
                                             </div>
                                         </div>
                                     </div>
+                                    <div className="flex justify-end">
+                                        <Button type="submit" disabled={isSaving}>
+                                            <Save className="mr-2 h-4 w-4" /> Salvar Cartão
+                                        </Button>
+                                    </div>
+                                </CardContent>
+                            </form>
+                        </Card>
+                    )}
 
-                                    {/* Detalhes do Plano */}
-                                    {profile?.plan_info && (
-                                        <div className="space-y-4 pt-4 border-t">
-                                            <h3 className="text-lg font-medium flex items-center gap-2">
-                                                <Wallet className="h-5 w-5" /> Detalhes do Plano
-                                            </h3>
-                                            <div className="bg-gray-50/50 rounded-lg p-4 border space-y-3">
-                                                <div className="flex justify-between items-center">
-                                                    <span className="text-sm text-gray-500">Plano Atual</span>
-                                                    <span className="font-medium">{profile.plan_info.name}</span>
-                                                </div>
-                                                <div className="flex justify-between items-center">
-                                                    <span className="text-sm text-gray-500">Ciclo</span>
-                                                    <span className="font-medium">{profile.plan_info.cycle}</span>
-                                                </div>
-                                                <div className="flex justify-between items-center">
-                                                    <span className="text-sm text-gray-500">Valor</span>
-                                                    <span className="font-medium">{profile.plan_info.price}</span>
-                                                </div>
-                                                <div className="flex justify-between items-center">
-                                                    <span className="text-sm text-gray-500">Tipo</span>
-                                                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                                                        {profile.plan_info.is_subscription ? "Assinatura Recorrente" : "Pagamento Único"}
-                                                    </span>
-                                                </div>
+                    {activeSection === 'subscription' && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Sua Assinatura</CardTitle>
+                                <CardDescription>Gerencie seu plano e veja detalhes da sua assinatura.</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-8">
+                                {/* Detalhes do Plano Atual */}
+                                {profile?.plan_info && (
+                                    <div className="space-y-4">
+                                        {/* Status Geral */}
+                                        <div className="bg-gray-50/50 rounded-lg p-4 border space-y-3">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-sm text-gray-500">Plano Atual</span>
+                                                <span className="font-medium text-lg text-primary">{profile.plan_info.name}</span>
                                             </div>
-
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-sm text-gray-500">Situação</span>
+                                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${profile.plan_info.status === 'Ativo' ? 'bg-green-100 text-green-700' :
+                                                    profile.plan_info.status === 'Inativo' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+                                                    }`}>
+                                                    {profile.plan_info.status}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-sm text-gray-500">Valor</span>
+                                                <span className="font-medium">{profile.plan_info.price} / {profile.plan_info.cycle.toLowerCase()}</span>
+                                            </div>
+                                            {profile.plan_info.access_until && (
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-sm text-gray-500">Válido até</span>
+                                                    <span className="font-medium">{profile.plan_info.access_until}</span>
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
 
-                                    {/* Cancel Button Block */}
-                                    {profile?.plan_info?.is_subscription &&
-                                        profile.plan_info.subscription_status !== 'canceled' &&
-                                        profile.plan_info.subscription_status !== 'grace_period' && (
-                                            <div className="flex justify-end pt-2">
-                                                <Button
-                                                    variant="destructive"
-                                                    type="button"
-                                                    className="w-full sm:w-auto"
-                                                    onClick={() => setIsCancelModalOpen(true)}
-                                                >
-                                                    Cancelar Assinatura
-                                                </Button>
+                                        {/* Grace Period Warning */}
+                                        {profile.plan_info.subscription_status === 'grace_period' && (
+                                            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-3">
+                                                <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                                                <div>
+                                                    <h4 className="font-medium text-yellow-800">Cancelamento Agendado</h4>
+                                                    <p className="text-sm text-yellow-700 mt-1">
+                                                        {profile.plan_info.warning || "Seu acesso será revogado em breve."}
+                                                    </p>
+                                                </div>
                                             </div>
                                         )}
 
-                                    {/* Grace Period Warning */}
-                                    {profile?.plan_info?.subscription_status === 'grace_period' && (
-                                        <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-3">
-                                            <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
-                                            <div>
-                                                <h4 className="font-medium text-yellow-800">Assinatura Cancelada</h4>
-                                                <p className="text-sm text-yellow-700 mt-1">
-                                                    {profile.plan_info.warning || "Seu acesso será revogado em breve."}
+                                        {/* Scheduled Downgrade Warning */}
+                                        {profile.plan_info.scheduled_plan && (
+                                            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-3">
+                                                <AlertTriangle className="h-5 w-5 text-blue-600 mt-0.5" />
+                                                <div>
+                                                    <h4 className="font-medium text-blue-800">Mudança de Plano Agendada</h4>
+                                                    <p className="text-sm text-blue-700 mt-1">
+                                                        Seu plano mudará para <strong>{profile.plan_info.scheduled_plan === 'standard' ? 'Standard' : 'Outro'}</strong> em {profile.plan_info.scheduled_date || 'breve'}.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Comparativo de Planos */}
+                                <div className="pt-6 border-t">
+                                    <h3 className="text-lg font-medium mb-4">Planos Disponíveis</h3>
+                                    <div className="grid md:grid-cols-2 gap-4">
+                                        {/* Card Standard */}
+                                        <div className={`border rounded-lg p-4 relative flex flex-col ${profile?.plan === 'standard' ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'bg-white'}`}>
+                                            {profile?.plan === 'standard' && (
+                                                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white text-xs px-3 py-1 rounded-full">
+                                                    Seu Plano Atual
+                                                </div>
+                                            )}
+                                            <div className="mb-4">
+                                                <h4 className="font-bold text-lg">Standard</h4>
+                                                <p className="text-2xl font-bold mt-1">
+                                                    {planPrices ? `R$ ${planPrices.standard.toFixed(2).replace('.', ',')}` : <Loader2 className="h-4 w-4 animate-spin inline" />}
+                                                    <span className="text-sm font-normal text-muted-foreground">/mês</span>
                                                 </p>
                                             </div>
+                                            <ul className="space-y-2 text-sm flex-1 mb-6">
+                                                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-500" /> Protocolo Personalizado</li>
+                                                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-500" /> Acesso ao Conteúdo Educativo</li>
+                                                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-500" /> Suporte Técnico</li>
+                                            </ul>
+                                            {profile?.plan !== 'standard' && (
+                                                <Button
+                                                    variant="outline"
+                                                    className="w-full mt-auto"
+                                                    disabled={!!profile?.plan_info?.scheduled_plan || !!profile?.plan_info?.subscription_status && profile.plan_info.subscription_status !== 'active'}
+                                                    onClick={() => profile?.plan === 'plus' ? setIsDowngradeModalOpen(true) : null}
+                                                >
+                                                    {profile?.plan_info?.scheduled_plan === 'standard'
+                                                        ? 'Agendado'
+                                                        : profile?.plan === 'plus'
+                                                            ? 'Mudar para Standard'
+                                                            : 'Selecionar'}
+                                                </Button>
+                                            )}
+                                        </div>
+
+                                        {/* Card Plus */}
+                                        <div className={`border rounded-lg p-4 relative flex flex-col ${profile?.plan === 'plus' ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'bg-white'}`}>
+                                            {profile?.plan === 'plus' && (
+                                                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white text-xs px-3 py-1 rounded-full">
+                                                    Seu Plano Atual
+                                                </div>
+                                            )}
+                                            <div className="mb-4">
+                                                <h4 className="font-bold text-lg">Plus</h4>
+                                                <p className="text-2xl font-bold mt-1">
+                                                    {planPrices ? `R$ ${planPrices.plus.toFixed(2).replace('.', ',')}` : <Loader2 className="h-4 w-4 animate-spin inline" />}
+                                                    <span className="text-sm font-normal text-muted-foreground">/mês</span>
+                                                </p>
+                                            </div>
+                                            <ul className="space-y-2 text-sm flex-1 mb-6">
+                                                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-500" /> Tudo do Standard</li>
+                                                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-500" /> <strong>Canal Médico Exclusivo</strong></li>
+                                                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-500" /> Ajustes Ilimitados</li>
+                                            </ul>
+                                            {profile?.plan !== 'plus' && (
+                                                <Button className="w-full mt-auto" onClick={() => navigate("/planos", { state: { isUpgrade: true } })}>
+                                                    Fazer Upgrade
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Botão de Cancelar Assinatura (Mudei de lugar, deixei por último) */}
+                                {profile?.plan_info?.is_subscription &&
+                                    profile.plan_info.subscription_status !== 'canceled' &&
+                                    profile.plan_info.subscription_status !== 'grace_period' && (
+                                        <div className="pt-6 border-t flex justify-between items-center">
+                                            <div className="text-sm text-gray-500">
+                                                Deseja encerrar sua assinatura?
+                                            </div>
+                                            <Button
+                                                variant="outline"
+                                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                                onClick={() => setIsCancelModalOpen(true)}
+                                            >
+                                                Cancelar Assinatura
+                                            </Button>
                                         </div>
                                     )}
 
-                                </CardContent>
-                                {/* Botão SALVAR PAGAMENTO Removido */}
-                            </form>
+                            </CardContent>
                         </Card>
                     )}
                 </div>
@@ -510,6 +651,30 @@ const ClientProfile = () => {
                                 disabled={!cancelReason || isCanceling}
                             >
                                 {isCanceling ? "Processando..." : "Confirmar Cancelamento"}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+
+                {/* MODAL DE DOWNGRADE */}
+                <Dialog open={isDowngradeModalOpen} onOpenChange={setIsDowngradeModalOpen}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Confirmar Mudança de Plano</DialogTitle>
+                            <DialogDescription>
+                                Você está solicitando a alteração do plano <strong>Plus</strong> para o <strong>Standard</strong>.
+                                <br /><br />
+                                <strong>Importante:</strong> Você manterá seu acesso e benefícios do plano Plus (incluindo Canal Médico) até o fim do ciclo atual.
+                                A mudança de valor ocorrerá apenas na sua próxima renovação.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setIsDowngradeModalOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button onClick={handleDowngrade} disabled={isDowngrading}>
+                                {isDowngrading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                Confirmar Downgrade
                             </Button>
                         </DialogFooter>
                     </DialogContent>

@@ -33,6 +33,8 @@ export interface UserProfile {
         warning?: string;
         access_until?: string;
         is_subscription: boolean;
+        scheduled_plan?: string | null;
+        scheduled_date?: string | null;
     };
     pending_transaction?: {
         exists: boolean;

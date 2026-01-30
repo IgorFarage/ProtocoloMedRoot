@@ -293,6 +293,10 @@ class AsaasService:
                          # TODO: Implementar register_churn no BitrixService se desejar
                          pass 
                 except: pass
+            
+            # [FIX] Limpar Cache do Perfil para Frontend ver status atualizado imediatamente
+            from django.core.cache import cache
+            cache.delete(f"user_profile_full_{user.id}")
                 
             return True, f"Assinatura cancelada. Seu acesso continua válido até {access_until.strftime('%d/%m/%Y')}."
             
@@ -302,6 +306,68 @@ class AsaasService:
         except Exception as e:
             logger.exception(f"❌ Erro de banco ao cancelar user {user.email}: {e}")
             return False, "Erro interno ao processar cancelamento."
+
+    def schedule_downgrade(self, user, target_plan='standard'):
+        """
+        Agenda downgrade no Asaas (altera valor para próxima renovação).
+        """
+        from django.db import transaction as db_transaction
+        from apps.accounts.models import User
+        
+        # 1. Busca Assinatura Ativa
+        last_tx = Transaction.objects.filter(
+            user=user, 
+            status=Transaction.Status.APPROVED,
+            asaas_subscription_id__isnull=False
+        ).order_by('-created_at').first()
+        
+        if not last_tx or not last_tx.asaas_subscription_id:
+             return False, "Nenhuma assinatura ativa encontrada."
+
+        sub_id = last_tx.asaas_subscription_id
+        
+        # 2. Define Novo Valor
+        new_value = 97.00 
+        new_desc = "Assinatura ProtocoloMed - Standard"
+        
+        if target_plan != 'standard':
+            return False, "Downgrade suportado apenas para Standard."
+
+        try:
+            # 3. Consulta data próxima renovação
+            sub_details = self._request("GET", f"subscriptions/{sub_id}")
+            next_due_str = sub_details.get('nextDueDate')
+            next_due_date = None
+            if next_due_str:
+                next_due_date = datetime.strptime(next_due_str, "%Y-%m-%d").date()
+
+            # 4. Atualiza Asaas (updatePendingPayments=False -> Só muda as PRÓXIMAS)
+            payload = {
+                "value": new_value,
+                "description": new_desc,
+                "updatePendingPayments": False 
+            }
+            
+            resp = self._request("POST", f"subscriptions/{sub_id}", payload)
+            if 'errors' in resp:
+                 return False, f"Erro Asaas: {resp['errors'][0]['description']}"
+            
+            # 5. Atualiza Local
+            with db_transaction.atomic():
+                user.scheduled_plan = target_plan
+                user.scheduled_transition_date = next_due_date
+                user.save()
+            
+            # Limpa Cache
+            from django.core.cache import cache
+            cache.delete(f"user_profile_full_{user.id}")
+            
+            due_fmt = next_due_date.strftime('%d/%m/%Y') if next_due_date else 'próximo ciclo'
+            return True, f"Downgrade para Standard agendado. Sua fatura vencerá em {due_fmt} já com o novo valor."
+
+        except Exception as e:
+            logger.exception(f"❌ Erro Schedule Downgrade: {e}")
+            return False, "Erro interno ao agendar downgrade."
 
     def upgrade_subscription(self, user, new_plan_id, new_value, card_data=None):
         """
@@ -425,6 +491,10 @@ class AsaasService:
                 user.scheduled_cancellation_date = None
                 user.save()
             
+            # [FIX] Limpar Cache do Perfil
+            from django.core.cache import cache
+            cache.delete(f"user_profile_full_{user.id}")
+
             return True, "Upgrade realizado com sucesso!"
 
         except Exception as e:

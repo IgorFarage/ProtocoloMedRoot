@@ -135,6 +135,25 @@ class WebhookView(APIView):
                         except Exception as e:
                             logger.error(f"      ❌ Subscription Activation Error: {e}")
 
+                        # [DOWNGRADE EXECUTION]
+                        # Se o usuário tinha um downgrade agendado e pagou o valor do Standard, efetiva a troca.
+                        try:
+                            user = transaction.user
+                            if getattr(user, 'scheduled_plan', None) == 'standard':
+                                paid_val = float(payment_data.get('value', 0.0))
+                                # Valor do Standard é 97.00. Aceitamos pequena margem por segurança.
+                                if abs(paid_val - 97.00) < 1.0: 
+                                    logger.info(f"📉 Efetivando Downgrade Agendado para {user.email}")
+                                    user.current_plan = 'standard'
+                                    user.scheduled_plan = None
+                                    user.scheduled_transition_date = None
+                                    user.save()
+                                    
+                                    from django.core.cache import cache
+                                    cache.delete(f"user_profile_full_{user.id}")
+                        except Exception as e:
+                            logger.error(f"      ❌ Error executing downgrade logic: {e}")
+
                         # Sync Bitrix
                         if transaction.bitrix_sync_status != 'synced' and BitrixService:
                             try:
@@ -710,3 +729,23 @@ class CancelSubscriptionView(APIView):
              return Response({"status": "success", "message": message}, status=200)
         else:
              return Response({"error": message}, status=500)
+
+# --- VIEW 7: DOWNGRADE DE ASSINATURA ---
+class DowngradeSubscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        
+        # Security Check: User must be Plus to downgrade
+        if user.current_plan != 'plus':
+             return Response({"error": "Downgrade disponível apenas para clientes Plus."}, status=400)
+
+        service = AsaasService()
+        # Default target='standard'
+        success, message = service.schedule_downgrade(user, target_plan='standard')
+        
+        if success:
+             return Response({"status": "success", "message": message}, status=200)
+        else:
+             return Response({"error": message}, status=400)

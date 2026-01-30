@@ -298,7 +298,10 @@ class UserProfileView(APIView):
             "status": "Ativo",
             "subscription_status": getattr(user, 'subscription_status', 'active'),
             "access_until": user.access_valid_until.strftime("%d/%m/%Y") if user.access_valid_until else None,
-            "is_subscription": last_success_tx.asaas_subscription_id is not None if last_success_tx else False
+            "is_subscription": last_success_tx.asaas_subscription_id is not None if last_success_tx else False,
+            # [NOVO] Downgrade Agendado
+            "scheduled_plan": getattr(user, 'scheduled_plan', None),
+            "scheduled_date": user.scheduled_transition_date.strftime("%d/%m/%Y") if getattr(user, 'scheduled_transition_date', None) else None
         }
         
         # Adjust Display Status for Grace Period
