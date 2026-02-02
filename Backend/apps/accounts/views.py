@@ -2,6 +2,7 @@
 
 import logging
 from rest_framework import status, generics
+from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -490,3 +491,58 @@ class PasswordResetConfirmView(APIView):
             return Response({"message": "Senha redefinida com sucesso."}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "Token inválido ou expirado."}, status=status.HTTP_400_BAD_REQUEST)
+
+# 8. Doctor Self-Registration
+from .models import Doctors
+
+class DoctorRegisterView(APIView):
+    """
+    Endpoint para auto-cadastro de Médicos via link/convite.
+    Segurança: Exige 'invite_code' válido.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        data = request.data
+        invite_code = data.get('invite_code')
+        
+        # 1. Validação do Código de Convite (MVP: Hardcoded, depois mover para Env)
+        VALID_CODE = "PRO-MED-ADMIN" # Você pode alterar isso ou mover para .env
+        
+        if not invite_code or invite_code != VALID_CODE:
+            return Response({"error": "Código de convite inválido."}, status=status.HTTP_403_FORBIDDEN)
+            
+        email = data.get('email', '').strip().lower()
+        password = data.get('password')
+        full_name = data.get('first_name') + " " + data.get('last_name') if data.get('first_name') else data.get('full_name')
+        crm = data.get('crm')
+        specialty = data.get('specialty', 'Tricologia')
+        
+        if not email or not password or not full_name or not crm:
+             return Response({"error": "Todos os campos são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+             
+        # 2. Verifica se usuário já existe
+        if User.objects.filter(email=email).exists():
+            return Response({"error": "E-mail já cadastrado."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            with transaction.atomic():
+                # 3. Criar Usuário Base
+                user = User.objects.create_user(email=email, password=password, full_name=full_name)
+                user.role = 'doctor'
+                user.save()
+                
+                # 4. Criar Perfil Médico
+                Doctors.objects.create(user=user, crm=crm, specialty=specialty)
+                
+                logger.info(f"👨‍⚕️ Novo Médico registrado via Link: {user.email} (CRM: {crm})")
+                
+                # TODO: Opcional - Gerar Token JWT já para logar direto?
+                # Por hora retornamos sucesso para o front redirecionar pro Login
+                
+                return Response({"message": "Conta médica criada com sucesso!"}, status=status.HTTP_201_CREATED)
+                
+        except Exception as e:
+            logger.error(f"❌ Erro ao registrar médico: {e}")
+            return Response({"error": f"Erro interno: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

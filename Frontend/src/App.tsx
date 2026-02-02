@@ -15,6 +15,7 @@ import Login from "./auth/Login";
 import Register from "./auth/Register";
 import ForgotPassword from "./auth/ForgotPassword";
 import ResetPassword from "./auth/ResetPassword";
+import DoctorRegister from "./auth/DoctorRegister";
 import AboutUs from "./pages/AboutUs";
 import Contact from "./pages/Contact";
 
@@ -71,6 +72,7 @@ const App = () => {
                 <Route path="/" element={<Index />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/cadastro" element={<Register />} />
+                <Route path="/convite-medico" element={<DoctorRegister />} />
 
                 {/* Password Reset */}
                 <Route path="/esqueci-senha" element={<ForgotPassword />} />

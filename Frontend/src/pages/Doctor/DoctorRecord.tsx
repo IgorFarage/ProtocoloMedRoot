@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -5,9 +6,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Video, FileText, Pill, Image as ImageIcon } from "lucide-react";
+import { ArrowLeft, Video, FileText, Pill, Image as ImageIcon, Loader2 } from "lucide-react";
+import api from "@/lib/api";
 
-// Mock Data
+// Mock Data (Mantendo o resto mockado por enquanto, conforme solicitado foco nas fotos)
 const patientData = {
     id: "1",
     name: "João Silva",
@@ -28,13 +30,14 @@ const patientData = {
             "Minoxidil 5% (Tópico) - 1x à noite",
             "Shampoo Antiqueda - Uso diário"
         ]
-    },
-    photos: [
-        { month: "Mês 1", url: "https://placehold.co/150" },
-        { month: "Mês 2", url: "https://placehold.co/150" },
-        { month: "Mês 3", url: "https://placehold.co/150" },
-    ]
+    }
 };
+
+interface PatientPhoto {
+    id: number;
+    photo: string;
+    taken_at: string;
+}
 
 const DoctorRecord = () => {
     const { id } = useParams();
@@ -43,6 +46,27 @@ const DoctorRecord = () => {
     // Em uma aplicação real, buscaríamos os dados do paciente pelo ID aqui.
     // const patient = fetchPatient(id);
     const patient = patientData;
+
+    const [photos, setPhotos] = useState<PatientPhoto[]>([]);
+    const [loadingPhotos, setLoadingPhotos] = useState(false);
+
+    useEffect(() => {
+        const fetchPhotos = async () => {
+            if (!id) return;
+            setLoadingPhotos(true);
+            try {
+                const response = await api.get(`/medical/doctor/patients/${id}/photos/`);
+                setPhotos(response.data);
+            } catch (error) {
+                console.error("Erro ao carregar fotos:", error);
+                // toast.error("Não foi possível carregar as fotos.");
+            } finally {
+                setLoadingPhotos(false);
+            }
+        };
+
+        fetchPhotos();
+    }, [id]);
 
     return (
         <div className="container mx-auto px-4 py-8 space-y-6">
@@ -157,16 +181,33 @@ const DoctorRecord = () => {
                             <CardDescription>Evolução visual do tratamento.</CardDescription>
                         </CardHeader>
                         <CardContent>
-                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                {patient.photos.map((photo, index) => (
-                                    <div key={index} className="space-y-2">
-                                        <div className="aspect-square rounded-lg overflow-hidden border bg-muted">
-                                            <img src={photo.url} alt={photo.month} className="w-full h-full object-cover" />
+                            {loadingPhotos ? (
+                                <div className="flex justify-center p-8">
+                                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                                </div>
+                            ) : photos.length > 0 ? (
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                    {photos.map((photo) => (
+                                        <div key={photo.id} className="space-y-2">
+                                            <div className="aspect-square rounded-lg overflow-hidden border bg-muted relative group">
+                                                <img
+                                                    src={photo.photo}
+                                                    alt={`Foto de ${new Date(photo.taken_at).toLocaleDateString()}`}
+                                                    className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                                                />
+                                            </div>
+                                            <p className="text-center font-medium text-sm">
+                                                {new Date(photo.taken_at).toLocaleDateString()}
+                                            </p>
                                         </div>
-                                        <p className="text-center font-medium text-sm">{photo.month}</p>
-                                    </div>
-                                ))}
-                            </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-center py-12 text-muted-foreground">
+                                    <ImageIcon className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                                    <p>Nenhuma foto de evolução encontrada para este paciente.</p>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>
