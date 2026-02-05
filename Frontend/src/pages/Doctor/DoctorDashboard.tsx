@@ -57,6 +57,10 @@ const MedicoDashboard = () => {
             setStats(data.stats);
             setPatients(data.patients);
 
+            if (data.doctor.photo) {
+                setProfilePhoto(data.doctor.photo);
+            }
+
             // Select first patient by default if available
             if (data.patients.length > 0 && !selectedPatient) {
                 setSelectedPatient(data.patients[0]);
@@ -72,12 +76,30 @@ const MedicoDashboard = () => {
         fetchData();
     }, []);
 
-    const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            setProfilePhoto(URL.createObjectURL(file));
-            console.log("Nova foto de perfil carregada:", file.name);
-            // TODO: Upload to backend
+            // Optimistic Update
+            const previewUrl = URL.createObjectURL(file);
+            setProfilePhoto(previewUrl);
+
+            const formData = new FormData();
+            formData.append('photo', file);
+
+            try {
+                const response = await api.post('/medical/doctor/profile/photo/', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+
+                // Update with real URL from server
+                if (response.data.photo_url) {
+                    setProfilePhoto(response.data.photo_url);
+                }
+                console.log("Foto atualizada com sucesso");
+            } catch (error) {
+                console.error("Erro ao fazer upload da foto:", error);
+                // Revert on error? Or show toast.
+            }
         }
     };
 
@@ -133,7 +155,11 @@ const MedicoDashboard = () => {
 
                         <div className="flex flex-col items-center gap-4">
                             <Avatar className="h-36 w-36 border-2 border-primary">
-                                <AvatarImage src={profilePhoto || undefined} alt={doctorInfo?.name} />
+                                <AvatarImage
+                                    src={profilePhoto || undefined}
+                                    alt={doctorInfo?.name}
+                                    className="object-cover object-center h-full w-full"
+                                />
                                 <AvatarFallback className="text-3xl font-bold">
                                     {doctorInfo?.name?.charAt(0)}
                                 </AvatarFallback>

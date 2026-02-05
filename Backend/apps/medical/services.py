@@ -58,7 +58,8 @@ class MedicalScheduleService:
 
         # 4. Filtrar
         available = []
-        now = datetime.now()
+        from django.utils import timezone
+        now = timezone.localtime()
         
         for slot in possible_slots:
             # Se for hoje, remover horários passados
@@ -77,9 +78,12 @@ class MedicalScheduleService:
         Tenta agendar uma consulta.
         """
         try:
-            # 1. Parsing
-            target_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            # 1. Parsing and making Timezone Aware
+            from django.utils import timezone
             
+            naive_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            target_dt = timezone.make_aware(naive_dt)
+
             # 2. Validar Médico
             doctor = MedicalScheduleService.get_system_doctor()
             if not doctor:

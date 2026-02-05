@@ -144,6 +144,7 @@ class Doctors(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     crm = models.CharField(max_length=20)
     specialty = models.CharField(max_length=100)
+    profile_photo = models.ImageField(upload_to="doctor_photos/", null=True, blank=True)
 
 class Patients(models.Model):
     """
@@ -152,3 +153,39 @@ class Patients(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     gender = models.CharField(max_length=20, blank=True, null=True)
     assigned_doctor = models.ForeignKey(Doctors, on_delete=models.SET_NULL, null=True, blank=True)
+
+class DoctorInvite(models.Model):
+    """
+    Código de convite para cadastro de médicos.
+    Gerado pelo Admin, consumido no Registro.
+    """
+    code = models.CharField(max_length=20, unique=True, help_text="Código único de convite (Ex: DOC-X92A)")
+    is_used = models.BooleanField(default=False)
+    
+    # Quem usou o código?
+    used_by = models.OneToOneField(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='invite_used',
+        help_text="Médico que utilizou este convite"
+    )
+    
+    # Quando foi usado?
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    # Quem criou? (Admin)
+    created_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='invites_created'
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        status = "USADO" if self.is_used else "DISPONÍVEL"
+        return f"{self.code} [{status}]"

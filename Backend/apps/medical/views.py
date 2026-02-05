@@ -125,11 +125,14 @@ class DoctorDashboardStatsView(APIView):
             "email": request.user.email,
             "crm": doctor_profile.crm if doctor_profile else "N/A",
             "specialty": doctor_profile.specialty if doctor_profile else "Geral",
-            "photo": None 
+            # Return relative URL so frontend proxy handles it (Fix Mixed Content/CORS)
+            "photo": doctor_profile.profile_photo.url if doctor_profile and doctor_profile.profile_photo else None
         }
 
         # 2. Resumo de Agendamentos (Hoje)
-        today = datetime.now().date()
+        # 2. Resumo de Agendamentos (Hoje)
+        from django.utils import timezone
+        today = timezone.localtime().date()
         # FIX: Appointments.doctor é FK para User, então usamos 'doctor=request.user'
         today_appts = Appointments.objects.filter(doctor=request.user, scheduled_at__date=today)
         
@@ -140,7 +143,7 @@ class DoctorDashboardStatsView(APIView):
         for p in patients_qs:
             # Tenta achar último agendamento
             last_appt = Appointments.objects.filter(patient=p, status='completed').order_by('-scheduled_at').first()
-            next_appt = Appointments.objects.filter(patient=p, status='scheduled', scheduled_at__gte=datetime.now()).order_by('scheduled_at').first()
+            next_appt = Appointments.objects.filter(patient=p, status='scheduled', scheduled_at__gte=timezone.now()).order_by('scheduled_at').first()
             
             # Risco Simulado
             risk = 'Baixo'
@@ -172,3 +175,33 @@ class DoctorDashboardStatsView(APIView):
                 } for a in today_appts
             ]
         })
+
+class UpdateDoctorPhotoView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser)
+
+    def post(self, request):
+        if request.user.role != 'doctor':
+             return Response({"error": "Acesso negado."}, status=status.HTTP_403_FORBIDDEN)
+             
+        file_obj = request.FILES.get('photo')
+        if not file_obj:
+            return Response({"error": "Nenhuma imagem fornecida."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            from apps.accounts.models import Doctors
+            doctor, created = Doctors.objects.get_or_create(user=request.user)
+            
+            # Remove imagem antiga se for substituir? O Django faz isso automaticamente se sobrescrever? 
+            # Depende do storage backend, mas geralmente não deleta o arquivo físico.
+            # Por simplicidade MVP, apenas atualizamos.
+            
+            doctor.profile_photo = file_obj
+            doctor.save()
+            
+            # Return relative URL
+            new_url = doctor.profile_photo.url
+            return Response({"message": "Foto atualizada", "photo_url": new_url}, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({"error": f"Erro ao salvar foto: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

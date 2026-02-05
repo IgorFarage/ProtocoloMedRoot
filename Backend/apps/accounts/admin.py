@@ -20,3 +20,24 @@ class UserQuestionnaireAdmin(admin.ModelAdmin):
 
 admin.site.register(Doctors)
 admin.site.register(Patients)
+
+from .models import DoctorInvite
+from .services import DoctorInviteService
+
+@admin.register(DoctorInvite)
+class DoctorInviteAdmin(admin.ModelAdmin):
+    list_display = ('code', 'is_used', 'used_by', 'created_at', 'get_status_display')
+    readonly_fields = ('used_by', 'used_at', 'created_at', 'created_by')
+    search_fields = ('code',)
+    list_filter = ('is_used', 'created_at')
+
+    def save_model(self, request, obj, form, change):
+        if not obj.pk: # Criação
+            obj.created_by = request.user
+            if not obj.code:
+                obj.code = DoctorInviteService.generate_code()
+        super().save_model(request, obj, form, change)
+
+    def get_status_display(self, obj):
+        return  "🔴 Usado" if obj.is_used else "🟢 Disponível"
+    get_status_display.short_description = "Status"

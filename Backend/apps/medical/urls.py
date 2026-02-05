@@ -1,9 +1,10 @@
 from django.urls import path
-from .views import SlotsView, ScheduleAppointmentView, PatientEvolutionView, DoctorPatientPhotosView, DoctorDashboardStatsView
+from .views import SlotsView, ScheduleAppointmentView, PatientEvolutionView, DoctorPatientPhotosView, DoctorDashboardStatsView, UpdateDoctorPhotoView
 
 urlpatterns = [
     # Dashboard
     path('doctor/dashboard/', DoctorDashboardStatsView.as_view(), name='doctor-dashboard'),
+    path('doctor/profile/photo/', UpdateDoctorPhotoView.as_view(), name='doctor-update-photo'),
 
     path('slots/', SlotsView.as_view(), name='medical-slots'),
     path('appointments/', ScheduleAppointmentView.as_view(), name='medical-appointments'),

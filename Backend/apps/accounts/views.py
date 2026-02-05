@@ -494,11 +494,12 @@ class PasswordResetConfirmView(APIView):
 
 # 8. Doctor Self-Registration
 from .models import Doctors
+from .services import DoctorInviteService
 
 class DoctorRegisterView(APIView):
     """
     Endpoint para auto-cadastro de Médicos via link/convite.
-    Segurança: Exige 'invite_code' válido.
+    Segurança: Exige 'invite_code' válido gerenciado no Admin.
     """
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -507,15 +508,18 @@ class DoctorRegisterView(APIView):
         data = request.data
         invite_code = data.get('invite_code')
         
-        # 1. Validação do Código de Convite (MVP: Hardcoded, depois mover para Env)
-        VALID_CODE = "PRO-MED-ADMIN" # Você pode alterar isso ou mover para .env
-        
-        if not invite_code or invite_code != VALID_CODE:
-            return Response({"error": "Código de convite inválido."}, status=status.HTTP_403_FORBIDDEN)
+        # 1. Validação do Código de Convite (Dinâmica via Banco)
+        if not DoctorInviteService.validate_code(invite_code):
+            return Response({"error": "Código de convite inválido ou já utilizado."}, status=status.HTTP_403_FORBIDDEN)
             
         email = data.get('email', '').strip().lower()
         password = data.get('password')
-        full_name = data.get('first_name') + " " + data.get('last_name') if data.get('first_name') else data.get('full_name')
+        # Ajuste para suportar tanto split fields quanto full_name direto
+        if data.get('first_name'):
+             full_name = f"{data.get('first_name')} {data.get('last_name', '')}".strip()
+        else:
+             full_name = data.get('full_name', '').strip()
+
         crm = data.get('crm')
         specialty = data.get('specialty', 'Tricologia')
         
@@ -530,16 +534,20 @@ class DoctorRegisterView(APIView):
             with transaction.atomic():
                 # 3. Criar Usuário Base
                 user = User.objects.create_user(email=email, password=password, full_name=full_name)
+                # Adiciona prefixo Dr./Dra. se não tiver
+                if not (user.full_name.startswith("Dr.") or user.full_name.startswith("Dra.")):
+                    user.full_name = f"Dr(a). {user.full_name}"
+                
                 user.role = 'doctor'
                 user.save()
                 
                 # 4. Criar Perfil Médico
                 Doctors.objects.create(user=user, crm=crm, specialty=specialty)
                 
-                logger.info(f"👨‍⚕️ Novo Médico registrado via Link: {user.email} (CRM: {crm})")
+                # 5. Consumir o Convite (Marcar como usado)
+                DoctorInviteService.consume_code(invite_code, user)
                 
-                # TODO: Opcional - Gerar Token JWT já para logar direto?
-                # Por hora retornamos sucesso para o front redirecionar pro Login
+                logger.info(f"👨‍⚕️ Novo Médico registrado via Link: {user.email} (CRM: {crm})")
                 
                 return Response({"message": "Conta médica criada com sucesso!"}, status=status.HTTP_201_CREATED)
                 

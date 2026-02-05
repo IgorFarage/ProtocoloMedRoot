@@ -992,3 +992,49 @@ class PasswordResetService:
         except Exception as e:
             logger.error(f"❌ Error confirming password reset: {e}")
             return False
+
+class DoctorInviteService:
+    @staticmethod
+    def generate_code() -> str:
+        """
+        Gera um código único aleatório.
+        Formato: DOC-XXXX (Onde X é letra maiúscula ou dígito)
+        """
+        import secrets
+        import string
+        
+        chars = string.ascii_uppercase + string.digits
+        # Remove caracteres confusos (0, O, I, 1, L)
+        chars = chars.replace('0', '').replace('O', '').replace('I', '').replace('1', '').replace('L', '')
+        
+        while True:
+            suffix = ''.join(secrets.choice(chars) for _ in range(4))
+            code = f"DOC-{suffix}"
+            from .models import DoctorInvite
+            if not DoctorInvite.objects.filter(code=code).exists():
+                return code
+
+    @staticmethod
+    def validate_code(code: str) -> bool:
+        from .models import DoctorInvite
+        if not code: return False
+        try:
+            invite = DoctorInvite.objects.get(code=code.upper().strip())
+            return not invite.is_used
+        except DoctorInvite.DoesNotExist:
+            return False
+
+    @staticmethod
+    def consume_code(code: str, doctor_user: Any) -> bool:
+        from .models import DoctorInvite
+        from django.utils import timezone
+        
+        try:
+            invite = DoctorInvite.objects.get(code=code.upper().strip(), is_used=False)
+            invite.is_used = True
+            invite.used_by = doctor_user
+            invite.used_at = timezone.now()
+            invite.save()
+            return True
+        except DoctorInvite.DoesNotExist:
+            return False

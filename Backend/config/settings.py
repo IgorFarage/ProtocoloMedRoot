@@ -208,4 +208,5 @@ CSRF_TRUSTED_ORIGINS = [
     'http://127.0.0.1:8080',
     'https://protocolo.med.br',
     'https://www.protocolo.med.br',
+    'https://subectodermic-cyperaceous-rebekah.ngrok-free.dev', # Ngrok Tunnel
 ]
