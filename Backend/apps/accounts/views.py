@@ -207,6 +207,8 @@ class UserProfileView(APIView):
             }
         }
 
+        # [MOVED] Logic moved downstream to ensure Fresh Data after Sync
+
         # [NOVO] Verificar se existe transação Pendente (Para mostrar no Dashboard)
         # Import local para evitar ciclo se financial importar accounts
         from apps.financial.models import Transaction
@@ -249,6 +251,39 @@ class UserProfileView(APIView):
         except Exception as e:
             logger.warning(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
             # Não falha o request, apenas vai sem os dados extras
+
+        # [MOVED HERE] Equipe Médica (Tricologista + Nutricionista)
+        # Refresh User again to be safe
+        user.refresh_from_db()
+        
+        medical_team = {"trichologist": None, "nutritionist": None}
+        try:
+            if hasattr(user, 'patients'):
+                p = user.patients
+                
+                if p.assigned_trichologist:
+                    doc = p.assigned_trichologist
+                    medical_team["trichologist"] = {
+                        "name": doc.user.full_name,
+                        "crm": doc.crm,
+                        "photo": doc.profile_photo.url if doc.profile_photo else None,
+                        "id": str(doc.user.id),
+                        "description": doc.bio
+                    }
+                    
+                if p.assigned_nutritionist:
+                    doc = p.assigned_nutritionist
+                    medical_team["nutritionist"] = {
+                        "name": doc.user.full_name,
+                        "crm": doc.crm,
+                        "photo": doc.profile_photo.url if doc.profile_photo else None,
+                        "id": str(doc.user.id),
+                        "description": doc.bio
+                    }
+        except Exception as e:
+            logger.warning(f"Erro ao montar equipe médica (Pós-Sync): {e}")
+
+        profile_data['medical_team'] = medical_team
 
         # [NOVO] Payment Info (Last Approved Credit Card)
         last_cc_tx = Transaction.objects.filter(
@@ -522,6 +557,7 @@ class DoctorRegisterView(APIView):
 
         crm = data.get('crm')
         specialty = data.get('specialty', 'Tricologia')
+        specialty_type = data.get('specialty_type', 'trichologist')
         
         if not email or not password or not full_name or not crm:
              return Response({"error": "Todos os campos são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
@@ -542,7 +578,12 @@ class DoctorRegisterView(APIView):
                 user.save()
                 
                 # 4. Criar Perfil Médico
-                Doctors.objects.create(user=user, crm=crm, specialty=specialty)
+                Doctors.objects.create(
+                    user=user, 
+                    crm=crm, 
+                    specialty=specialty,
+                    specialty_type=specialty_type
+                )
                 
                 # 5. Consumir o Convite (Marcar como usado)
                 DoctorInviteService.consume_code(invite_code, user)
@@ -553,4 +594,70 @@ class DoctorRegisterView(APIView):
                 
         except Exception as e:
             logger.error(f"❌ Erro ao registrar médico: {e}")
-            return Response({"error": f"Erro interno: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# 9. Doctor Profile Settings
+class DoctorProfileUpdateView(APIView):
+    """
+    Endpoint para ver e editar o perfil do médico (Bio, Foto, Telefone, etc).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.role != 'doctor':
+            return Response({"error": "Apenas médicos podem acessar este perfil."}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            doctor = user.doctors # Acesso reverso OneToOne
+        except Doctors.DoesNotExist:
+             return Response({"error": "Perfil médico não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+        data = {
+            "fullName": user.full_name,
+            "email": user.email,
+            "phone": user.phone,
+            "crm": doctor.crm,
+            "specialty": doctor.specialty, # Free text legacy
+            "specialty_type": doctor.specialty_type,
+            "bio": doctor.bio,
+            "profilePhoto": doctor.profile_photo.url if doctor.profile_photo else None
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        user = request.user
+        if user.role != 'doctor':
+             return Response({"error": "Acesso negado."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            doctor = user.doctors
+        except Doctors.DoesNotExist:
+             return Response({"error": "Perfil médico não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data # Pode ser multipart (com arquivos) ou JSON
+        
+        # 1. Atualizar User (Nome, Telefone)
+        full_name = data.get('fullName')
+        phone = data.get('phone')
+        
+        if full_name: user.full_name = full_name
+        if phone: user.phone = phone
+        user.save()
+
+        # 2. Atualizar Doctor (Bio, CRM, Specialty, Foto)
+        bio = data.get('bio')
+        crm = data.get('crm') # Opcional permitir trocar
+        specialty = data.get('specialty') # String (tags joinadas ou apenas texto)
+
+        if bio is not None: doctor.bio = bio
+        if crm: doctor.crm = crm
+        if specialty: doctor.specialty = specialty
+        
+        # Foto (Files)
+        photo = request.FILES.get('profilePhoto')
+        if photo:
+            doctor.profile_photo = photo
+        
+        doctor.save()
+        
+        return Response({"message": "Perfil atualizado com sucesso!"}, status=status.HTTP_200_OK)

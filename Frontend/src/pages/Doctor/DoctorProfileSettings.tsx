@@ -1,4 +1,5 @@
-import { useState } from "react";
+
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,33 +9,69 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { Upload, X, Save, ArrowLeft } from "lucide-react";
+import { Upload, X, Save, ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import DoctorPlaceholder from "@/assets/Images/Medico02.jpg";
+import api from "@/lib/api";
 
 const DoctorProfileSettings = () => {
     const navigate = useNavigate();
     const { toast } = useToast();
 
-    // State for profile data
-    const [profilePhoto, setProfilePhoto] = useState<string | null>(DoctorPlaceholder);
-    const [fullName, setFullName] = useState("Dr. Protótipo");
-    const [crm, setCrm] = useState("123456/SP");
-    const [email] = useState("medico@protocolomed.com");
-    const [biography, setBiography] = useState(
-        "Especialista em dermatologia capilar com mais de 10 anos de experiência. Focado em tratamentos avançados para queda de cabelo e saúde do couro cabeludo."
-    );
-    const [phone, setPhone] = useState("(11) 98765-4321");
-    const [clinicAddress, setClinicAddress] = useState("Av. Paulista, 1000 - São Paulo, SP");
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
 
-    // Specialties state
-    const [specialties, setSpecialties] = useState<string[]>(["Dermatologia", "Tricologia", "Implante Capilar"]);
+    // Profile Data
+    const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+    const [fullName, setFullName] = useState("");
+    const [crm, setCrm] = useState("");
+    const [email, setEmail] = useState("");
+    const [biography, setBiography] = useState("");
+    const [phone, setPhone] = useState("");
+
+    // Specialties (Backend stores as comma separated string for now, or single field)
+    const [specialties, setSpecialties] = useState<string[]>([]);
     const [newSpecialty, setNewSpecialty] = useState("");
+
+    // Fetch Profile Data
+    useEffect(() => {
+        const fetchProfile = async () => {
+            try {
+                const response = await api.get('/accounts/doctor/profile/');
+                const data = response.data;
+
+                setFullName(data.fullName || "");
+                setEmail(data.email || "");
+                setPhone(data.phone || "");
+                setCrm(data.crm || "");
+                setBiography(data.bio || "");
+                setProfilePhoto(data.profilePhoto || null);
+
+                // Parse specialties if they come as "Tag1, Tag2"
+                if (data.specialty) {
+                    setSpecialties(data.specialty.split(',').map((s: string) => s.trim()).filter(Boolean));
+                }
+            } catch (error) {
+                console.error("Erro ao carregar perfil:", error);
+                toast({
+                    variant: "destructive",
+                    title: "Erro ao carregar perfil",
+                    description: "Não foi possível buscar seus dados.",
+                });
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchProfile();
+    }, [toast]);
 
     const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            setProfilePhoto(URL.createObjectURL(file));
+            setSelectedFile(file);
+            setProfilePhoto(URL.createObjectURL(file)); // Preview
         }
     };
 
@@ -49,17 +86,60 @@ const DoctorProfileSettings = () => {
         setSpecialties(specialties.filter(s => s !== specialtyToRemove));
     };
 
-    const handleSave = () => {
-        // Simulate save action
-        toast({
-            title: "Alterações salvas!",
-            description: "Seu perfil foi atualizado com sucesso.",
-        });
+    const handleSave = async () => {
+        setSaving(true);
+        try {
+            const formData = new FormData();
+            formData.append('fullName', fullName);
+            formData.append('phone', phone);
+            formData.append('bio', biography);
+            formData.append('crm', crm);
+
+            // Join specialties
+            formData.append('specialty', specialties.join(', '));
+
+            if (selectedFile) {
+                formData.append('profilePhoto', selectedFile);
+            }
+
+            // Note: clinicAddress is not sent because backend doesn't support it in this view yet
+            // If we wanted, we could map it to 'street' or 'complement' if UserUpdate supported it.
+
+            await api.put('/accounts/doctor/profile/', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+
+            toast({
+                title: "Alterações salvas!",
+                description: "Seu perfil foi atualizado com sucesso.",
+            });
+
+            // Reload page or just stay? Stay is better but maybe refresh photo state if URL changed?
+            // Usually the preview is fine.
+
+        } catch (error) {
+            console.error("Erro ao salvar:", error);
+            toast({
+                variant: "destructive",
+                title: "Erro ao salvar",
+                description: "Verifique os dados e tente novamente.",
+            });
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleCancel = () => {
         navigate("/DoctorDashboard");
     };
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center h-screen">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+        );
+    }
 
     return (
         <div className="container mx-auto px-4 py-8">
@@ -86,7 +166,7 @@ const DoctorProfileSettings = () => {
                         {/* Profile Photo */}
                         <div className="flex flex-col items-center gap-4">
                             <Avatar className="h-32 w-32 border-4 border-primary">
-                                <AvatarImage src={profilePhoto || undefined} alt={fullName} />
+                                <AvatarImage src={profilePhoto || undefined} alt={fullName} className="object-cover" />
                                 <AvatarFallback className="text-4xl font-bold">
                                     {fullName.charAt(0)}
                                 </AvatarFallback>
@@ -166,7 +246,7 @@ const DoctorProfileSettings = () => {
                                 className="min-h-[120px] resize-none"
                             />
                             <p className="text-xs text-muted-foreground">
-                                Descreva sua experiência e áreas de atuação
+                                Esta descrição aparecerá no seu cartão de perfil.
                             </p>
                         </div>
 
@@ -192,8 +272,8 @@ const DoctorProfileSettings = () => {
                             {/* Specialty Tags */}
                             <div className="flex flex-wrap gap-2 min-h-[40px] p-3 border rounded-md">
                                 {specialties.length > 0 ? (
-                                    specialties.map((specialty) => (
-                                        <Badge key={specialty} variant="secondary" className="gap-1 pr-1">
+                                    specialties.map((specialty, index) => (
+                                        <Badge key={index} variant="secondary" className="gap-1 pr-1">
                                             {specialty}
                                             <Button
                                                 variant="ghost"
@@ -226,18 +306,6 @@ const DoctorProfileSettings = () => {
                                     placeholder="(00) 00000-0000"
                                 />
                             </div>
-
-                            <div className="space-y-2">
-                                <Label htmlFor="clinicAddress">Endereço da clínica</Label>
-                                <Textarea
-                                    id="clinicAddress"
-                                    value={clinicAddress}
-                                    onChange={(e) => setClinicAddress(e.target.value)}
-                                    placeholder="Digite o endereço completo da clínica"
-                                    className="resize-none"
-                                    rows={2}
-                                />
-                            </div>
                         </div>
                     </CardContent>
                 </Card>
@@ -248,7 +316,8 @@ const DoctorProfileSettings = () => {
                 <Button variant="outline" onClick={handleCancel}>
                     Cancelar
                 </Button>
-                <Button onClick={handleSave} className="gap-2">
+                <Button onClick={handleSave} className="gap-2" disabled={saving}>
+                    {saving && <Loader2 className="h-4 w-4 animate-spin" />}
                     <Save className="h-4 w-4" />
                     Salvar alterações
                 </Button>

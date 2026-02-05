@@ -5,11 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/auth/AuthProvider";
 import { useClientData } from "@/hooks/useClientData";
 import { Link } from "react-router-dom";
-import { ShoppingBag, FileText, History, Calendar } from "lucide-react";
+import { ShoppingBag, FileText, History, Calendar, Stethoscope } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export default function DashboardStandard() {
     const { user } = useAuth();
-    const { answers, loading } = useClientData();
+    const { answers, profile, loading } = useClientData();
 
     if (loading) return null;
 
@@ -47,6 +48,44 @@ export default function DashboardStandard() {
                             <div className="bg-gray-50 p-4 rounded-lg flex-1">
                                 <p className="text-xs text-muted-foreground">Próxima Entrega</p>
                                 <p className="font-bold text-gray-400">Ainda não agendada</p>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* WIDGET EQUIPE MÉDICA */}
+                <Card className="col-span-2 shadow-sm">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <Stethoscope className="h-5 w-5 text-primary" /> Minha Equipe
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Tricologista */}
+                        <div className="flex items-center gap-3 p-3 rounded-lg border bg-white">
+                            <Avatar className="h-10 w-10">
+                                <AvatarImage src={profile?.medical_team?.trichologist?.photo || undefined} className="object-cover" />
+                                <AvatarFallback>TRI</AvatarFallback>
+                            </Avatar>
+                            <div>
+                                <p className="text-xs font-semibold text-muted-foreground uppercase">Tricologista</p>
+                                <p className="font-medium text-slate-800 text-sm">
+                                    {profile?.medical_team?.trichologist?.name || "Aguardando"}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Nutricionista */}
+                        <div className="flex items-center gap-3 p-3 rounded-lg border bg-white">
+                            <Avatar className="h-10 w-10">
+                                <AvatarImage src={profile?.medical_team?.nutritionist?.photo || undefined} className="object-cover" />
+                                <AvatarFallback>NUT</AvatarFallback>
+                            </Avatar>
+                            <div>
+                                <p className="text-xs font-semibold text-muted-foreground uppercase">Nutricionista</p>
+                                <p className="font-medium text-slate-800 text-sm">
+                                    {profile?.medical_team?.nutritionist?.name || "Aguardando"}
+                                </p>
                             </div>
                         </div>
                     </CardContent>

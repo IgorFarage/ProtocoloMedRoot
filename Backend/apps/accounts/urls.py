@@ -1,11 +1,14 @@
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView, RecommendationView, UpdateAddressView, UserProfileView, UserProtocolView, UserUpdateView, BitrixWebhookView, PasswordResetRequestView, PasswordResetConfirmView, DoctorRegisterView
+from .views import RegisterView, UserQuestionnaireListView, MyTokenObtainPairView, SubscribeView, RecommendationView, UpdateAddressView, UserProfileView, UserProtocolView, UserUpdateView, BitrixWebhookView, PasswordResetRequestView, PasswordResetConfirmView, DoctorRegisterView, DoctorProfileUpdateView
 
 urlpatterns = [
     # Rota de Cadastro
     path('register/', RegisterView.as_view(), name='auth_register'),
     path('register-doctor/', DoctorRegisterView.as_view(), name='auth_register_doctor'),
+    
+    # Doctor Profile Settings
+    path('doctor/profile/', DoctorProfileUpdateView.as_view(), name='doctor_profile_update'),
 
     
     # Rotas de Login (JWT)

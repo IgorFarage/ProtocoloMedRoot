@@ -81,3 +81,23 @@ class PatientPhotos(models.Model):
     is_public = models.BooleanField(default=False)
     class Meta:
         verbose_name = 'Foto de Evolução'
+
+class DoctorAvailability(models.Model):
+    doctor = models.ForeignKey(DOCTOR_MODEL, on_delete=models.CASCADE, related_name='availabilities')
+    day_of_week = models.IntegerField(choices=[
+        (0, 'Segunda'),
+        (1, 'Terça'),
+        (2, 'Quarta'),
+        (3, 'Quinta'),
+        (4, 'Sexta'),
+        (5, 'Sábado'),
+        (6, 'Domingo')
+    ])
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'Disponibilidade Médica'
+        verbose_name_plural = 'Disponibilidades Médicas'
+        ordering = ['day_of_week', 'start_time']

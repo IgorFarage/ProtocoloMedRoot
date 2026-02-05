@@ -13,3 +13,10 @@ class PatientPhotoSerializer(serializers.ModelSerializer):
         if obj.photo:
             return obj.photo.url  # Returns relative path (e.g. /media/...)
         return None
+
+from .models import DoctorAvailability
+class DoctorAvailabilitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DoctorAvailability
+        fields = ['id', 'day_of_week', 'start_time', 'end_time', 'is_active']
+

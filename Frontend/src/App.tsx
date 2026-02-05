@@ -34,6 +34,7 @@ import DoctorRecord from "./pages/Doctor/DoctorRecord";
 import DoctorTelemedicine from "./pages/Doctor/DoctorTelemedicine";
 import DoctorSchedule from "./pages/Doctor/DoctorSchedule";
 import DoctorProfileSettings from "./pages/Doctor/DoctorProfileSettings";
+import DoctorAvailability from "./pages/Doctor/DoctorAvailability";
 import DoctorProfile from "./pages/Doctor/DoctorProfile"; // Não usado na rota comentada, mas mantido import
 // import DoctorProfile from "./pages/Doctor/DoctorProfile"; // Era duplicado ou não? Vou manter apenas um se existir
 
@@ -145,6 +146,12 @@ const App = () => {
                 <Route path="/medico/configuracoes" element={
                   <ProtectedRoute requireRole="doctor">
                     <DoctorProfileSettings />
+                  </ProtectedRoute>
+                }
+                />
+                <Route path="/medico/disponibilidade" element={
+                  <ProtectedRoute requireRole="doctor">
+                    <DoctorAvailability />
                   </ProtectedRoute>
                 }
                 />

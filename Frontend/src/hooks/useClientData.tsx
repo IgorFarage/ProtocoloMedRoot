@@ -48,6 +48,24 @@ export interface UserProfile {
         brand: string;
         expiry: string;
     };
+    medical_team?: {
+        trichologist: {
+            name: string;
+            crm: string;
+            photo: string | null;
+            id: string;
+            description?: string;
+            specialty?: string;
+        } | null;
+        nutritionist: {
+            name: string;
+            crm: string;
+            photo: string | null;
+            id: string;
+            description?: string;
+            specialty?: string;
+        } | null;
+    };
 }
 
 interface ClientDataContextType {

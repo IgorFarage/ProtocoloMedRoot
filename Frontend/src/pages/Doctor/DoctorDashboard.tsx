@@ -9,9 +9,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/auth/AuthProvider";
 import { User, Calendar as CalendarIcon, List, LogOut, Upload, Loader2, RefreshCw } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import api from "@/lib/api";
-
-import DoctorPlaceholder from "@/assets/Images/Medico02.jpg";
 
 interface Patient {
     id: string;
@@ -20,6 +19,7 @@ interface Patient {
     riskLevel: 'Baixo' | 'Moderado' | 'Alto';
     nextAppointment: string;
     email: string;
+    myRole?: string;
 }
 
 interface DoctorStats {
@@ -32,6 +32,7 @@ interface DoctorInfo {
     email: string;
     crm: string;
     specialty: string;
+    specialty_type?: string;
 }
 
 const MedicoDashboard = () => {
@@ -45,7 +46,7 @@ const MedicoDashboard = () => {
     const [stats, setStats] = useState<DoctorStats | null>(null);
     const [patients, setPatients] = useState<Patient[]>([]);
     const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-    const [profilePhoto, setProfilePhoto] = useState<string | null>(DoctorPlaceholder); // TODO: Fetch from backend
+    const [profilePhoto, setProfilePhoto] = useState<string | null>(null); // TODO: Fetch from backend
 
     const fetchData = async () => {
         setLoading(true);
@@ -167,7 +168,7 @@ const MedicoDashboard = () => {
 
                             <label className="flex items-center gap-2 text-sm text-primary cursor-pointer hover:underline">
                                 <Upload className="h-4 w-4" />
-                                {profilePhoto === DoctorPlaceholder ? "Adicionar Foto" : "Trocar Foto"}
+                                {profilePhoto ? "Trocar Foto" : "Adicionar Foto"}
                                 <Input
                                     type="file"
                                     accept="image/*"
@@ -181,7 +182,11 @@ const MedicoDashboard = () => {
 
                         <div className="space-y-3">
                             <div className="space-y-1">
-                                <label className="text-sm text-muted-foreground">Especialidade</label>
+                                <label className="text-sm text-muted-foreground">Área de Atuação</label>
+                                <Input value={doctorInfo?.specialty_type || "Não informado"} readOnly />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-sm text-muted-foreground">Especialidade (CRM)</label>
                                 <Input value={doctorInfo?.specialty} readOnly />
                             </div>
                             <div className="space-y-1">
@@ -211,9 +216,12 @@ const MedicoDashboard = () => {
                             className="rounded-md border shadow"
                         />
                     </CardContent>
-                    <CardFooter>
+                    <CardFooter className="flex flex-col gap-2">
                         <Link to="/medico/agenda" className="w-full">
                             <Button variant="ghost" className="w-full">Ver todos agendamentos</Button>
+                        </Link>
+                        <Link to="/medico/disponibilidade" className="w-full">
+                            <Button variant="outline" className="w-full">Gerenciar Disponibilidade</Button>
                         </Link>
                     </CardFooter>
                 </Card>
@@ -266,6 +274,15 @@ const MedicoDashboard = () => {
                                     <h3 className="text-2xl font-bold mb-2">{selectedPatient.name}</h3>
                                     <p className="text-sm text-muted-foreground">{selectedPatient.email}</p>
                                     <p className="text-sm text-muted-foreground mt-1">Última visita: {selectedPatient.lastVisit}</p>
+
+                                    <Separator className="my-4" />
+
+                                    <div className="space-y-2">
+                                        <p className="font-medium">Sua Atribuição:</p>
+                                        <Badge variant="secondary" className="text-sm font-normal">
+                                            {selectedPatient.myRole || "Médico Responsável"}
+                                        </Badge>
+                                    </div>
 
                                     <Separator className="my-4" />
 

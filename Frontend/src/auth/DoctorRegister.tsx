@@ -20,6 +20,7 @@ const DoctorRegister = () => {
         email: "",
         crm: "",
         specialty: "",
+        specialty_type: "trichologist",
         invite_code: "",
         password: "",
         confirmPassword: ""
@@ -46,6 +47,7 @@ const DoctorRegister = () => {
                 full_name: `${formData.title} ${formData.full_name}`,
                 crm: formData.crm,
                 specialty: formData.specialty,
+                specialty_type: formData.specialty_type,
                 invite_code: formData.invite_code
             });
 
@@ -114,9 +116,26 @@ const DoctorRegister = () => {
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label htmlFor="specialty">Especialidade</Label>
-                            <Input id="specialty" placeholder="Ex: Dermatologia, Tricologia" onChange={handleChange} />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="specialty_type">Área de Atuação</Label>
+                                <Select
+                                    value={formData.specialty_type}
+                                    onValueChange={(value) => setFormData({ ...formData, specialty_type: value })}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Selecione" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="trichologist">Tricologista</SelectItem>
+                                        <SelectItem value="nutritionist">Nutricionista</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="specialty">Especialidade</Label>
+                                <Input id="specialty" placeholder="Ex: Implante Capilar, Nutrição Clínica" onChange={handleChange} />
+                            </div>
                         </div>
 
                         <div className="space-y-2">

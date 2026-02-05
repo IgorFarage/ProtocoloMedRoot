@@ -487,8 +487,12 @@ class BitrixService:
             payment_status_raw = latest_deal.get(payment_status_field)
             
             # [FIX] Bitrix retorna lista ['Valor'], precisamos extrair
-            payment_status = payment_status_raw[0] if isinstance(payment_status_raw, list) and payment_status_raw else str(payment_status_raw)
-            if payment_status == 'None': payment_status = None
+            if isinstance(payment_status_raw, list):
+                payment_status = payment_status_raw[0] if payment_status_raw else None
+            else:
+                payment_status = str(payment_status_raw) if payment_status_raw is not None else None
+                
+            if str(payment_status) == 'None': payment_status = None
 
             # [VALIDAÇÃO RIGOROSA - FIX]
             # Se o status no Bitrix não for um dos aprovados, NUNCA reverter automaticamente se o usuário já tiver plano ativo localmente.
@@ -499,7 +503,9 @@ class BitrixService:
             is_bitrix_approved = str(payment_status).lower() in valid_statuses
             
             if not is_bitrix_approved:
-                logger.warning(f"⚠️ Divergência de Status: Bitrix diz '{payment_status}' (Deal {deal_id}), mas User local é '{user.current_plan}'.")
+                # Só loga warning se houver discordância real (ex: User tem plano, mas Bitrix diz que não)
+                if user.current_plan != 'none':
+                    logger.warning(f"⚠️ Divergência de Status: Bitrix diz '{payment_status}' (Deal {deal_id}), mas User local é '{user.current_plan}'.")
                 
                 # SÓ reverte se o usuário local estiver como 'none' ou se quisermos forçar.
                 # Para segurança do checkout, se o usuário já tem plano, assumimos que o banco local está certo (pois foi setado pelo Webhook/Sync Confirmado)
@@ -547,6 +553,13 @@ class BitrixService:
                 user.current_plan = new_plan
                 user.save(update_fields=['current_plan'])
                 logger.info(f"✅ Plano do usuário {user.email} atualizado via Bitrix para: {new_plan}")
+                
+                # [FEATURE] Atribuição de Equipe Médica
+                if new_plan in ['standard', 'plus']:
+                    try:
+                        AssignmentService.assign_medical_team(user)
+                    except Exception as e:
+                        logger.error(f"Erro ao atribuir equipe: {e}")
             
             return {"plan": new_plan, "payment_status": payment_status}
 
@@ -1019,7 +1032,7 @@ class DoctorInviteService:
         from .models import DoctorInvite
         if not code: return False
         try:
-            invite = DoctorInvite.objects.get(code=code.upper().strip())
+            invite = DoctorInvite.objects.get(code__iexact=code.strip())
             return not invite.is_used
         except DoctorInvite.DoesNotExist:
             return False
@@ -1030,7 +1043,7 @@ class DoctorInviteService:
         from django.utils import timezone
         
         try:
-            invite = DoctorInvite.objects.get(code=code.upper().strip(), is_used=False)
+            invite = DoctorInvite.objects.get(code__iexact=code.strip(), is_used=False)
             invite.is_used = True
             invite.used_by = doctor_user
             invite.used_at = timezone.now()
@@ -1038,3 +1051,60 @@ class DoctorInviteService:
             return True
         except DoctorInvite.DoesNotExist:
             return False
+
+class AssignmentService:
+    @staticmethod
+    def get_least_loaded_doctor(specialty_type: str):
+        from .models import Doctors
+        from django.db.models import Count
+        
+        # Estratégia: Pega o médico com menos pacientes daquele tipo
+        # Se for tricologista, conta 'trichology_patients'. Se nutricionista, 'nutrition_patients'.
+        
+        related_name = 'trichology_patients' if specialty_type == 'trichologist' else 'nutrition_patients'
+        
+        doctor = Doctors.objects.filter(specialty_type=specialty_type).annotate(
+            num_patients=Count(related_name)
+        ).order_by('num_patients').first()
+        
+        # Se falhar (ex: nenhum médico tem paciente ainda), pega qualquer um desse tipo
+        if not doctor:
+             doctor = Doctors.objects.filter(specialty_type=specialty_type).first()
+        
+        return doctor
+
+    @staticmethod
+    def assign_medical_team(patient_user):
+        from .models import Patients, Doctors
+        from django.db import transaction
+        
+        logger.info(f"🏥 Iniciando atribuição de equipe médica para: {patient_user.email}")
+        
+        try:
+            with transaction.atomic():
+                # Garante perfil de paciente (Resiliência)
+                patient_profile, created = Patients.objects.get_or_create(user=patient_user)
+                
+                # 1. Atribui Tricologista (Se não tiver)
+                if not patient_profile.assigned_trichologist:
+                    trichologist = AssignmentService.get_least_loaded_doctor('trichologist')
+                    if trichologist:
+                        patient_profile.assigned_trichologist = trichologist
+                        logger.info(f"✅ Tricologista atribuído: {trichologist.user.full_name}")
+                    else:
+                        logger.warning("⚠️ Nenhum Tricologista disponível no sistema.")
+                
+                # 2. Atribui Nutricionista (Se não tiver)
+                if not patient_profile.assigned_nutritionist:
+                    nutritionist = AssignmentService.get_least_loaded_doctor('nutritionist')
+                    if nutritionist:
+                        patient_profile.assigned_nutritionist = nutritionist
+                        logger.info(f"✅ Nutricionista atribuído: {nutritionist.user.full_name}")
+                    else:
+                        logger.warning("⚠️ Nenhum Nutricionista disponível no sistema.")
+                        
+                patient_profile.save()
+                return patient_profile
+        except Exception as e:
+            logger.error(f"❌ Erro ao atribuir equipe médica: {e}")
+            return None

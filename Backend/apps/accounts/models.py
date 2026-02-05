@@ -141,10 +141,20 @@ class Doctors(models.Model):
     """
     Dados específicos de Médicos (CRM, Especialidade).
     """
+    class SpecialtyType(models.TextChoices):
+        TRICHOLOGIST = 'trichologist', 'Tricologista'
+        NUTRITIONIST = 'nutritionist', 'Nutricionista'
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     crm = models.CharField(max_length=20)
-    specialty = models.CharField(max_length=100)
+    specialty = models.CharField(max_length=100) # Legacy (Mantido para exibição livre)
+    specialty_type = models.CharField(
+        max_length=20, 
+        choices=SpecialtyType.choices, 
+        default=SpecialtyType.TRICHOLOGIST
+    )
     profile_photo = models.ImageField(upload_to="doctor_photos/", null=True, blank=True)
+    bio = models.TextField(blank=True, null=True, help_text="Descrição curta ou mini-currículo do profissional.")
 
 class Patients(models.Model):
     """
@@ -152,7 +162,25 @@ class Patients(models.Model):
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     gender = models.CharField(max_length=20, blank=True, null=True)
-    assigned_doctor = models.ForeignKey(Doctors, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Legacy Field (Will be removed after migration)
+    assigned_doctor = models.ForeignKey(Doctors, on_delete=models.SET_NULL, null=True, blank=True, related_name='legacy_patients')
+    
+    # New Medical Team
+    assigned_trichologist = models.ForeignKey(
+        Doctors, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='trichology_patients'
+    )
+    assigned_nutritionist = models.ForeignKey(
+        Doctors, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='nutrition_patients'
+    )
 
 class DoctorInvite(models.Model):
     """
