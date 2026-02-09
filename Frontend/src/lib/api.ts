@@ -46,4 +46,9 @@ export const financial = {
         api.post<{ valid: boolean, discount_amount: number, final_price: number, message: string }>('/financial/coupon/validate/', { code, amount }),
 };
 
+export const chatbot = {
+    ask: (message: string) => api.post<{ response: string }>('/chatbot/ask/', { message }),
+};
+
+
 export default api;

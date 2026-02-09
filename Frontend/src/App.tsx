@@ -50,6 +50,8 @@ import PaymentFailure from "./pages/Plans/PaymentFailure";
 import { useEffect } from "react";
 import { analytics } from "@/lib/analytics";
 import { CookieBanner } from "@/components/analytics/CookieBanner";
+import { ChatbotWindow } from "@/components/ui/chatbot";
+
 
 const queryClient = new QueryClient();
 
@@ -158,8 +160,10 @@ const App = () => {
 
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              <ChatbotWindow />
             </AuthProvider>
           </MaintenanceGuard>
+
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>

@@ -96,6 +96,7 @@ INSTALLED_APPS = [
     'apps.medical',
     'apps.store',
     'apps.financial',
+    'apps.chatbot',
 ]
 
 MIDDLEWARE = [
@@ -202,9 +203,12 @@ RESEND_API_KEY = os.getenv('RESEND_API_KEY')
 MERCADO_PAGO_ACCESS_TOKEN = os.getenv('MERCADO_PAGO_ACCESS_TOKEN')
 ASAAS_API_KEY = os.getenv('ASAAS_API_KEY')
 ASAAS_API_URL = os.getenv('ASAAS_API_URL', 'https://sandbox.asaas.com/api/v3')
+CHATBOT_API_KEY = os.getenv('CHATBOT_API_KEY')
+CHATBOT_MOCK_MODE = os.getenv('CHATBOT_MOCK_MODE', 'False').lower() == 'true'
 
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:8080',
+
     'http://127.0.0.1:8080',
     'https://protocolo.med.br',
     'https://www.protocolo.med.br',
