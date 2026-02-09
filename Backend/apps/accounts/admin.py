@@ -1,15 +1,25 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import User, UserQuestionnaire, Doctors, Patients
+from .forms import CustomUserCreationForm, CustomUserChangeForm
 
 class CustomUserAdmin(BaseUserAdmin):
-    list_display = ('email', 'full_name', 'role', 'is_active')
-    search_fields = ('email', 'full_name')
+    add_form = CustomUserCreationForm
+    form = CustomUserChangeForm
+    model = User
+    list_display = ('email', 'full_name', 'phone', 'role', 'is_active')
+    search_fields = ('email', 'full_name', 'phone')
     ordering = ('email',)
     fieldsets = (
         (None, {'fields': ('email', 'password', 'role')}),
-        ('Informações', {'fields': ('full_name', 'id_bitrix', 'recommended_medications')}),
+        ('Informações', {'fields': ('full_name', 'phone', 'id_bitrix', 'recommended_medications')}),
         ('Permissões', {'fields': ('is_active', 'is_staff', 'is_superuser')}),
+    )
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('email', 'password', 'full_name', 'phone')}
+        ),
     )
 
 admin.site.register(User, CustomUserAdmin)

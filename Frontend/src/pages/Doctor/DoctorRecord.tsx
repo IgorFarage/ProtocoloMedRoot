@@ -9,30 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Video, FileText, Pill, Image as ImageIcon, Loader2 } from "lucide-react";
 import api from "@/lib/api";
 
-// Mock Data (Mantendo o resto mockado por enquanto, conforme solicitado foco nas fotos)
-const patientData = {
-    id: "1",
-    name: "João Silva",
-    age: 34,
-    photo: "https://github.com/shadcn.png", // Placeholder
-    riskStatus: "Moderado",
-    anamnesis: [
-        { question: "Gênero", answer: "Masculino" },
-        { question: "Histórico Familiar de Calvície?", answer: "Sim, pai e avô materno." },
-        { question: "Já usou Minoxidil?", answer: "Não." },
-        { question: "Alergias Conhecidas?", answer: "Nenhuma." },
-        { question: "Nível de Estresse (1-10)", answer: "8" },
-    ],
-    currentProtocol: {
-        name: "Protocolo Essencial - Queda Moderada",
-        medications: [
-            "Finasterida 1mg (Oral) - 1x ao dia",
-            "Minoxidil 5% (Tópico) - 1x à noite",
-            "Shampoo Antiqueda - Uso diário"
-        ]
-    }
-};
-
 interface PatientPhoto {
     id: number;
     photo: string;
@@ -43,30 +19,43 @@ const DoctorRecord = () => {
     const { id } = useParams();
     const navigate = useNavigate();
 
-    // Em uma aplicação real, buscaríamos os dados do paciente pelo ID aqui.
-    // const patient = fetchPatient(id);
-    const patient = patientData;
-
+    const [patient, setPatient] = useState<any>(null);
+    const [loadingPatient, setLoadingPatient] = useState(true);
     const [photos, setPhotos] = useState<PatientPhoto[]>([]);
     const [loadingPhotos, setLoadingPhotos] = useState(false);
 
     useEffect(() => {
-        const fetchPhotos = async () => {
+        const fetchData = async () => {
             if (!id) return;
+            setLoadingPatient(true);
             setLoadingPhotos(true);
+
             try {
-                const response = await api.get(`/medical/doctor/patients/${id}/photos/`);
-                setPhotos(response.data);
+                // 1. Busca Dados do Paciente (Novo Endpoint)
+                const patientResp = await api.get(`/medical/doctor/patients/${id}/details/`);
+                setPatient(patientResp.data);
+
+                // 2. Busca Fotos (Endpoint Existente)
+                const photosResp = await api.get(`/medical/doctor/patients/${id}/photos/`);
+                setPhotos(photosResp.data);
             } catch (error) {
-                console.error("Erro ao carregar fotos:", error);
-                // toast.error("Não foi possível carregar as fotos.");
+                console.error("Erro ao carregar dados:", error);
             } finally {
+                setLoadingPatient(false);
                 setLoadingPhotos(false);
             }
         };
 
-        fetchPhotos();
+        fetchData();
     }, [id]);
+
+    if (loadingPatient) {
+        return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
+    }
+
+    if (!patient) {
+        return <div className="text-center p-8">Paciente não encontrado.</div>;
+    }
 
     return (
         <div className="container mx-auto px-4 py-8 space-y-6">

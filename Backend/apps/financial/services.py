@@ -65,9 +65,9 @@ class AsaasService:
                  safe_payload["creditCardHolderInfo"] = "***SANITIZED***"
 
         logger.info(f"🚀 Asaas Request [{method}] {url} - Payload: {json.dumps(safe_payload)}")
-        # Debugging the auth/redirect issue (masked key logging kept as debug if vital, else removed)
-        # masked_key = self.api_key[:10] + "..." if self.api_key else "None"
-        # logger.debug(f"DEBUG: Calling {url} | Key starts with: {masked_key}")
+        # Debugging the auth/redirect issue
+        masked_key = self.api_key[:10] + "..." if self.api_key else "None"
+        logger.info(f"DEBUG: Calling {url} | Key starts with: {masked_key}")
 
         try:
             # [FIX] allow_redirects=False to see if we are being redirected to login

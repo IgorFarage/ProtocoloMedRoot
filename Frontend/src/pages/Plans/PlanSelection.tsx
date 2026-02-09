@@ -138,7 +138,7 @@ const PlanSelection = () => {
     }, []);
 
     const [formData, setFormData] = useState({
-        full_name: "", email: "", phone: "", password: "", confirmPassword: "", cpf: "",
+        full_name: "", email: "", phone: "", date_of_birth: "", password: "", confirmPassword: "", cpf: "",
         cep: "", address: "", number: "", neighborhood: "", complement: "", city: "", state: "",
         cardName: "", cardNumber: "", cardMonth: "", cardYear: "", cardCvv: ""
     });
@@ -159,6 +159,7 @@ const PlanSelection = () => {
                 full_name: profile.name || prev.full_name || "",
                 email: profile.email || prev.email || "",
                 phone: profile.phone || prev.phone || "",
+                date_of_birth: profile.date_of_birth || prev.date_of_birth || "",
                 cep: profile.address?.zip || prev.cep || "",
                 address: street || prev.address || "",
                 city: profile.address?.city || prev.city || "",
@@ -342,7 +343,8 @@ const PlanSelection = () => {
             if (profile) {
                 await api.put("/accounts/profile/update/", {
                     full_name: formData.full_name,
-                    phone: formData.phone
+                    phone: formData.phone,
+                    date_of_birth: formData.date_of_birth
                 });
                 toast({ title: "Dados Confirmados!", description: "Indo para endereço." });
                 setCurrentStep(2);
@@ -356,6 +358,7 @@ const PlanSelection = () => {
                 full_name: formData.full_name,
                 email: formData.email,
                 phone: formData.phone,
+                date_of_birth: formData.date_of_birth,
                 password: formData.password,
                 questionnaire_data: answers
             };
@@ -796,7 +799,8 @@ const PlanSelection = () => {
                                     <div className="grid md:grid-cols-2 gap-4">
                                         <div className="space-y-2"><Label>Nome Completo</Label><Input id="full_name" value={formData.full_name} onChange={handleInputChange} required /></div>
                                         <div className="space-y-2"><Label>Celular</Label><Input id="phone" value={formData.phone} onChange={handleInputChange} required placeholder="(11) 99999-9999" maxLength={15} /></div>
-                                        <div className="space-y-2 md:col-span-2"><Label>E-mail</Label><Input id="email" type="email" value={formData.email} onChange={handleInputChange} required disabled={!!profile} className={profile ? "bg-gray-100" : ""} /></div>
+                                        <div className="space-y-2"><Label>Data de Nascimento</Label><Input id="date_of_birth" type="date" value={formData.date_of_birth} onChange={handleInputChange} required /></div>
+                                        <div className="space-y-2"><Label>E-mail</Label><Input id="email" type="email" value={formData.email} onChange={handleInputChange} required disabled={!!profile} className={profile ? "bg-gray-100" : ""} /></div>
 
                                         {!profile && (
                                             <>

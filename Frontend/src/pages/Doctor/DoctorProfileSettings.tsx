@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Upload, X, Save, ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import api from "@/lib/api";
@@ -31,6 +32,7 @@ const DoctorProfileSettings = () => {
     const [phone, setPhone] = useState("");
 
     // Specialties (Backend stores as comma separated string for now, or single field)
+    const [specialtyType, setSpecialtyType] = useState("trichologist");
     const [specialties, setSpecialties] = useState<string[]>([]);
     const [newSpecialty, setNewSpecialty] = useState("");
 
@@ -47,6 +49,7 @@ const DoctorProfileSettings = () => {
                 setCrm(data.crm || "");
                 setBiography(data.bio || "");
                 setProfilePhoto(data.profilePhoto || null);
+                setSpecialtyType(data.specialty_type || "trichologist");
 
                 // Parse specialties if they come as "Tag1, Tag2"
                 if (data.specialty) {
@@ -94,6 +97,7 @@ const DoctorProfileSettings = () => {
             formData.append('phone', phone);
             formData.append('bio', biography);
             formData.append('crm', crm);
+            formData.append('specialty_type', specialtyType);
 
             // Join specialties
             formData.append('specialty', specialties.join(', '));
@@ -254,19 +258,39 @@ const DoctorProfileSettings = () => {
 
                         {/* Specialties */}
                         <div className="space-y-3">
-                            <Label>Especialidades</Label>
+                            <Label>Área de Atuação e Especialidades</Label>
+
+                            {/* Specialty Type Select */}
+                            <div className="space-y-2">
+                                <Label htmlFor="specialty_type" className="text-xs text-muted-foreground">Área de Atuação Principal</Label>
+                                <Select
+                                    value={specialtyType}
+                                    onValueChange={setSpecialtyType}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Selecione sua área" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="trichologist">Tricologista</SelectItem>
+                                        <SelectItem value="nutritionist">Nutricionista</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
 
                             {/* Specialty Input */}
-                            <div className="flex gap-2">
-                                <Input
-                                    value={newSpecialty}
-                                    onChange={(e) => setNewSpecialty(e.target.value)}
-                                    onKeyPress={(e) => e.key === 'Enter' && handleAddSpecialty()}
-                                    placeholder="Ex: Tricologia"
-                                />
-                                <Button onClick={handleAddSpecialty} type="button">
-                                    Adicionar
-                                </Button>
+                            <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">Especialidades (Tags)</Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        value={newSpecialty}
+                                        onChange={(e) => setNewSpecialty(e.target.value)}
+                                        onKeyPress={(e) => e.key === 'Enter' && handleAddSpecialty()}
+                                        placeholder="Ex: Implante Capilar"
+                                    />
+                                    <Button onClick={handleAddSpecialty} type="button">
+                                        Adicionar
+                                    </Button>
+                                </div>
                             </div>
 
                             {/* Specialty Tags */}

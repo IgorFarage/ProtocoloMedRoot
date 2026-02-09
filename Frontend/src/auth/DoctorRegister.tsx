@@ -19,6 +19,7 @@ const DoctorRegister = () => {
         full_name: "",
         email: "",
         crm: "",
+        crm_uf: "",
         specialty: "",
         specialty_type: "trichologist",
         invite_code: "",
@@ -38,6 +39,11 @@ const DoctorRegister = () => {
             return;
         }
 
+        if (!formData.crm || !formData.crm_uf) {
+            toast({ variant: "destructive", title: "CRM e UF são obrigatórios" });
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -45,7 +51,7 @@ const DoctorRegister = () => {
                 email: formData.email,
                 password: formData.password,
                 full_name: `${formData.title} ${formData.full_name}`,
-                crm: formData.crm,
+                crm: `${formData.crm}/${formData.crm_uf}`,
                 specialty: formData.specialty,
                 specialty_type: formData.specialty_type,
                 invite_code: formData.invite_code
@@ -110,9 +116,33 @@ const DoctorRegister = () => {
                                     />
                                 </div>
                             </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="crm">CRM / UF</Label>
-                                <Input id="crm" placeholder="123456/SP" required onChange={handleChange} />
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="crm">CRM (Número)</Label>
+                                    <Input
+                                        id="crm"
+                                        placeholder="123456"
+                                        required
+                                        value={formData.crm}
+                                        onChange={handleChange}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="crm_uf">UF</Label>
+                                    <Select
+                                        value={formData.crm_uf}
+                                        onValueChange={(value) => setFormData({ ...formData, crm_uf: value })}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="UF" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"].map((uf) => (
+                                                <SelectItem key={uf} value={uf}>{uf}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
                         </div>
 

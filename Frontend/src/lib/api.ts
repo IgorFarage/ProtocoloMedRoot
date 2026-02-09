@@ -11,7 +11,27 @@ api.interceptors.request.use((config) => {
         config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
+}, (error) => {
+    return Promise.reject(error);
 });
+
+// Interceptor para lidar com erros de resposta (401 Unauthorized)
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            // Token expirado ou inválido
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+
+            // Redireciona para login se não estiver lá
+            if (!window.location.pathname.includes('/login')) {
+                window.location.href = '/login';
+            }
+        }
+        return Promise.reject(error);
+    }
+);
 
 // Métodos de Autenticação e Reset
 export const auth = {

@@ -12,32 +12,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import api from "@/lib/api";
 
-interface Patient {
-    id: string;
-    name: string;
-    lastVisit: string;
-    riskLevel: 'Baixo' | 'Moderado' | 'Alto';
-    nextAppointment: string;
-    email: string;
-    myRole?: string;
-}
-
-interface DoctorStats {
-    total_patients: number;
-    appointments_today: number;
-}
-
-interface DoctorInfo {
-    name: string;
-    email: string;
-    crm: string;
-    specialty: string;
-    specialty_type?: string;
-}
+import { useToast } from "@/components/ui/use-toast";
+import { DoctorInfo, DoctorStats, Patient } from "@/types/medical";
 
 const MedicoDashboard = () => {
     const { logout } = useAuth();
     const navigate = useNavigate();
+    const { toast } = useToast();
     const [date, setDate] = useState<Date | undefined>(new Date());
 
     // State for Real Data
@@ -68,6 +49,11 @@ const MedicoDashboard = () => {
             }
         } catch (error) {
             console.error("Erro ao carregar dashboard:", error);
+            toast({
+                variant: "destructive",
+                title: "Erro ao carregar dados",
+                description: "Não foi possível carregar o dashboard. Tente recarregar a página."
+            });
         } finally {
             setLoading(false);
         }
@@ -95,11 +81,18 @@ const MedicoDashboard = () => {
                 // Update with real URL from server
                 if (response.data.photo_url) {
                     setProfilePhoto(response.data.photo_url);
+                    toast({
+                        title: "Foto atualizada",
+                        description: "Sua foto de perfil foi alterada com sucesso."
+                    });
                 }
-                console.log("Foto atualizada com sucesso");
             } catch (error) {
                 console.error("Erro ao fazer upload da foto:", error);
-                // Revert on error? Or show toast.
+                toast({
+                    variant: "destructive",
+                    title: "Erro no upload",
+                    description: "Não foi possível enviar a foto. Tente novamente."
+                });
             }
         }
     };

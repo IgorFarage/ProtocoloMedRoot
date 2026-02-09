@@ -61,6 +61,7 @@ const ClientProfile = () => {
         name: "",
         email: "",
         phone: "",
+        date_of_birth: "",
         street: "", // ADDRESS
         neighborhood: "", // ADDRESS_2
         city: "", // ADDRESS_CITY
@@ -77,6 +78,7 @@ const ClientProfile = () => {
                 name: profile.name || user?.full_name || "",
                 email: profile.email || user?.email || "",
                 phone: profile.phone || "",
+                date_of_birth: profile.date_of_birth || "",
                 street: profile.address?.street || "",
                 neighborhood: profile.address?.neighborhood || "",
                 city: profile.address?.city || "",
@@ -157,6 +159,7 @@ const ClientProfile = () => {
                     name: profile.name || user?.full_name || "",
                     email: profile.email || user?.email || "",
                     phone: profile.phone || "",
+                    date_of_birth: profile.date_of_birth || "",
                     street: profile.address?.street || "",
                     neighborhood: profile.address?.neighborhood || "",
                     city: profile.address?.city || "",
@@ -187,6 +190,13 @@ const ClientProfile = () => {
                     // Phone não está no update_address padrão, mas vamos enviar separado se necessário
                     // Por enquanto update_address só atualiza endereço no BitrixService
                 }
+            });
+
+            // [FIX] Atualizar o Telefone e Nome Separadamente
+            await api.put('/accounts/profile/update/', {
+                full_name: formData.name,
+                phone: formData.phone,
+                date_of_birth: formData.date_of_birth
             });
 
             // TODO: Se tiver endpoint para atualizar telefone, chamar aqui.
@@ -312,19 +322,35 @@ const ClientProfile = () => {
                                                 />
                                             </div>
                                         </div>
+
+
                                     </div>
 
-                                    {/* Telefone */}
-                                    <div className="space-y-2">
-                                        <Label htmlFor="phone">Telefone / WhatsApp</Label>
-                                        <div className="relative">
-                                            <Phone className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                    {/* Telefone e Data de Nascimento */}
+                                    <div className="grid md:grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label htmlFor="phone">Telefone / WhatsApp</Label>
+                                            <div className="relative">
+                                                <Phone className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                <Input
+                                                    id="phone"
+                                                    name="phone"
+                                                    value={formData.phone}
+                                                    onChange={handleChange}
+                                                    className="pl-9 text-gray-900 disabled:opacity-100"
+                                                    disabled={!isEditing}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="date_of_birth">Data de Nascimento</Label>
                                             <Input
-                                                id="phone"
-                                                name="phone"
-                                                value={formData.phone}
+                                                id="date_of_birth"
+                                                name="date_of_birth"
+                                                type="date"
+                                                value={formData.date_of_birth}
                                                 onChange={handleChange}
-                                                className="pl-9 text-gray-900 disabled:opacity-100"
+                                                className="text-gray-900 disabled:opacity-100"
                                                 disabled={!isEditing}
                                             />
                                         </div>
@@ -679,8 +705,8 @@ const ClientProfile = () => {
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
-            </div>
-        </div>
+            </div >
+        </div >
     );
 };
 

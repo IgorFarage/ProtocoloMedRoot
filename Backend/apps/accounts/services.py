@@ -554,12 +554,15 @@ class BitrixService:
                 user.save(update_fields=['current_plan'])
                 logger.info(f"✅ Plano do usuário {user.email} atualizado via Bitrix para: {new_plan}")
                 
-                # [FEATURE] Atribuição de Equipe Médica
-                if new_plan in ['standard', 'plus']:
-                    try:
-                        AssignmentService.assign_medical_team(user)
-                    except Exception as e:
-                        logger.error(f"Erro ao atribuir equipe: {e}")
+            # [FEATURE] Atribuição de Equipe Médica (Auto-Healing)
+            # Executa SEMPRE que o plano for válido, para garantir que quem ficou sem médico receba um.
+            if new_plan in ['standard', 'plus']:
+                try:
+                    AssignmentService.assign_medical_team(user)
+                except Exception as e:
+                    logger.error(f"Erro ao atribuir equipe: {e}")
+            
+            # [FIX] Se o plano for 'none', verifica se precisamos remover acesso (opcional, por enquanto mantemos histórico)
             
             return {"plan": new_plan, "payment_status": payment_status}
 

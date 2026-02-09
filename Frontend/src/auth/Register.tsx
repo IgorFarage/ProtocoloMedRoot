@@ -20,6 +20,7 @@ const Register = () => {
         full_name: "",
         email: "",
         phone: "",
+        date_of_birth: "",
         password: "",
         confirmPassword: ""
     });
@@ -44,7 +45,8 @@ const Register = () => {
                 email: formData.email,
                 password: formData.password,
                 full_name: formData.full_name,
-                phone: formData.phone
+                phone: formData.phone,
+                date_of_birth: formData.date_of_birth
             });
 
             // 2. Faz o Login automático para pegar o Token
@@ -102,6 +104,10 @@ const Register = () => {
                         <div className="space-y-2">
                             <Label htmlFor="phone">Celular (WhatsApp)</Label>
                             <Input id="phone" type="tel" placeholder="(11) 99999-9999" required onChange={handleChange} />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="date_of_birth">Data de Nascimento</Label>
+                            <Input id="date_of_birth" type="date" required onChange={handleChange} />
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="password">Senha</Label>

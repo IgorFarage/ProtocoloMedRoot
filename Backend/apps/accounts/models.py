@@ -39,6 +39,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20, null=True, blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
     
     # Endereço Local (Cache/Persistência)
     cep = models.CharField(max_length=10, null=True, blank=True)

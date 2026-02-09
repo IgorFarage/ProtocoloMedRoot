@@ -10,6 +10,7 @@ from apps.accounts.models import User
 from apps.accounts.models import User
 from .serializers import PatientPhotoSerializer
 from django.db import transaction
+from .permissions import IsDoctor
 
 class SlotsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -168,12 +169,10 @@ class PatientEvolutionView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class DoctorPatientPhotosView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDoctor]
 
     def get(self, request, patient_id):
-        # 1. Segurança: Apenas Médicos
-        if request.user.role != 'doctor':
-             return Response({"error": "Acesso negado. Apenas médicos podem acessar este recurso."}, status=status.HTTP_403_FORBIDDEN)
+        # 1. Segurança: Apenas Médicos (Garantido por IsDoctor)
         
         # 2. Buscar Fotos
         # Importante: O 'patient_id' aqui se refere ao ID do usuário (User Table) ou da tabela Patients?
@@ -193,11 +192,9 @@ class DoctorPatientPhotosView(APIView):
         return Response(serializer.data)
 
 class DoctorDashboardStatsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDoctor]
 
     def get(self, request):
-        if request.user.role != 'doctor':
-             return Response({"error": "Acesso negado."}, status=status.HTTP_403_FORBIDDEN)
         
         # 1. Dados do Médico
         # Tenta buscar perfil médico explicitamente
@@ -287,12 +284,10 @@ class DoctorDashboardStatsView(APIView):
         })
 
 class UpdateDoctorPhotoView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDoctor]
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request):
-        if request.user.role != 'doctor':
-             return Response({"error": "Acesso negado."}, status=status.HTTP_403_FORBIDDEN)
              
         file_obj = request.FILES.get('photo')
         if not file_obj:
@@ -320,11 +315,9 @@ from .serializers import DoctorAvailabilitySerializer
 from .models import DoctorAvailability
 
 class DoctorAvailabilityView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDoctor]
 
     def get(self, request):
-        if request.user.role != 'doctor':
-             return Response({"error": "Acesso negado."}, status=status.HTTP_403_FORBIDDEN)
         
         try:
             from apps.accounts.models import Doctors
@@ -336,8 +329,6 @@ class DoctorAvailabilityView(APIView):
              return Response({"error": "Perfil médico não encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
     def post(self, request):
-        if request.user.role != 'doctor':
-             return Response({"error": "Acesso negado."}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             from apps.accounts.models import Doctors
@@ -356,7 +347,7 @@ class DoctorAvailabilityView(APIView):
                     if serializer.is_valid():
                         serializer.save(doctor=doctor)
                         return Response(serializer.data, status=status.HTTP_201_CREATED)
-                    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             else:
                  # Single Add
                 serializer = DoctorAvailabilitySerializer(data=data)
@@ -367,4 +358,57 @@ class DoctorAvailabilityView(APIView):
 
         except Doctors.DoesNotExist:
              return Response({"error": "Perfil médico não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+from .utils import get_readable_question
+from apps.accounts.models import User
+from apps.accounts.services import BitrixService
+
+class DoctorPatientDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsDoctor]
+
+    def get(self, request, patient_id):
+        try:
+            # 1. Busca Paciente
+            patient = User.objects.get(id=patient_id, role='patient')
+            
+            # 2. Busca Questionário Mais Recente
+            last_q = patient.questionnaires.order_by('-created_at').first()
+            anamnesis = []
+            if last_q:
+                answers = last_q.answers
+                for key, value in answers.items():
+                    question_text = get_readable_question(key)
+                    # Pular chaves internas ou não mapeadas se desejar
+                    if question_text:
+                         anamnesis.append({"question": question_text, "answer": str(value)})
+
+            # 3. Busca Protocolo (Cacheado ou Bitrix)
+            # Reaproveita lógica do UserProtocolView mas sem request.user
+            protocol_data = {}
+            try:
+                protocol_data = BitrixService.get_client_protocol(patient)
+            except:
+                protocol_data = {"name": "Não identificado", "medications": []}
+
+            # Formata Protocolo
+            current_protocol = {
+                "name": protocol_data.get('title', 'Protocolo Personalizado'),
+                "medications": [p.get('name') for p in protocol_data.get('products', [])]
+            }
+
+            # 4. Dados Básicos
+            data = {
+                "id": str(patient.id),
+                "name": patient.full_name,
+                "age": "N/A", # Idade não é salva no User model por padrão, talvez nas respostas
+                "photo": "https://github.com/shadcn.png", # Placeholder ou foto do perfil se tiver
+                "riskStatus": "Moderado", # Simulado base nas respostas
+                "anamnesis": anamnesis,
+                "currentProtocol": current_protocol
+            }
+
+            return Response(data)
+
+        except User.DoesNotExist:
+            return Response({"error": "Paciente não encontrado"}, status=status.HTTP_404_NOT_FOUND)
 

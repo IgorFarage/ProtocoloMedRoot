@@ -16,6 +16,7 @@ export interface UserProfile {
     role: string;
     plan: string;
     phone?: string;
+    date_of_birth?: string;
     address?: {
         street: string;
         city: string;

@@ -196,6 +196,7 @@ class UserProfileView(APIView):
             "role": user.role,
             "plan": user.current_plan,
             "phone": user.phone,
+            "date_of_birth": user.date_of_birth,
             "address": {
                 "street": user.street,
                 "number": user.number,
@@ -247,7 +248,17 @@ class UserProfileView(APIView):
                 logger.info(f"🔧 Auto-healing: Dados de Contato recuperados do Bitrix p/ {user.email}")
 
             # Mescla para o frontend (Prioriza Bitrix se vier algo novo, mas local já está no default)
-            profile_data.update(bitrix_data) 
+            # [FIX] Não sobrescrever telefone local com vazio do Bitrix
+            bitrix_phone = bitrix_data.get('phone')
+            if bitrix_phone:
+                profile_data['phone'] = bitrix_phone
+            
+            # Remove phone do update genérico para evitar overwrite com vazio/None
+            bitrix_data_copy = bitrix_data.copy()
+            if 'phone' in bitrix_data_copy:
+                del bitrix_data_copy['phone']
+
+            profile_data.update(bitrix_data_copy) 
         except Exception as e:
             logger.warning(f"⚠️ Erro ao buscar perfil Bitrix: {e}")
             # Não falha o request, apenas vai sem os dados extras
@@ -427,11 +438,16 @@ class UserUpdateView(APIView):
         phone = data.get('phone')
 
         updated = False
-        if full_name:
-            user.full_name = full_name
+        if 'full_name' in data:
+            user.full_name = data.get('full_name')
             updated = True
-        if phone:
-            user.phone = phone
+        
+        if 'phone' in data:
+            user.phone = data.get('phone')
+            updated = True
+            
+        if 'date_of_birth' in data:
+            user.date_of_birth = data.get('date_of_birth')
             updated = True
         
         if updated:
@@ -640,18 +656,25 @@ class DoctorProfileUpdateView(APIView):
         full_name = data.get('fullName')
         phone = data.get('phone')
         
-        if full_name: user.full_name = full_name
-        if phone: user.phone = phone
+        if 'fullName' in data:
+             user.full_name = data.get('fullName')
+        
+        if 'phone' in data:
+            user.phone = data.get('phone') # Permite limpar se vier string vazia
+            logger.info(f"📞 Telefone atualizado para: {user.phone}")
+            
         user.save()
 
         # 2. Atualizar Doctor (Bio, CRM, Specialty, Foto)
         bio = data.get('bio')
         crm = data.get('crm') # Opcional permitir trocar
         specialty = data.get('specialty') # String (tags joinadas ou apenas texto)
+        specialty_type = data.get('specialty_type')
 
         if bio is not None: doctor.bio = bio
         if crm: doctor.crm = crm
         if specialty: doctor.specialty = specialty
+        if specialty_type: doctor.specialty_type = specialty_type
         
         # Foto (Files)
         photo = request.FILES.get('profilePhoto')
