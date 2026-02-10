@@ -10,13 +10,13 @@ class GeminiService:
     Serviço responsável pela comunicação com a API do Google Gemini.
     """
     
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-    
     @classmethod
     def generate_response(cls, message: str) -> str:
         """
         Envia uma mensagem para o Gemini e retorna a resposta gerada.
         """
+        model = getattr(settings, 'CHATBOT_MODEL', 'gemini-1.5-flash')
+        base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         # --- MOCK MODE (Para economizar cota da API) ---
         if getattr(settings, 'CHATBOT_MOCK_MODE', False):
             import random
@@ -34,7 +34,7 @@ class GeminiService:
             logger.error("CHATBOT_API_KEY não configurada no settings.")
             raise APIException("Erro de configuração do servidor: Chave de API ausente.")
 
-        url = f"{cls.BASE_URL}?key={api_key}"
+        url = f"{base_url}?key={api_key}"
         
         headers = {
             "Content-Type": "application/json"
