@@ -15,6 +15,15 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import timedelta
+import socket
+import urllib3.util.connection as urllib3_cn
+
+# --- PATCH DE REDE: Forçar IPv4 ---
+def allowed_gai_family():
+    return socket.AF_INET
+
+urllib3_cn.allowed_gai_family = allowed_gai_family
+# ----------------------------------
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 # ==============================================================================

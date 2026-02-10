@@ -10,7 +10,7 @@ class GeminiService:
     Serviço responsável pela comunicação com a API do Google Gemini.
     """
     
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
     
     @classmethod
     def generate_response(cls, message: str) -> str:
