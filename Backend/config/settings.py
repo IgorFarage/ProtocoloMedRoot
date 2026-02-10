@@ -213,7 +213,7 @@ MERCADO_PAGO_ACCESS_TOKEN = os.getenv('MERCADO_PAGO_ACCESS_TOKEN')
 ASAAS_API_KEY = os.getenv('ASAAS_API_KEY')
 ASAAS_API_URL = os.getenv('ASAAS_API_URL', 'https://sandbox.asaas.com/api/v3')
 CHATBOT_API_KEY = os.getenv('CHATBOT_API_KEY')
-CHATBOT_MODEL = os.getenv('CHATBOT_MODEL', 'gemini-1.5-flash')
+CHATBOT_MODEL = os.getenv('CHATBOT_MODEL', 'gemini-2.5-flash')
 CHATBOT_MOCK_MODE = os.getenv('CHATBOT_MOCK_MODE', 'False').lower() == 'true'
 
 CSRF_TRUSTED_ORIGINS = [
