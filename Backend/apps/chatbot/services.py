@@ -16,7 +16,7 @@ class GeminiService:
         Envia uma mensagem para o Gemini e retorna a resposta gerada.
         """
         model = getattr(settings, 'CHATBOT_MODEL', 'gemini-1.5-flash')
-        base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        base_url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
         # --- MOCK MODE (Para economizar cota da API) ---
         if getattr(settings, 'CHATBOT_MOCK_MODE', False):
             import random
