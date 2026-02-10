@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
-import { MessageCircle, X, Send, Bot, User } from "lucide-react";
+import { MessageCircle, X, Send, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { chatbot } from "@/lib/api";
 import { useToast } from "@/components/ui/use-toast";
+import LiaAvatar from "@/assets/Images/AssistenteLia.png";
+import { useAuth } from "@/auth/AuthProvider";
 
 interface Message {
     id: string;
@@ -15,11 +17,16 @@ interface Message {
 }
 
 export function ChatbotWindow() {
+    const { user } = useAuth();
+
+    // Se não estiver logado, não renderiza nada
+    if (!user) return null;
+
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
         {
             id: "welcome",
-            text: "Olá! Sou a IA do ProtocoloMed. Como posso ajudar você hoje?",
+            text: "Olá! Sou a Lia, sua assistente virtual. Como posso ajudar você hoje?",
             sender: "bot",
             timestamp: new Date(),
         },
@@ -93,8 +100,10 @@ export function ChatbotWindow() {
                 <Card className="w-[350px] h-[500px] flex flex-col shadow-2xl border-primary/20 animate-in slide-in-from-bottom-5 fade-in duration-300">
                     <CardHeader className="bg-primary px-4 py-3 flex-row items-center justify-between space-y-0 rounded-t-xl">
                         <div className="flex items-center gap-2 text-primary-foreground">
-                            <Bot className="h-5 w-5" />
-                            <CardTitle className="text-base font-medium">Assistente IA</CardTitle>
+                            <div className="h-8 w-8 rounded-full overflow-hidden border-2 border-white/20 bg-white/10">
+                                <img src={LiaAvatar} alt="Lia" className="w-full h-full object-cover" />
+                            </div>
+                            <CardTitle className="text-base font-medium">Lia - Assistente Virtual</CardTitle>
                         </div>
                         <Button
                             variant="ghost"
@@ -114,13 +123,19 @@ export function ChatbotWindow() {
                             {messages.map((msg) => (
                                 <div
                                     key={msg.id}
-                                    className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"
-                                        }`}
+                                    className={`flex items-end gap-2 ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
                                 >
+                                    {/* Avatar da Lia nas mensagens dela */}
+                                    {msg.sender === 'bot' && (
+                                        <div className="h-6 w-6 rounded-full overflow-hidden flex-shrink-0 mb-1 border border-border">
+                                            <img src={LiaAvatar} alt="Lia" className="w-full h-full object-cover" />
+                                        </div>
+                                    )}
+
                                     <div
                                         className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow-sm ${msg.sender === "user"
-                                                ? "bg-primary text-primary-foreground rounded-tr-none"
-                                                : "bg-muted text-muted-foreground rounded-tl-none border border-border"
+                                            ? "bg-primary text-primary-foreground rounded-tr-none"
+                                            : "bg-muted text-muted-foreground rounded-tl-none border border-border"
                                             }`}
                                     >
                                         {msg.text}
@@ -128,7 +143,10 @@ export function ChatbotWindow() {
                                 </div>
                             ))}
                             {isLoading && (
-                                <div className="flex justify-start">
+                                <div className="flex justify-start items-center gap-2">
+                                    <div className="h-6 w-6 rounded-full overflow-hidden flex-shrink-0 border border-border">
+                                        <img src={LiaAvatar} alt="Lia" className="w-full h-full object-cover" />
+                                    </div>
                                     <div className="bg-muted text-muted-foreground rounded-2xl rounded-tl-none border border-border px-4 py-2 text-sm shadow-sm flex items-center gap-1">
                                         <span className="w-1.5 h-1.5 bg-foreground/40 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
                                         <span className="w-1.5 h-1.5 bg-foreground/40 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
@@ -165,12 +183,12 @@ export function ChatbotWindow() {
             <Button
                 onClick={toggleChat}
                 size="lg"
-                className="h-14 w-14 rounded-full shadow-lg hover:scale-105 transition-transform duration-200 bg-primary hover:bg-primary/90 text-primary-foreground"
+                className="h-14 w-14 rounded-full shadow-lg hover:scale-105 transition-transform duration-200 bg-primary hover:bg-primary/90 text-primary-foreground p-0 overflow-hidden"
             >
                 {isOpen ? (
                     <X className="h-6 w-6" />
                 ) : (
-                    <MessageCircle className="h-6 w-6" />
+                    <img src={LiaAvatar} alt="Lia" className="w-full h-full object-cover" />
                 )}
             </Button>
         </div>

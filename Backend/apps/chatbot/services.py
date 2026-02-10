@@ -45,7 +45,7 @@ class GeminiService:
             "contents": [
                 {
                     "parts": [
-                        {"text": message}
+                        {"text": f"Você é a Lia, assistente virtual do sistema ProtocoloMed. Responda de forma amigável e profissional. Mensagem do usuário: {message}"}
                     ]
                 }
             ]
