@@ -103,6 +103,10 @@ services:
       - EXECUTIONS_MODE=queue
       - QUEUE_BULL_REDIS_HOST=n8n-redis
       - QUEUE_BULL_REDIS_PORT=6379
+      - N8N_RUNNERS_ENABLED=true
+      - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_GIT_NODE_DISABLE_BARE_REPOS=true
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
@@ -132,6 +136,10 @@ services:
       - EXECUTIONS_MODE=queue
       - QUEUE_BULL_REDIS_HOST=n8n-redis
       - QUEUE_BULL_REDIS_PORT=6379
+      - N8N_RUNNERS_ENABLED=true
+      - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_GIT_NODE_DISABLE_BARE_REPOS=true
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
