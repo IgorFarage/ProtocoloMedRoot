@@ -68,15 +68,15 @@ services:
     image: postgres:15
     restart: always
     environment:
-      - POSTGRES_USER=db_user
-      - POSTGRES_PASSWORD=s0flWLTJKH2jh24b
-      - POSTGRES_DB=db_n8n
+      - POSTGRES_USER=${N8N_DB_USER}
+      - POSTGRES_PASSWORD=${N8N_DB_PASSWORD}
+      - POSTGRES_DB=${N8N_DB_NAME}
     volumes:
       - n8n_db_data:/var/lib/postgresql/data
     networks:
       - protocolomed_net
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U db_user -d db_n8n" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${N8N_DB_USER} -d ${N8N_DB_NAME}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -96,10 +96,10 @@ services:
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=n8n-db
       - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=db_n8n
-      - DB_POSTGRESDB_USER=db_user
-      - DB_POSTGRESDB_PASSWORD=s0flWLTJKH2jh24b
-      - N8N_ENCRYPTION_KEY=tbaawni3eW1flPBu
+      - DB_POSTGRESDB_DATABASE=${N8N_DB_NAME}
+      - DB_POSTGRESDB_USER=${N8N_DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
       - EXECUTIONS_MODE=queue
       - QUEUE_BULL_REDIS_HOST=n8n-redis
       - QUEUE_BULL_REDIS_PORT=6379
@@ -125,10 +125,10 @@ services:
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=n8n-db
       - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=db_n8n
-      - DB_POSTGRESDB_USER=db_user
-      - DB_POSTGRESDB_PASSWORD=s0flWLTJKH2jh24b
-      - N8N_ENCRYPTION_KEY=tbaawni3eW1flPBu
+      - DB_POSTGRESDB_DATABASE=${N8N_DB_NAME}
+      - DB_POSTGRESDB_USER=${N8N_DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
       - EXECUTIONS_MODE=queue
       - QUEUE_BULL_REDIS_HOST=n8n-redis
       - QUEUE_BULL_REDIS_PORT=6379

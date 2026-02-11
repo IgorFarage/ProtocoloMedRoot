@@ -22,11 +22,14 @@ export function ChatbotWindow() {
     // Se não estiver logado, não renderiza nada
     if (!user) return null;
 
+    // Extrai o primeiro nome para uma saudação mais pessoal
+    const firstName = user.full_name ? user.full_name.split(" ")[0] : "";
+
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
         {
             id: "welcome",
-            text: "Olá! Sou a Lia, sua assistente virtual. Como posso ajudar você hoje?",
+            text: `Olá ${firstName}! Sou a Lia, sua assistente virtual especialista em saúde capilar. Como posso ajudar você hoje?`,
             sender: "bot",
             timestamp: new Date(),
         },

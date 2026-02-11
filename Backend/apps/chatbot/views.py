@@ -29,8 +29,8 @@ class ChatbotView(APIView):
             )
 
         try:
-            # Chama o serviço para obter a resposta da IA
-            response_text = GeminiService.generate_response(message)
+            # Chama o serviço para obter a resposta da IA, passando o usuário para contexto (ex: verificação de plano)
+            response_text = GeminiService.generate_response(message, user=request.user)
             
             return Response({"response": response_text}, status=status.HTTP_200_OK)
             
