@@ -269,6 +269,26 @@ class BitrixService:
             if deal_id and products_list:
                 rows = [{"PRODUCT_ID": p.get('id', 0), "PRODUCT_NAME": p.get('name'), "PRICE": float(p.get('price', 0)), "QUANTITY": 1} for p in products_list]
                 BitrixService._safe_request('POST', 'crm.deal.productrows.set.json', json={"id": deal_id, "rows": rows})
+                
+                # [FIX] Persistir Protocolo no User Localmente
+                try:
+                    # Salva apenas os dados essenciais para o frontend
+                    simplified_protocol = []
+                    for p in products_list:
+                        simplified_protocol.append({
+                            "id": p.get('id'),
+                            "name": p.get('name'),
+                            "price": float(p.get('price', 0)), # Cast Decimal to float
+                            "img": p.get('img'),
+                            "description": p.get('description'),
+                            "sub": p.get('sub', 'Protocolo Personalizado')
+                        })
+                    
+                    user.recommended_medications = simplified_protocol
+                    user.save(update_fields=['recommended_medications'])
+                    logger.info(f"✅ Protocolo salvo localmente para {user.email} com {len(simplified_protocol)} itens.")
+                except Exception as e:
+                    logger.error(f"❌ Erro ao salvar protocolo localmente: {e}")
             
             return deal_id
 

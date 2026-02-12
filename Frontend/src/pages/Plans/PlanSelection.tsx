@@ -165,7 +165,7 @@ const PlanSelection = () => {
                 city: profile.address?.city || prev.city || "",
                 state: profile.address?.state || prev.state || "",
                 neighborhood: profile.address?.neighborhood || prev.neighborhood || "",
-                number: prev.number || "S/N",
+                number: profile.address?.number || num || prev.number || "S/N",
                 complement: prev.complement || "",
             }));
 
