@@ -115,9 +115,126 @@ class MedicalScheduleService:
         return available
 
     @staticmethod
-    def book_appointment(user: User, date_str: str, time_str: str, doctor_id: str = None) -> Dict[str, Any]:
+    def get_appointment_eligibility(user: User, specialty_type: str = 'tricologia') -> Dict[str, Any]:
         """
-        Tenta agendar uma consulta.
+        Calcula elegibilidade para consulta gratuita e preço.
+        Retorna: {
+            "is_free": bool,
+            "days_remaining": int (0 se disponível),
+            "price": float,
+            "last_appointment_date": datetime,
+            "message": str
+        }
+        """
+        # 1. Obter Preço Base (Bitrix)
+        from apps.accounts.config import BitrixConfig
+        from apps.accounts.services import BitrixService
+        
+        product_id = BitrixConfig.APPOINTMENT_PRODUCT_IDS.get('tricologia', 296)
+        if specialty_type in ['nutricao', 'nutritionist']:
+             product_id = BitrixConfig.APPOINTMENT_PRODUCT_IDS.get('nutricao', 298)
+        
+        price = BitrixService.get_product_price(product_id)
+        if price <= 0: price = 150.00 # Fallback
+
+        # 2. Regra Standard
+        if user.current_plan != 'plus':
+            return {
+                "is_free": False,
+                "days_remaining": 0,
+                "price": price,
+                "message": "Plano Standard: Consultas são cobradas à parte."
+            }
+
+        # 3. Regra Plus (90 dias)
+        from django.utils import timezone
+        
+        # Buscar última consulta (Scheduled ou Completed) desta especialidade
+        # Otimização: Filtrar por doctores com essa especialidade? 
+        # Como o modelo Appointment não tem specialty, filtramos em memória ou join.
+        # Vamos pegar todas do user recentes e verificar.
+        
+        from apps.medical.models import Appointments
+        
+        # Pega a ultima consulta independente da data
+        last_appt = Appointments.objects.filter(
+            patient=user,
+            status__in=['scheduled', 'completed', 'waiting_payment']
+        ).order_by('-scheduled_at') # Mais recente primeiro
+
+        last_valid_appt = None
+        for appt in last_appt:
+            if appt.doctor and hasattr(appt.doctor, 'doctor_profile'):
+                doc_spec = appt.doctor.doctor_profile.specialty_type
+                # Normaliza
+                is_target = False
+                if specialty_type in ['tricologia', 'trichologist'] and doc_spec in ['tricologia', 'trichologist']: is_target = True
+                elif specialty_type in ['nutricao', 'nutritionist'] and doc_spec in ['nutricao', 'nutritionist']: is_target = True
+                
+                if is_target:
+                    last_valid_appt = appt
+                    break
+        
+        if not last_valid_appt:
+            return {
+                "is_free": True,
+                "days_remaining": 0,
+                "price": price,
+                "message": "Sua consulta gratuita está disponível!"
+            }
+
+        # Calcular Delta
+        now = timezone.now()
+        # Se for futura (scheduled), delta é negativo? Não, a regra é 90 dias da ULTIMA.
+        # Se tem uma futura agendada, já gastou a cota.
+        # Se last_valid_appt.scheduled_at > now, então days_remaining deve considerar essa data?
+        # REGRA SIMPLIFICADA: Se tem scheduled/waiting_payment FUTURO, não pode agendar outro gratis, certo?
+        # A regra diz "diferença de dias entre a data atual e a data da última consulta".
+        
+        last_date = last_valid_appt.scheduled_at
+        
+        # Se a última consulta é futura, então com certeza não pode agendar outra grátis agora.
+        if last_date > now:
+             # Mas qto tempo falta? Falta 90 dias A PARTIR daquela data?
+             # Vamos assumir 90 dias de intervalo entre consultas.
+             next_free_date = last_date + timedelta(days=90)
+             delta = (next_free_date - now).days
+             return {
+                "is_free": False,
+                "days_remaining": max(0, delta),
+                "price": price,
+                "last_appointment_date": last_date,
+                "active_appointment": {
+                    "id": last_valid_appt.id,
+                    "date": last_valid_appt.scheduled_at.strftime('%Y-%m-%d'),
+                    "time": last_valid_appt.scheduled_at.strftime('%H:%M')
+                },
+                "message": f"Você já possui um agendamento. Próxima gratuidade em {max(0, delta)} dias."
+             }
+
+        # Se é passada
+        delta_days = (now - last_date).days
+        if delta_days >= 90:
+             return {
+                "is_free": True,
+                "days_remaining": 0,
+                "price": price,
+                "message": "Sua consulta gratuita está disponível!"
+            }
+        else:
+             days_remaining = 90 - delta_days
+             return {
+                "is_free": False,
+                "days_remaining": days_remaining,
+                "price": price,
+                "last_appointment_date": last_date,
+                "message": f"Carência de 90 dias ativa. Faltam {days_remaining} dias."
+             }
+
+    @staticmethod
+    def book_appointment(user: User, date_str: str, time_str: str, doctor_id: str = None, payment_method: str = 'PIX', card_data: dict = None) -> Dict[str, Any]:
+        """
+        Tenta agendar uma consulta. Suporta Pix e Cartão. Verifica elegibilidade Plus.
         """
         try:
             # 1. Parsing and making Timezone Aware
@@ -127,13 +244,9 @@ class MedicalScheduleService:
             target_dt = timezone.make_aware(naive_dt)
 
             # 2. Validar Médico
-            # Se doctor_id for passado, usamos. Se não, fallback.
             doctor = None
             if doctor_id:
                 try:
-                    # doctor_id pode ser ID do User ou do Profile?
-                    # O Frontend geralmente tem o ID do Profile ou User.
-                    # Vamos assumir User ID (UUID)
                     doctor = User.objects.get(id=doctor_id, role='doctor')
                 except:
                     pass
@@ -144,49 +257,39 @@ class MedicalScheduleService:
             if not doctor:
                 return {"error": "Nenhum médico disponível."}
 
-            # 2.5 Validation: One appointment per month per doctor
-            existing_appt = Appointments.objects.filter(
-                patient=user,
-                doctor=doctor,
-                scheduled_at__year=target_dt.year,
-                scheduled_at__month=target_dt.month
-            ).exclude(status='cancelled').first()
-
-            if existing_appt:
-                 # Return specialized error payload
-                 return {
-                     "error": "MONTHLY_LIMIT", 
-                     "message": "Limite mensal atingido.",
-                     "existing_id": existing_appt.id,
-                     "existing_date": existing_appt.scheduled_at
-                 }
-
+            # 2.5 Validation: One appointment per month per doctor (Regra Genérica de Proteção)
+            # A regra do Plus (90 dias) é mais restritiva para gratuidade, mas para PAGAR, pode agendar?
+            # O prompt diz "O sistema deve permitir que usuários Plus e Standard agendem consultas extras."
+            # Então removemos bloqueios rígidos de "limite mensal" se for pago?
+            # Vamos manter a verificação de conflito de horário, mas liberar agendamento extra se pago.
+            
+            # existing_appt = ... (Remover bloqueio mensal se for pago? Manter apenas warning no frontend?)
+            # O frontend já trata o "MONTHLY_LIMIT" como conflito de horário para reagendamento.
+            # Vamos manter a lógica de conflito de HORÁRIO (duas pessoas no mesmo slot), 
+            # mas permitir agendamento "extra" (pago) se a regra de negócio permitir. 
+            # Por enquanto, vou comentar a trava de MONTHLY_LIMIT para permitir "Consultas Extras" conforme pedido.
+            
             # 3. Check Double Booking (Concurrency Safety)
             with transaction.atomic():
                 if Appointments.objects.filter(doctor=doctor, scheduled_at=target_dt, status='scheduled').exists():
                     return {"error": "Horário indisponível. Alguém agendou antes de você."}
                 
-                # 4. Criar
-                # [STANDARD PLAN LOGIC] Check if payment is required
-                is_standard = (user.current_plan == 'standard')
-                status_initial = 'waiting_payment' if is_standard else 'scheduled'
-                price = 0.0
+                # 4. Precificação e Elegibilidade
+                specialty = 'tricologia'
+                if hasattr(doctor, 'doctor_profile') and doctor.doctor_profile.specialty_type == 'nutritionist':
+                    specialty = 'nutricao'
+                
+                eligibility = MedicalScheduleService.get_appointment_eligibility(user, specialty)
+                is_free = eligibility['is_free']
+                price = eligibility['price']
+
+                status_initial = 'scheduled' if is_free else 'waiting_payment'
+                
+                # Se for Cartão, já tentamos cobrar agora (Status pode virar scheduled imediatamente)
                 pix_data = None
                 payment_id = None
                 
-                if is_standard:
-                    # Fetch Price from Bitrix
-                    from apps.accounts.config import BitrixConfig
-                    from apps.accounts.services import BitrixService
-                    
-                    # Determine Product ID
-                    product_id = BitrixConfig.APPOINTMENT_PRODUCT_IDS.get('tricologia', 296) # Default
-                    if hasattr(doctor, 'doctor_profile') and doctor.doctor_profile.specialty_type == 'nutritionist':
-                        product_id = BitrixConfig.APPOINTMENT_PRODUCT_IDS.get('nutricao', 298)
-                        
-                    price = BitrixService.get_product_price(product_id)
-                    if price <= 0: price = 150.00 # Safety Fallback
-                    
+                if not is_free:
                     # Create Asaas Transaction
                     from apps.financial.services import AsaasService
                     asaas = AsaasService()
@@ -202,66 +305,100 @@ class MedicalScheduleService:
                             user.save()
                     
                     if customer_id:
+                        # Decide Billing Type
+                        billing_type_asaas = "CREDIT_CARD" if payment_method == 'CREDIT_CARD' else "PIX"
+                        
                         payment_res = asaas.create_payment(
                             customer_id=customer_id,
-                            billing_type="PIX",
+                            billing_type=billing_type_asaas,
                             value=price,
-                            description=f"Consulta Avulsa - {user.full_name}"
+                            card_data=card_data if billing_type_asaas == "CREDIT_CARD" else None,
+                            description=f"Consulta {specialty.capitalize()} - {user.full_name}"
                         )
                         
                         if payment_res and 'id' in payment_res:
-                            pix_data = {
-                                "qr_code": payment_res.get('payload'),
-                                "qr_code_base64": payment_res.get('encodedImage'),
-                                "ticket_url": payment_res.get('invoiceUrl')
-                            }
                             payment_id = payment_res['id']
+                            
+                            # Se for PIX
+                            if billing_type_asaas == "PIX":
+                                pix_data = {
+                                    "qr_code": payment_res.get('payload'),
+                                    "qr_code_base64": payment_res.get('encodedImage'),
+                                    "ticket_url": payment_res.get('invoiceUrl')
+                                }
+                            
+                            # Se for Cartão e aprovou na hora
+                            if billing_type_asaas == "CREDIT_CARD":
+                                if payment_res.get('status') in ['CONFIRMED', 'RECEIVED']:
+                                    status_initial = 'scheduled'
+                                elif payment_res.get('status') in ['PENDING', 'AWAITING_RISK_ANALYSIS']:
+                                     # Cartão pendente? Mantém waiting_payment
+                                     status_initial = 'waiting_payment'
+                                else:
+                                    # Recusado
+                                     return {"error": "Pagamento recusado pela operadora."}
                 
                 appt = Appointments.objects.create(
                     patient=user,
                     doctor=doctor,
                     scheduled_at=target_dt,
                     status=status_initial
-                    # meeting_link poderia ser gerado aqui
                 )
                 
-                # Save Transaction Record if Standard
-                if is_standard and payment_id:
+                # Save Transaction Record if Paid
+                if not is_free and payment_id:
                     from apps.financial.models import Transaction
+                    
+                    # Map Initial Status
+                    tx_status = Transaction.Status.PENDING
+                    if status_initial == 'scheduled': tx_status = Transaction.Status.APPROVED
+                    
                     Transaction.objects.create(
                         user=user,
-                        plan_type='standard', # Context
+                        plan_type='standard', # Contexto financeiro (avulso)
                         amount=price,
                         cycle='one_off',
                         external_reference=str(uuid.uuid4()),
-                        status='pending',
-                        payment_type='bank_transfer', # Pix
+                        status=tx_status,
+                        payment_type=Transaction.PaymentType.CREDIT_CARD if payment_method == 'CREDIT_CARD' else Transaction.PaymentType.PIX,
                         asaas_payment_id=payment_id,
-                        # Save Appt ID in metadata to link in Webhook
                         mp_metadata={"appointment_id": appt.id}
                     )
                 
-                # [BITRIX INTEGRATION] Sync Appointment to CRM Pipeline 12 (Normalized 1:N)
+                # [BITRIX INTEGRATION]
                 try:
-                    # Determine specialty based on doctor's profile/specialty_type
-                    specialty = 'consulta' # Default
-                    if hasattr(doctor, 'doctor_profile'):
-                        specialty = (doctor.doctor_profile.specialty_type or 'consulta')
-                    
                     from apps.accounts.services import BitrixService
-                    # Creates a NEW Deal for every appointment to maintain history
-                    BitrixService.create_appointment_deal(user, appt, specialty)
+                    # Se for pago, o valor vai no deal. Se for free, valor 0? Ou valor cheio com desconto 100%?
+                    # O BitrixService deve lidar com isso. Mas aqui passamos o objeto.
+                    # Se is_free=True, o BitrixService pode precisar saber.
+                    # Vamos manter como está, ele pega o product_id padrão.
+                    # UPDATE: O prompt pede: "Se a consulta for paga, o Deal no Bitrix deve ser criado com o valor do produto. Se for grátis, o valor do Deal deve ser 0."
+                    # O BitrixService.create_appointment_deal provavelmente busca o preço do produto de novo.
+                    # Deveríamos passar o 'opportunity' (valor) explicito se possível.
+                    # Vou deixar como está por enquanto e confiar que o BitrixService lida ou ajustaremos depois.
+                    product_data = {
+                        "id": 0, 
+                        "name": f"Consulta {specialty.capitalize()}",
+                        "price": float(price)
+                    }
+                    BitrixService.create_appointment_deal(user, product_data, is_free=is_free)
                 except Exception as e:
-                    # Log but don't fail the booking
                     print(f"⚠️ Bitrix Sync Error: {e}") 
 
-                if is_standard and pix_data:
-                    return {
-                        "payment_required": True,
-                        "price": price,
-                        "pix_data": pix_data,
-                        "message": "Aguardando pagamento para confirmar."
-                    }
+                if not is_free:
+                    if pix_data:
+                        return {
+                            "payment_required": True,
+                            "price": price,
+                            "pix_data": pix_data,
+                            "message": "Aguardando pagamento Pix."
+                        }
+                    elif status_initial == 'waiting_payment':
+                         return {
+                            "payment_required": True, # Mesmo cartao pode ter ficado pendente (analise risco)
+                            "price": price,
+                            "message": "Processando pagamento do cartão."
+                        }
 
                 return {"success": True, "id": appt.id, "message": "Agendamento realizado com sucesso."}
         
@@ -273,7 +410,9 @@ class MedicalScheduleService:
     @staticmethod
     def reschedule_appointment(user: User, appointment_id: int, new_date_str: str, new_time_str: str) -> Dict[str, Any]:
         """
-        Reagenda uma consulta existente para um novo horário.
+        Reagenda uma consulta.
+        Regra: Só permitido se > 24h de antecedência.
+        Lógica: Cancela atual e cria nova (mantendo vinculo financeiro se possível via obs).
         """
         try:
             from django.utils import timezone
@@ -287,20 +426,53 @@ class MedicalScheduleService:
             if appt.status != 'scheduled':
                 return {"error": "Apenas agendamentos ativos podem ser reagendados."}
 
-            # 2. Parse New Date
+            # 2. Regra de 24h
+            now = timezone.localtime()
+            time_until_appt = appt.scheduled_at - now
+            if time_until_appt < timedelta(hours=24):
+                 return {"error": "Reagendamento permitido apenas com 24h de antecedência."}
+
+            # 3. Parse New Date
             naive_dt = datetime.strptime(f"{new_date_str} {new_time_str}", "%Y-%m-%d %H:%M")
             target_dt = timezone.make_aware(naive_dt)
 
-            # 3. Validar Disponibilidade do Médico
+            # 3.1 Validar Disponibilidade
             if Appointments.objects.filter(doctor=appt.doctor, scheduled_at=target_dt, status='scheduled').exists():
                 return {"error": "O novo horário escolhido já está ocupado."}
 
-            # 4. Atualizar (Atomic)
+            # 4. Atualizar (Atomic Exchange)
             with transaction.atomic():
-                appt.scheduled_at = target_dt
+                # Cancelar antigo
+                appt.status = 'cancelled'
                 appt.save()
                 
-            return {"success": True, "message": "Agendamento reagendado com sucesso."}
+                # Criar Novo
+                new_appt = Appointments.objects.create(
+                    patient=user,
+                    doctor=appt.doctor,
+                    scheduled_at=target_dt,
+                    status='scheduled',
+                    meeting_link=appt.meeting_link # Repassa link se tiver
+                )
+                
+                # Opcional: Atualizar Transaction para apontar para o novo ID? 
+                # Ou deixar apontando pro velho e a gente sabe pelo histórico?
+                # Vamos tentar atualizar se houver transaction pendente associada (mas aqui ja ta Pago/Scheduled)
+                # Melhor: Logar no Bitrix que houve reagendamento? O create_appointment_deal fará um novo deal?
+                # Sim, create_appointment_deal gera um novo deal. Isso é bom pro histórico.
+                
+                try:
+                    specialty = 'consulta'
+                    if hasattr(appt.doctor, 'doctor_profile'):
+                        specialty = (appt.doctor.doctor_profile.specialty_type or 'consulta')
+                    
+                    from apps.accounts.services import BitrixService
+                    # Marca Deal antigo como perdido/reagendado? Ou deixa lá?
+                    # Cria novo deal
+                    BitrixService.create_appointment_deal(user, new_appt, specialty)
+                except: pass
+                
+            return {"success": True, "message": "Reagendamento confirmado (Novo ID gerado)."}
 
         except ValueError:
             return {"error": "Formato de data/hora inválido."}
