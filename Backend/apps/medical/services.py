@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, date, time
 from typing import List, Dict, Any, Optional
 from django.db import transaction
 from django.conf import settings
+import uuid
 from .models import Appointments, PatientPhotos
 from apps.accounts.models import User
 
@@ -166,13 +167,102 @@ class MedicalScheduleService:
                     return {"error": "Horário indisponível. Alguém agendou antes de você."}
                 
                 # 4. Criar
+                # [STANDARD PLAN LOGIC] Check if payment is required
+                is_standard = (user.current_plan == 'standard')
+                status_initial = 'waiting_payment' if is_standard else 'scheduled'
+                price = 0.0
+                pix_data = None
+                payment_id = None
+                
+                if is_standard:
+                    # Fetch Price from Bitrix
+                    from apps.accounts.config import BitrixConfig
+                    from apps.accounts.services import BitrixService
+                    
+                    # Determine Product ID
+                    product_id = BitrixConfig.APPOINTMENT_PRODUCT_IDS.get('tricologia', 296) # Default
+                    if hasattr(doctor, 'doctor_profile') and doctor.doctor_profile.specialty_type == 'nutritionist':
+                        product_id = BitrixConfig.APPOINTMENT_PRODUCT_IDS.get('nutricao', 298)
+                        
+                    price = BitrixService.get_product_price(product_id)
+                    if price <= 0: price = 150.00 # Safety Fallback
+                    
+                    # Create Asaas Transaction
+                    from apps.financial.services import AsaasService
+                    asaas = AsaasService()
+                    
+                    # Ensure customer
+                    customer_id = user.asaas_customer_id
+                    if not customer_id:
+                        customer_id = asaas.get_or_create_customer({
+                            "name": user.full_name, "email": user.email, "cpf": "", "phone": ""
+                        })
+                        if customer_id:
+                            user.asaas_customer_id = customer_id
+                            user.save()
+                    
+                    if customer_id:
+                        payment_res = asaas.create_payment(
+                            customer_id=customer_id,
+                            billing_type="PIX",
+                            value=price,
+                            description=f"Consulta Avulsa - {user.full_name}"
+                        )
+                        
+                        if payment_res and 'id' in payment_res:
+                            pix_data = {
+                                "qr_code": payment_res.get('payload'),
+                                "qr_code_base64": payment_res.get('encodedImage'),
+                                "ticket_url": payment_res.get('invoiceUrl')
+                            }
+                            payment_id = payment_res['id']
+                
                 appt = Appointments.objects.create(
                     patient=user,
                     doctor=doctor,
                     scheduled_at=target_dt,
-                    status='scheduled'
+                    status=status_initial
                     # meeting_link poderia ser gerado aqui
                 )
+                
+                # Save Transaction Record if Standard
+                if is_standard and payment_id:
+                    from apps.financial.models import Transaction
+                    Transaction.objects.create(
+                        user=user,
+                        plan_type='standard', # Context
+                        amount=price,
+                        cycle='one_off',
+                        external_reference=str(uuid.uuid4()),
+                        status='pending',
+                        payment_type='bank_transfer', # Pix
+                        asaas_payment_id=payment_id,
+                        # Save Appt ID in metadata to link in Webhook
+                        mp_metadata={"appointment_id": appt.id}
+                    )
+                
+                # [BITRIX INTEGRATION] Sync Appointment to CRM Pipeline 12 (Normalized 1:N)
+                try:
+                    # Determine specialty based on doctor's profile/specialty_type
+                    specialty = 'consulta' # Default
+                    if hasattr(doctor, 'doctor_profile'):
+                        specialty = (doctor.doctor_profile.specialty_type or 'consulta')
+                    
+                    from apps.accounts.services import BitrixService
+                    # Creates a NEW Deal for every appointment to maintain history
+                    BitrixService.create_appointment_deal(user, appt, specialty)
+                except Exception as e:
+                    # Log but don't fail the booking
+                    print(f"⚠️ Bitrix Sync Error: {e}") 
+
+                if is_standard and pix_data:
+                    return {
+                        "payment_required": True,
+                        "price": price,
+                        "pix_data": pix_data,
+                        "message": "Aguardando pagamento para confirmar."
+                    }
+
                 return {"success": True, "id": appt.id, "message": "Agendamento realizado com sucesso."}
         
         except ValueError:

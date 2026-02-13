@@ -28,7 +28,7 @@ export default function ClientLayout() {
         { label: "Visão Geral", path: "/dashboard", icon: LayoutDashboard },
         { label: "Meu Protocolo", path: "/SeuProtocolo", icon: FileText },
         // Canal Médico ONLY for Plus
-        ...(isPlus ? [{ label: "Canal Médico", path: "/agendamento", icon: MessageCircle }] : []),
+        { label: "Canal Médico", path: "/agendamento", icon: MessageCircle },
         { label: "Histórico", path: "/historico", icon: Calendar },
         { label: "Minha Conta", path: "/perfil", icon: User },
     ];

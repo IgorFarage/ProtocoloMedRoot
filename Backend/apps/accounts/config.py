@@ -39,7 +39,17 @@ class BitrixConfig:
         "PAYMENT_ID": "UF_CRM_1767806427",
         "PAYMENT_DATE": "UF_CRM_1767806112",
         "PAYMENT_STATUS": "UF_CRM_1767806168",
-        "CPF": "UF_CRM_CONTACT_1767453262601"
+        "PAYMENT_STATUS": "UF_CRM_1767806168",
+        "CPF": "UF_CRM_CONTACT_1767453262601",
+        
+        # Appointment Deal Fields (Specific to the Event)
+        "APPOINTMENT_SPECIALTY": "UF_CRM_1770919925",
+        "APPOINTMENT_DATE": "UF_CRM_1770919845",
+        "APPOINTMENT_DOCTOR": "UF_CRM_1770919968",
+        
+        # Contact Fields (Summary/Status)
+        "LAST_CONSULT_DATE": "UF_CRM_1770918702",
+        "PLUS_STATUS": "UF_CRM_1770918752"
     }
 
     # Plan Product IDs in Bitrix
@@ -50,6 +60,15 @@ class BitrixConfig:
 
     # Product Categories (Section IDs)
     SECTION_IDS = [16, 18, 20, 22, 24, 32]
+
+    # Pipeline IDs
+    PIPELINE_APPOINTMENT_ID = 12
+    
+    # Appointment Products (Folder 34)
+    APPOINTMENT_PRODUCT_IDS = {
+        'tricologia': 296,
+        'nutricao': 298
+    }
 
     @staticmethod
     def get_map(key):

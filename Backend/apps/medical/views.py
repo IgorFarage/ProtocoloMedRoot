@@ -77,6 +77,23 @@ class ScheduleAppointmentView(APIView):
         data = []
         from django.utils import timezone as tz
         for a in appts:
+            # Buscar dados extras do médico (Especialidade + Foto)
+            doctor_profile = None
+            specialty = "Especialista"
+            photo_url = None
+            
+            if a.doctor:
+                try:
+                    # Import local to avoid circular deps if needed
+                    from apps.accounts.models import Doctors
+                    doctor_profile = Doctors.objects.filter(user=a.doctor).first()
+                    if doctor_profile:
+                        specialty = doctor_profile.get_specialty_type_display()
+                        if doctor_profile.profile_photo:
+                             photo_url = doctor_profile.profile_photo.url
+                except Exception:
+                    pass
+
             data.append({
                 "id": a.id,
                 "date": tz.localtime(a.scheduled_at).strftime("%Y-%m-%d"),
@@ -84,6 +101,8 @@ class ScheduleAppointmentView(APIView):
                 # Se for médico, mostrar nome do paciente. Se for paciente, nome do médico.
                 "patient_name": a.patient.full_name if a.patient else "Paciente Removido",
                 "doctor_name": a.doctor.full_name if a.doctor else "Tricologista",
+                "doctor_specialty": specialty,
+                "doctor_photo": photo_url,
                 "status": a.status,
                 "meeting_link": a.meeting_link
             })

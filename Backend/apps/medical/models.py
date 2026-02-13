@@ -62,7 +62,8 @@ class Appointments(models.Model):
     status = models.CharField(max_length=20, default='scheduled', choices=[
         ('scheduled', 'Agendado'),
         ('completed', 'Realizado'),
-        ('cancelled', 'Cancelado')
+        ('cancelled', 'Cancelado'),
+        ('waiting_payment', 'Aguardando Pagamento')
     ])
     meeting_link = models.CharField(max_length=255, null=True, blank=True)
 

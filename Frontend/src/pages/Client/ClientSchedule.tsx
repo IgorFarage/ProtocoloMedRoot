@@ -9,17 +9,22 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Calendar as CalendarIcon, ClipboardList, ShoppingBag, Camera, Upload, Clock, CheckCircle, Video, ArrowLeft } from "lucide-react";
+import { Loader2, Calendar as CalendarIcon, ClipboardList, ShoppingBag, Camera, Upload, Clock, CheckCircle, Video, ArrowLeft, Copy } from "lucide-react";
 import api from "@/lib/api";
 import { ptBR } from "date-fns/locale";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface Appointment {
     id: number;
     date: string;
     time: string;
     doctor: string;
-    status: 'scheduled' | 'completed' | 'cancelled';
+    doctor_name: string;
+    doctor_specialty?: string;
+    doctor_photo?: string;
+    status: 'scheduled' | 'completed' | 'cancelled' | 'waiting_payment';
     meeting_link?: string;
 }
 
@@ -27,6 +32,10 @@ export default function ClientSchedule() {
     const navigate = useNavigate();
     const { loading: loadingData, profile, calculateProtocol } = useClientData() as any;
     const { toast } = useToast();
+
+    // Payment State
+    const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+    const [paymentData, setPaymentData] = useState<any>(null);
 
     // State para Agendamento
     const [date, setDate] = useState<Date | undefined>(new Date());
@@ -96,11 +105,45 @@ export default function ClientSchedule() {
         setIsBooking(true);
         try {
             const dateStr = date.toISOString().split('T')[0];
-            await api.post('/medical/appointments/', {
+            const response = await api.post('/medical/appointments/', {
                 date: dateStr,
                 time: selectedSlot,
                 doctor_id: selectedDoctorId
             });
+
+            // Check for Payment Requirement
+            if (response.data.payment_required) {
+                setPaymentData({
+                    price: response.data.price,
+                    ...response.data.pix_data
+                });
+                setIsPaymentModalOpen(true);
+                toast({
+                    title: "Pagamento Necessário",
+                    description: response.data.message,
+                    className: "bg-blue-600 text-white"
+                });
+                // Relax optimistic update or re-fetch to show 'waiting_payment'
+                fetchAppointments();
+                return;
+            }
+
+            // Check for Payment Requirement
+            if (response.data.payment_required) {
+                setPaymentData({
+                    price: response.data.price,
+                    ...response.data.pix_data
+                });
+                setIsPaymentModalOpen(true);
+                toast({
+                    title: "Pagamento Necessário",
+                    description: response.data.message,
+                    className: "bg-blue-600 text-white"
+                });
+                // Relax optimistic update or re-fetch to show 'waiting_payment'
+                fetchAppointments();
+                return;
+            }
 
             toast({
                 title: "Agendamento Confirmado!",
@@ -190,6 +233,66 @@ export default function ClientSchedule() {
                     <TabsTrigger value="schedule">Agendar</TabsTrigger>
                     <TabsTrigger value="appointments">Minhas Consultas</TabsTrigger>
                 </TabsList>
+
+                {/* Dialog de Pix Payment */}
+                <Dialog open={isPaymentModalOpen} onOpenChange={setIsPaymentModalOpen}>
+                    <DialogContent className="sm:max-w-[400px]">
+                        <DialogHeader>
+                            <DialogTitle>Pagamento via Pix</DialogTitle>
+                            <DialogDescription>
+                                Realize o pagamento de <strong>R$ {paymentData?.price?.toFixed(2)}</strong> para confirmar seu agendamento.
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        <div className="flex flex-col items-center gap-4 py-4">
+                            {paymentData?.qr_code_base64 && (
+                                <img
+                                    src={`data:image/jpeg;base64,${paymentData.qr_code_base64}`}
+                                    alt="Pix QR Code"
+                                    className="w-48 h-48 sm:w-56 sm:h-56 border rounded-lg"
+                                />
+                            )}
+
+                            <div className="w-full space-y-2">
+                                <Label className="text-sm font-medium">Pix Copia e Cola</Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        readOnly
+                                        value={paymentData?.qr_code || ''}
+                                        className="font-mono text-xs h-9 bg-gray-50"
+                                    />
+                                    <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="shrink-0"
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(paymentData?.qr_code || '');
+                                            toast({ title: "Copiado!", duration: 2000 });
+                                        }}
+                                    >
+                                        <Copy className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <DialogFooter>
+                            <Button
+                                className="w-full bg-green-600 hover:bg-green-700 text-white"
+                                onClick={() => {
+                                    setIsPaymentModalOpen(false);
+                                    fetchAppointments();
+                                    toast({
+                                        title: "Pagamento em processamento",
+                                        description: "Assim que confirmado, sua consulta aparecerá como 'Agendado'."
+                                    });
+                                }}
+                            >
+                                Já realizei o pagamento
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
 
                 {/* TAB 1: AGENDAR */}
                 <TabsContent value="schedule" className="mt-6">
@@ -379,12 +482,28 @@ export default function ClientSchedule() {
                                 <Card key={appt.id} className="border-l-4 border-l-primary">
                                     <CardContent className="p-4 flex items-center justify-between">
                                         <div className="flex gap-4 items-center">
-                                            <div className="bg-primary/10 p-3 rounded-full">
+                                            <div className="bg-primary/10 p-3 rounded-full hidden sm:block">
                                                 <CalendarIcon className="w-6 h-6 text-primary" />
                                             </div>
-                                            <div>
-                                                <h4 className="font-bold text-lg">{new Date(appt.date + 'T00:00:00').toLocaleDateString('pt-BR')} às {appt.time}</h4>
-                                                <p className="text-sm text-muted-foreground">Dr. {appt.doctor} • <span className="capitalize">{appt.status === 'scheduled' ? 'Agendado' : appt.status}</span></p>
+                                            <div className="flex items-center gap-3">
+                                                <Avatar className="h-10 w-10 border border-slate-200">
+                                                    <AvatarImage src={appt.doctor_photo} />
+                                                    <AvatarFallback className="bg-slate-100 text-slate-500">DR</AvatarFallback>
+                                                </Avatar>
+                                                <div>
+                                                    <h4 className="font-bold text-lg leading-tight">
+                                                        {new Date(appt.date + 'T00:00:00').toLocaleDateString('pt-BR')} <span className="text-muted-foreground font-normal">às</span> {appt.time}
+                                                    </h4>
+                                                    <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 text-sm text-muted-foreground">
+                                                        <span className="font-medium text-slate-700">{appt.doctor_name || "Especialista"}</span>
+                                                        <span className="hidden sm:inline">•</span>
+                                                        <span>{appt.doctor_specialty || "Especialista"}</span>
+                                                        <span className="hidden sm:inline">•</span>
+                                                        <span className="capitalize px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800">
+                                                            {appt.status === 'scheduled' ? 'Agendado' : appt.status}
+                                                        </span>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                         {appt.meeting_link && appt.status === 'scheduled' ? (

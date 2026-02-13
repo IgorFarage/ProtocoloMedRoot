@@ -2,15 +2,25 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { useState } from "react";
+import { DoctorProfileModal } from "@/components/client/DoctorProfileModal";
 import { useAuth } from "@/auth/AuthProvider";
 import { useClientData } from "@/hooks/useClientData";
 import { Link } from "react-router-dom";
-import { ShoppingBag, FileText, History, Calendar, Stethoscope } from "lucide-react";
+import { ShoppingBag, FileText, History, Calendar, Stethoscope, MessageCircle } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export default function DashboardStandard() {
     const { user } = useAuth();
     const { answers, profile, loading } = useClientData();
+    const [selectedDoctor, setSelectedDoctor] = useState<{ data: any, role: string } | null>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+
+    const handleDoctorClick = (doctor: any, role: string) => {
+        if (!doctor?.name) return;
+        setSelectedDoctor({ data: doctor, role });
+        setIsModalOpen(true);
+    };
 
     if (loading) return null;
 
@@ -53,69 +63,106 @@ export default function DashboardStandard() {
                     </CardContent>
                 </Card>
 
-                {/* WIDGET EQUIPE MÉDICA */}
-                <Card className="col-span-2 shadow-sm">
+                {/* WIDGET EQUIPE MÉDICA (IGUAL AO PLUS) */}
+                <Card className="col-span-2 border-l-4 border-l-blue-500 shadow-lg">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                            <Stethoscope className="h-5 w-5 text-primary" /> Minha Equipe
+                            <Stethoscope className="h-5 w-5 text-blue-500" /> Minha Equipe Multidisciplinar
                         </CardTitle>
+                        <CardDescription>Profissionais dedicados ao seu tratamento.</CardDescription>
                     </CardHeader>
                     <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* Tricologista */}
-                        <div className="flex items-center gap-3 p-3 rounded-lg border bg-white">
-                            <Avatar className="h-10 w-10">
-                                <AvatarImage src={profile?.medical_team?.trichologist?.photo || undefined} className="object-cover" />
-                                <AvatarFallback>TRI</AvatarFallback>
-                            </Avatar>
-                            <div>
-                                <p className="text-xs font-semibold text-muted-foreground uppercase">Tricologista</p>
-                                <p className="font-medium text-slate-800 text-sm">
-                                    {profile?.medical_team?.trichologist?.name || "Aguardando"}
-                                </p>
+                        <div
+                            className="flex items-center gap-4 p-4 rounded-xl border bg-white shadow-sm hover:shadow-md transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] relative group"
+                        >
+                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Link to="/agendamento" state={{ doctorId: profile?.medical_team?.trichologist?.id }}>
+                                    <Button size="sm" variant="secondary">Agendar</Button>
+                                </Link>
+                            </div>
+
+                            <div className="flex items-center gap-4" onClick={() => handleDoctorClick(profile?.medical_team?.trichologist, "Tricologista")}>
+                                <Avatar className="h-14 w-14 border-2 border-blue-100">
+                                    <AvatarImage src={profile?.medical_team?.trichologist?.photo || undefined} className="object-cover" />
+                                    <AvatarFallback className="bg-blue-50 text-blue-500">TRI</AvatarFallback>
+                                </Avatar>
+                                <div>
+                                    <p className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-0.5">Tricologista</p>
+                                    <p className="font-bold text-slate-800 text-lg leading-tight">
+                                        {profile?.medical_team?.trichologist?.name || "Aguardando"}
+                                    </p>
+                                    {profile?.medical_team?.trichologist?.crm && (
+                                        <p className="text-xs text-slate-400">CRM: {profile.medical_team.trichologist.crm}</p>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
                         {/* Nutricionista */}
-                        <div className="flex items-center gap-3 p-3 rounded-lg border bg-white">
-                            <Avatar className="h-10 w-10">
-                                <AvatarImage src={profile?.medical_team?.nutritionist?.photo || undefined} className="object-cover" />
-                                <AvatarFallback>NUT</AvatarFallback>
-                            </Avatar>
-                            <div>
-                                <p className="text-xs font-semibold text-muted-foreground uppercase">Nutricionista</p>
-                                <p className="font-medium text-slate-800 text-sm">
-                                    {profile?.medical_team?.nutritionist?.name || "Aguardando"}
-                                </p>
+                        <div
+                            className="flex items-center gap-4 p-4 rounded-xl border bg-white shadow-sm hover:shadow-md transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] relative group"
+                        >
+                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Link to="/agendamento" state={{ doctorId: profile?.medical_team?.nutritionist?.id }}>
+                                    <Button size="sm" variant="secondary">Agendar</Button>
+                                </Link>
+                            </div>
+
+                            <div className="flex items-center gap-4" onClick={() => handleDoctorClick(profile?.medical_team?.nutritionist, "Nutricionista")}>
+                                <Avatar className="h-14 w-14 border-2 border-green-100">
+                                    <AvatarImage src={profile?.medical_team?.nutritionist?.photo || undefined} className="object-cover" />
+                                    <AvatarFallback className="bg-green-50 text-green-500">NUT</AvatarFallback>
+                                </Avatar>
+                                <div>
+                                    <p className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-0.5">Nutricionista</p>
+                                    <p className="font-bold text-slate-800 text-lg leading-tight">
+                                        {profile?.medical_team?.nutritionist?.name || "Aguardando"}
+                                    </p>
+                                    {profile?.medical_team?.nutritionist?.crm && (
+                                        <p className="text-xs text-slate-400">CRN: {profile.medical_team.nutritionist.crm}</p>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </CardContent>
                 </Card>
 
-                {/* WIDGET LINKS RÁPIDOS */}
-                <Card className="bg-blue-50/50 border-blue-100">
+                {/* WIDGET LINKS RÁPIDOS (IGUAL AO PLUS) */}
+                <Card className="col-span-3 lg:col-span-1 bg-white border-slate-200 shadow-md">
                     <CardHeader>
-                        <CardTitle className="text-blue-900">Acesso Rápido</CardTitle>
-                        <CardDescription>Gerencie seu tratamento</CardDescription>
+                        <CardTitle>Menu Rápido</CardTitle>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-3">
-                        <Button asChild className="w-full justify-start gap-2 bg-white text-blue-700 hover:bg-blue-100 hover:text-blue-900 shadow-sm border border-blue-200">
+                        <Button asChild variant="secondary" className="w-full justify-start gap-2 h-12">
                             <Link to="/SeuProtocolo">
-                                <FileText className="w-4 h-4" /> Ver Meu Protocolo
+                                <FileText className="w-5 h-5" /> Ver Meu Protocolo Completo
                             </Link>
                         </Button>
-                        <Button asChild variant="outline" className="w-full justify-start gap-2 border-blue-200 text-blue-700 hover:bg-blue-50">
+                        <Button asChild variant="ghost" className="w-full justify-start gap-2 h-10">
                             <Link to="/agendamento">
-                                <History className="w-4 h-4" /> Histórico Completo
+                                <MessageCircle className="w-5 h-5" /> Canal Médico
                             </Link>
                         </Button>
-                        <Button asChild variant="ghost" className="w-full justify-start gap-2 text-blue-600/70 hover:text-blue-700">
+                        <Button asChild variant="ghost" className="w-full justify-start gap-2 h-10">
+                            <Link to="/agendamento">
+                                <History className="w-5 h-5" /> Histórico
+                            </Link>
+                        </Button>
+                        <Button asChild variant="ghost" className="w-full justify-start gap-2 h-10">
                             <Link to="/perfil">
-                                <Calendar className="w-4 h-4" /> Meus Dados
+                                <Calendar className="w-5 h-5" /> Meus Dados
                             </Link>
                         </Button>
                     </CardContent>
                 </Card>
             </div>
+            <DoctorProfileModal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                doctor={selectedDoctor?.data}
+                roleLabel={selectedDoctor?.role || ""}
+            />
         </div>
     );
 }

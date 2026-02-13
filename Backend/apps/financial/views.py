@@ -154,6 +154,20 @@ class WebhookView(APIView):
                         except Exception as e:
                             logger.error(f"      ❌ Error executing downgrade logic: {e}")
 
+                        # [APPOINTMENT CONFIRMATION]
+                        # Check if this transaction relates to an appointment
+                        try:
+                            if transaction.mp_metadata and 'appointment_id' in transaction.mp_metadata:
+                                appt_id = transaction.mp_metadata['appointment_id']
+                                from apps.medical.models import Appointments
+                                appt = Appointments.objects.get(id=appt_id)
+                                if appt.status == 'waiting_payment':
+                                    appt.status = 'scheduled'
+                                    appt.save()
+                                    logger.info(f"      ✅ Appointment {appt_id} confirmed by payment.")
+                        except Exception as e:
+                            logger.error(f"      ❌ Error confirming appointment: {e}")
+
                         # Sync Bitrix
                         if transaction.bitrix_sync_status != 'synced' and BitrixService:
                             try:
