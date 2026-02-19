@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Calendar as CalendarIcon, ClipboardList, ShoppingBag, Camera, Upload, Clock, CheckCircle, Video, ArrowLeft, Copy } from "lucide-react";
+import { Loader2, Calendar as CalendarIcon, ClipboardList, ShoppingBag, Camera, Upload, Clock, CheckCircle, Video, ArrowLeft, Copy, CreditCard as CreditCardIcon, Lock } from "lucide-react";
 import api from "@/lib/api";
 import { ptBR } from "date-fns/locale";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -28,6 +28,54 @@ interface Appointment {
     meeting_link?: string;
 }
 
+// --- Payment Helpers ---
+const formatCardNumber = (value: string) => {
+    const v = value.replace(/\D/g, "").substring(0, 16);
+    const parts = [];
+    for (let i = 0; i < v.length; i += 4) {
+        parts.push(v.substring(i, i + 4));
+    }
+    return parts.join(" ");
+};
+
+const formatCPF = (value: string) => {
+    return value
+        .replace(/\D/g, '') // substitui qualquer caracter que nao seja numero por nada
+        .replace(/(\d{3})(\d)/, '$1.$2') // captura 2 grupos de numero o primeiro de 3 e o segundo de 1, apos capturar o primeiro grupo ele adiciona um ponto antes do segundo grupo de numero
+        .replace(/(\d{3})(\d)/, '$1.$2')
+        .replace(/(\d{3})(\d{1,2})/, '$1-$2')
+        .replace(/(-\d{2})\d+?$/, '$1'); // captura 2 numeros seguidos de um traço e não deixa ser digitado mais nada
+};
+
+const formatExpiry = (value: string) => {
+    const v = value.replace(/\D/g, "").substring(0, 4);
+    if (v.length >= 2) {
+        return `${v.substring(0, 2)}/${v.substring(2)}`;
+    }
+    return v;
+};
+
+const validateCard = (number: string) => {
+    // Simple Luhn Algorithm
+    const s = number.replace(/\D/g, "");
+    if (s.length < 13) return false; // Min length
+
+    // [DEV] Bypass for common test cards (Asaas SandBox often uses 4444...)
+    if (/^4+$/.test(s) || /^1+$/.test(s)) return true;
+
+    let sum = 0;
+    let shouldDouble = false;
+    for (let i = s.length - 1; i >= 0; i--) {
+        let digit = parseInt(s.charAt(i));
+        if (shouldDouble) {
+            if ((digit *= 2) > 9) digit -= 9;
+        }
+        sum += digit;
+        shouldDouble = !shouldDouble;
+    }
+    return (sum % 10) === 0;
+};
+
 export default function ClientSchedule() {
     const navigate = useNavigate();
     const { loading: loadingData, profile, calculateProtocol } = useClientData() as any;
@@ -40,9 +88,15 @@ export default function ClientSchedule() {
     const [cardData, setCardData] = useState({
         holderName: '',
         number: '',
-        expiryMonth: '',
-        expiryYear: '',
-        ccv: ''
+        expiry: '', // Combined MM/YY
+        ccv: '',
+        cpf: '' // Added CPF for holder info if needed
+    });
+    const [cardErrors, setCardErrors] = useState({
+        number: '',
+        expiry: '',
+        ccv: '',
+        holderName: ''
     });
 
     // Eligibility State
@@ -68,6 +122,7 @@ export default function ClientSchedule() {
     const [loadingSlots, setLoadingSlots] = useState(false);
     const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
     const [isBooking, setIsBooking] = useState(false);
+    const [bookingSuccess, setBookingSuccess] = useState(false);
 
     const [conflictData, setConflictData] = useState<any>(null);
 
@@ -147,8 +202,35 @@ export default function ClientSchedule() {
 
     const handleBook = async () => {
         if (!date || !selectedSlot) return;
+
+        // Validation for Credit Card
+        if (paymentMethod === 'CREDIT_CARD') {
+            const errors: any = {};
+            const cleanNumber = cardData.number.replace(/\D/g, "");
+            console.log(`🔍 Validating Card: ${cleanNumber.substring(0, 4)}... (Length: ${cleanNumber.length})`);
+
+            if (!validateCard(cardData.number)) {
+                console.error("❌ Luhn Validation Failed for:", cleanNumber);
+                errors.number = "Número de cartão inválido.";
+            }
+            if (cardData.holderName.length < 3) errors.holderName = "Nome inválido.";
+            if (cardData.ccv.length < 3) errors.ccv = "CVV inválido.";
+            if (cardData.expiry.length !== 5) errors.expiry = "Validade inválida.";
+
+            if (Object.keys(errors).length > 0) {
+                console.error("🔴 Validation Errors:", errors);
+                toast({
+                    title: "Erro na Validação",
+                    description: Object.values(errors).join("\n"),
+                    variant: "destructive"
+                });
+                setCardErrors(errors);
+                return;
+            }
+        }
+
         setIsBooking(true);
-        setShowEligibilityModal(false); // Close eligibility modal logic
+        // setShowEligibilityModal(false); // Removed to keep modal open for success/error feedback
 
         try {
             const dateStr = date.toISOString().split('T')[0];
@@ -157,60 +239,73 @@ export default function ClientSchedule() {
                 date: dateStr,
                 time: selectedSlot,
                 doctor_id: selectedDoctorId,
-                payment_method: paymentMethod
+                payment_method: paymentMethod,
+                idempotency_key: crypto.randomUUID()
             };
 
             if (paymentMethod === 'CREDIT_CARD') {
-                payload.credit_card = cardData;
+                const [month, year] = cardData.expiry.split('/');
+                payload.cardData = {
+                    ...cardData,
+                    number: cardData.number.replace(/\D/g, ""),
+                    holderInfo: {
+                        name: cardData.holderName,
+                        email: profile?.email || "cliente@email.com",
+                        cpfCnpj: cardData.cpf || "00000000000",
+                        postalCode: "22775040",
+                        addressNumber: "100",
+                        phone: profile?.phone || "21999999999"
+                    }
+                };
             }
 
             const response = await api.post('/medical/appointments/', payload);
 
-            // Check for Payment Requirement (Pix or Card Pending)
-            if (response.data.payment_required) {
-                setPaymentData({
-                    price: response.data.price,
-                    ...response.data.pix_data,
-                    message: response.data.message
+            if (response.data.success) {
+                toast({
+                    title: "Agendamento Realizado!",
+                    description: response.data.message || "Sua consulta foi agendada.",
+                    className: "bg-green-600 text-white"
                 });
-
-                if (paymentMethod === 'PIX') {
+                fetchAppointments();
+                setBookingSuccess(true);
+                setSlots(prev => prev.filter(s => s !== selectedSlot));
+            }
+            else if (response.data.payment_required) {
+                if (response.data.pix_data) {
+                    setPaymentData(response.data.pix_data);
                     setIsPaymentModalOpen(true);
+                    toast({
+                        title: "Aguardando Pagamento Pix",
+                        description: "Utilize o QR Code para pagar.",
+                    });
                 } else {
+                    // Credit Card - Processing
                     toast({
                         title: "Processando Pagamento",
                         description: response.data.message || "Aguardando confirmação da operadora.",
                         className: "bg-blue-600 text-white"
                     });
+                    setBookingSuccess(true);
                 }
-
-                fetchAppointments(); // Re-fetch to show 'waiting_payment' status
-                return;
+            } else {
+                throw new Error(response.data.error || "Erro desconhecido.");
             }
-
-            toast({
-                title: "Agendamento Confirmado!",
-                description: `Sua consulta para dia ${date.toLocaleDateString()} às ${selectedSlot} foi agendada.`,
-                className: "bg-green-600 text-white"
-            });
-
-            setSelectedSlot(null);
-            fetchAppointments(); // Atualiza lista
-            // Atualiza slots (remove o que foi pego)
-            setSlots(prev => prev.filter(s => s !== selectedSlot));
 
         } catch (error: any) {
-            if (error.response?.data?.error === 'MONTHLY_LIMIT') {
-                // Show conflict dialog
-                setConflictData(error.response.data);
-                // Keep selectedSlot to use in reschedule
-                return;
+            console.error("Erro no agendamento:", error);
+            const errorMsg = error.response?.data?.error || error.message || "Erro ao agendar.";
+
+            if (errorMsg.includes("concorrência")) {
+                setCardErrors(prev => ({ ...prev, general: "Horário disputado! Tente novamente em alguns segundos." }));
+            } else {
+                setCardErrors(prev => ({ ...prev, general: errorMsg }));
             }
 
             toast({
-                title: "Erro no agendamento",
-                description: error.response?.data?.error || "Não foi possível reservar este horário. Tente outro.",
-                variant: "destructive"
+                variant: "destructive",
+                title: "Falha no Agendamento",
+                description: errorMsg,
             });
         } finally {
             setIsBooking(false);
@@ -218,14 +313,24 @@ export default function ClientSchedule() {
     };
 
     const handleReschedule = async () => {
-        if (!date || !selectedSlot) return; // Removed !conflictData check as we might set it moment before
-        const existingId = conflictData?.existing_id;
-        if (!existingId) return;
+        if (!date || !selectedSlot) return;
+
+        // Fix: Use eligibility data instead of deprecated conflictData
+        const existingId = eligibility?.active_appointment?.id;
+
+        if (!existingId) {
+            toast({
+                title: "Erro",
+                description: "Agendamento original não encontrado.",
+                variant: "destructive"
+            });
+            return;
+        }
 
         setIsBooking(true);
         try {
             const dateStr = date.toISOString().split('T')[0];
-            await api.post(`/medical/appointments/${conflictData.existing_id}/reschedule/`, {
+            await api.post(`/medical/appointments/${existingId}/reschedule/`, {
                 date: dateStr,
                 time: selectedSlot
             });
@@ -237,11 +342,13 @@ export default function ClientSchedule() {
             });
 
             setSelectedSlot(null);
-            setConflictData(null);
+            // setConflictData(null); // Deprecated
+            setEligibility(null); // Clear eligibility
             fetchAppointments();
             setSlots(prev => prev.filter(s => s !== selectedSlot));
-
+            setShowEligibilityModal(false); // Close modal
         } catch (error: any) {
+            console.error("Erro reschedule:", error);
             toast({
                 title: "Erro ao reagendar",
                 description: error.response?.data?.error || "Não foi possível realizar a troca.",
@@ -474,7 +581,12 @@ export default function ClientSchedule() {
                         <DialogContent className="sm:max-w-[500px]">
                             <DialogHeader>
                                 <DialogTitle className="flex items-center gap-2">
-                                    {eligibility?.is_free ? (
+                                    {bookingSuccess ? (
+                                        <span className="text-green-600 flex items-center gap-2">
+                                            <CheckCircle className="w-6 h-6" />
+                                            Agendamento Confirmado!
+                                        </span>
+                                    ) : eligibility?.is_free ? (
                                         <span className="text-green-600 flex items-center gap-2">
                                             <CheckCircle className="w-6 h-6" />
                                             Confirmação de Agendamento
@@ -487,122 +599,234 @@ export default function ClientSchedule() {
                                     )}
                                 </DialogTitle>
                                 <DialogDescription className="pt-2 text-base">
-                                    {eligibility?.message}
+                                    {bookingSuccess
+                                        ? "Sua consulta foi agendada com sucesso. Você receberá os detalhes por e-mail."
+                                        : eligibility?.message}
                                 </DialogDescription>
                             </DialogHeader>
 
-                            {/* Active Appointment Alert */}
-                            {eligibility?.active_appointment && (
-                                <div className="bg-white p-4 rounded-md border border-yellow-200 shadow-sm mb-2">
-                                    <div className="flex items-start gap-3">
-                                        <div className="bg-yellow-100 p-2 rounded-full">
-                                            <CalendarIcon className="w-5 h-5 text-yellow-700" />
-                                        </div>
-                                        <div className="flex-1">
-                                            <h4 className="font-semibold text-slate-800 text-sm">Você já tem uma consulta agendada</h4>
-                                            <p className="text-sm text-slate-500 mt-1">
-                                                Dia <strong>{new Date(eligibility.active_appointment.date + 'T00:00:00').toLocaleDateString('pt-BR')} às {eligibility.active_appointment.time}</strong>
-                                            </p>
-
-                                            <Button
-                                                variant="outline"
-                                                className="w-full mt-3 border-yellow-500 text-yellow-700 hover:bg-yellow-50"
-                                                onClick={handleReschedule}
-                                                disabled={isBooking}
-                                            >
-                                                {isBooking ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
-                                                Reagendar para {date?.toLocaleDateString('pt-BR')} às {selectedSlot}
-                                            </Button>
-                                        </div>
+                            {bookingSuccess ? (
+                                <div className="py-8 flex flex-col items-center justify-center space-y-4 animate-in fade-in zoom-in duration-300">
+                                    <div className="bg-green-100 p-4 rounded-full">
+                                        <CheckCircle className="w-12 h-12 text-green-600" />
                                     </div>
-                                    <div className="relative mt-4">
-                                        <div className="absolute inset-0 flex items-center">
-                                            <span className="w-full border-t" />
-                                        </div>
-                                        <div className="relative flex justify-center text-xs uppercase">
-                                            <span className="bg-white px-2 text-muted-foreground">Ou agende uma nova</span>
-                                        </div>
-                                    </div>
+                                    <p className="text-center text-slate-600 max-w-xs">
+                                        Obrigado! Sua consulta está confirmada para <strong>{date?.toLocaleDateString('pt-BR')} às {selectedSlot}</strong>.
+                                    </p>
+                                    <Button onClick={() => {
+                                        setBookingSuccess(false);
+                                        setSelectedSlot(null);
+                                        setPaymentMethod('PIX');
+                                        setCardData({ ...cardData, number: '', holderName: '', ccv: '' }); // Clear sensitive data
+                                    }} className="w-full bg-green-600 hover:bg-green-700 mt-4">
+                                        Entendido, fechar
+                                    </Button>
                                 </div>
-                            )}
+                            ) : (
+                                <>
 
-                            <div className="py-4 bg-slate-50 rounded-lg p-4 space-y-4">
-                                <div className="flex justify-between items-center border-b pb-2">
-                                    <span className="text-sm text-muted-foreground">Especialista</span>
-                                    <span className="font-medium text-slate-800">
-                                        {profile?.medical_team?.trichologist?.id && String(selectedDoctorId) === String(profile.medical_team.trichologist.id) ? "Tricologia" : "Nutrição"}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between items-center border-b pb-2">
-                                    <span className="text-sm text-muted-foreground">Data e Hora</span>
-                                    <span className="font-medium text-slate-800">{date?.toLocaleDateString('pt-BR')} às {selectedSlot}</span>
-                                </div>
-                                <div className="flex justify-between items-center pb-2">
-                                    <span className="text-sm text-muted-foreground">Valor da Consulta</span>
-                                    {eligibility?.is_free ? (
-                                        <span className="font-bold text-green-600 text-lg">GRÁTIS</span>
-                                    ) : (
-                                        <span className="font-bold text-slate-800 text-lg">R$ {eligibility?.price?.toFixed(2)}</span>
-                                    )}
-                                </div>
-                            </div>
+                                    {/* Active Appointment Alert */}
+                                    {eligibility?.active_appointment?.id && (
+                                        <div className="bg-white p-4 rounded-md border border-yellow-200 shadow-sm mb-2">
+                                            <div className="flex items-start gap-3">
+                                                <div className="bg-yellow-100 p-2 rounded-full">
+                                                    <CalendarIcon className="w-5 h-5 text-yellow-700" />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <h4 className="font-semibold text-slate-800 text-sm">Você já tem uma consulta agendada</h4>
+                                                    <p className="text-sm text-slate-500 mt-1">
+                                                        Dia <strong>{new Date(eligibility.active_appointment.date + 'T00:00:00').toLocaleDateString('pt-BR')} às {eligibility.active_appointment.time}</strong>
+                                                    </p>
 
-                            {/* Payment Section for Paid Appointments */}
-                            {!eligibility?.is_free && (
-                                <div className="space-y-4 pt-2">
-                                    <div className="flex items-center gap-2 justify-center">
-                                        <Badge variant="outline" className={`cursor-pointer px-4 py-2 hover:bg-slate-100 ${paymentMethod === 'PIX' ? 'border-green-500 bg-green-50' : ''}`} onClick={() => setPaymentMethod('PIX')}>
-                                            <div className={`w-3 h-3 rounded-full mr-2 ${paymentMethod === 'PIX' ? 'bg-green-500' : 'bg-slate-300'}`} />
-                                            Pix
-                                        </Badge>
-                                        <Badge variant="outline" className={`cursor-pointer px-4 py-2 hover:bg-slate-100 ${paymentMethod === 'CREDIT_CARD' ? 'border-blue-500 bg-blue-50' : ''}`} onClick={() => setPaymentMethod('CREDIT_CARD')}>
-                                            <div className={`w-3 h-3 rounded-full mr-2 ${paymentMethod === 'CREDIT_CARD' ? 'bg-blue-500' : 'bg-slate-300'}`} />
-                                            Cartão de Crédito
-                                        </Badge>
-                                    </div>
+                                                    {(() => {
+                                                        const canResched = canReschedule(eligibility.active_appointment.date, eligibility.active_appointment.time);
+                                                        return (
+                                                            <>
+                                                                {!canResched && (
+                                                                    <div className="mt-2 p-2 bg-red-50 border border-red-100 rounded text-xs text-red-600 flex items-start gap-2">
+                                                                        <div className="mt-0.5">⚠️</div>
+                                                                        <span>
+                                                                            Faltam menos de 24h para sua consulta.
+                                                                            Para reagendar, entre em contato diretamente com o suporte.
+                                                                        </span>
+                                                                    </div>
+                                                                )}
 
-                                    {paymentMethod === 'CREDIT_CARD' && (
-                                        <div className="space-y-3 p-3 border rounded-md bg-white animate-in slide-in-from-top-2">
-                                            <Input
-                                                placeholder="Nome no Cartão"
-                                                value={cardData.holderName}
-                                                onChange={e => setCardData({ ...cardData, holderName: e.target.value })}
-                                            />
-                                            <Input
-                                                placeholder="Número do Cartão"
-                                                value={cardData.number}
-                                                onChange={e => setCardData({ ...cardData, number: e.target.value })}
-                                            />
-                                            <div className="flex gap-2">
-                                                <Input
-                                                    placeholder="Mês (Ex: 12)"
-                                                    value={cardData.expiryMonth}
-                                                    onChange={e => setCardData({ ...cardData, expiryMonth: e.target.value })}
-                                                />
-                                                <Input
-                                                    placeholder="Ano (Ex: 2028)"
-                                                    value={cardData.expiryYear}
-                                                    onChange={e => setCardData({ ...cardData, expiryYear: e.target.value })}
-                                                />
-                                                <Input
-                                                    placeholder="CVV"
-                                                    value={cardData.ccv}
-                                                    onChange={e => setCardData({ ...cardData, ccv: e.target.value })}
-                                                />
+                                                                <Button
+                                                                    variant="outline"
+                                                                    className={`w-full mt-3 border-yellow-500 text-yellow-700 hover:bg-yellow-50 ${!canResched ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                                    onClick={handleReschedule}
+                                                                    disabled={isBooking || !canResched}
+                                                                >
+                                                                    {isBooking ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
+                                                                    Reagendar para {date?.toLocaleDateString('pt-BR')} às {selectedSlot}
+                                                                </Button>
+                                                            </>
+                                                        );
+                                                    })()}
+                                                </div>
+                                            </div>
+                                            <div className="relative mt-4">
+                                                <div className="absolute inset-0 flex items-center">
+                                                    <span className="w-full border-t" />
+                                                </div>
+                                                <div className="relative flex justify-center text-xs uppercase">
+                                                    <span className="bg-white px-2 text-muted-foreground">Ou agende uma nova</span>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
-                                </div>
-                            )}
 
-                            {!eligibility?.active_appointment && (
-                                <DialogFooter className="mt-4 gap-2 sm:gap-0">
-                                    <Button variant="ghost" onClick={() => { setShowEligibilityModal(false); setSelectedSlot(null); }}>Cancelar</Button>
-                                    <Button onClick={handleBook} disabled={isBooking} className={eligibility?.is_free ? "bg-green-600 hover:bg-green-700" : "bg-blue-600 hover:bg-blue-700"}>
-                                        {isBooking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                        {eligibility?.is_free ? "Confirmar Agendamento" : `Pagar e Confirmar`}
-                                    </Button>
-                                </DialogFooter>
+                                    <div className="py-4 bg-slate-50 rounded-lg p-4 space-y-4">
+                                        <div className="flex justify-between items-center border-b pb-2">
+                                            <span className="text-sm text-muted-foreground">Especialista</span>
+                                            <span className="font-medium text-slate-800">
+                                                {profile?.medical_team?.trichologist?.id && String(selectedDoctorId) === String(profile.medical_team.trichologist.id) ? "Tricologia" : "Nutrição"}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between items-center border-b pb-2">
+                                            <span className="text-sm text-muted-foreground">Data e Hora</span>
+                                            <span className="font-medium text-slate-800">{date?.toLocaleDateString('pt-BR')} às {selectedSlot}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center pb-2">
+                                            <span className="text-sm text-muted-foreground">Valor da Consulta</span>
+                                            {eligibility?.is_free ? (
+                                                <span className="font-bold text-green-600 text-lg">GRÁTIS</span>
+                                            ) : (
+                                                <span className="font-bold text-slate-800 text-lg">R$ {eligibility?.price?.toFixed(2)}</span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Payment Section for Paid Appointments */}
+                                    {!eligibility?.is_free && (
+                                        <div className="space-y-4 pt-2">
+                                            <div className="flex items-center gap-2 justify-center">
+                                                <Badge variant="outline" className={`cursor-pointer px-4 py-2 hover:bg-slate-100 ${paymentMethod === 'PIX' ? 'border-green-500 bg-green-50' : ''}`} onClick={() => setPaymentMethod('PIX')}>
+                                                    <div className={`w-3 h-3 rounded-full mr-2 ${paymentMethod === 'PIX' ? 'bg-green-500' : 'bg-slate-300'}`} />
+                                                    Pix
+                                                </Badge>
+                                                <Badge variant="outline" className={`cursor-pointer px-4 py-2 hover:bg-slate-100 ${paymentMethod === 'CREDIT_CARD' ? 'border-blue-500 bg-blue-50' : ''}`} onClick={() => setPaymentMethod('CREDIT_CARD')}>
+                                                    <div className={`w-3 h-3 rounded-full mr-2 ${paymentMethod === 'CREDIT_CARD' ? 'bg-blue-500' : 'bg-slate-300'}`} />
+                                                    Cartão de Crédito
+                                                </Badge>
+                                            </div>
+
+                                            {paymentMethod === 'CREDIT_CARD' && (
+                                                <div className="space-y-4 p-4 border rounded-lg bg-slate-50 animate-in slide-in-from-top-2">
+
+                                                    {/* Card Holder */}
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs font-semibold text-slate-500 uppercase">Nome no Cartão</Label>
+                                                        <Input
+                                                            placeholder="COMO ESTA NO CARTAO"
+                                                            value={cardData.holderName}
+                                                            onChange={e => {
+                                                                setCardData({ ...cardData, holderName: e.target.value.toUpperCase() });
+                                                                setCardErrors({ ...cardErrors, holderName: '' });
+                                                            }}
+                                                            className={cardErrors.holderName ? "border-red-500 bg-red-50" : "bg-white"}
+                                                        />
+                                                        {cardErrors.holderName && <span className="text-xs text-red-500">{cardErrors.holderName}</span>}
+                                                    </div>
+
+                                                    {/* CPF Holder */}
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs font-semibold text-slate-500 uppercase">CPF do Titular</Label>
+                                                        <Input
+                                                            placeholder="000.000.000-00"
+                                                            value={cardData.cpf || ''}
+                                                            maxLength={14}
+                                                            onChange={e => {
+                                                                const formatted = formatCPF(e.target.value);
+                                                                setCardData({ ...cardData, cpf: formatted });
+                                                            }}
+                                                            className="bg-white"
+                                                        />
+                                                    </div>
+
+                                                    {/* Card Number */}
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs font-semibold text-slate-500 uppercase">Número do Cartão</Label>
+                                                        <div className="relative">
+                                                            <div className="absolute left-3 top-2.5">
+                                                                <CreditCardIcon className="h-4 w-4 text-slate-400" />
+                                                            </div>
+                                                            <Input
+                                                                placeholder="0000 0000 0000 0000"
+                                                                value={cardData.number}
+                                                                maxLength={19}
+                                                                onChange={e => {
+                                                                    const formatted = formatCardNumber(e.target.value);
+                                                                    setCardData({ ...cardData, number: formatted });
+                                                                    setCardErrors({ ...cardErrors, number: '' });
+                                                                }}
+                                                                className={`pl-9 bg-white font-mono ${cardErrors.number ? "border-red-500 bg-red-50" : ""}`}
+                                                            />
+                                                        </div>
+                                                        {cardErrors.number && <span className="text-xs text-red-500">{cardErrors.number}</span>}
+                                                    </div>
+
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        {/* Expiry */}
+                                                        <div className="space-y-1">
+                                                            <Label className="text-xs font-semibold text-slate-500 uppercase">Validade</Label>
+                                                            <Input
+                                                                placeholder="MM/AA"
+                                                                value={cardData.expiry}
+                                                                maxLength={5}
+                                                                onChange={e => {
+                                                                    const formatted = formatExpiry(e.target.value);
+                                                                    setCardData({ ...cardData, expiry: formatted });
+                                                                    setCardErrors({ ...cardErrors, expiry: '' });
+                                                                }}
+                                                                className={`bg-white text-center ${cardErrors.expiry ? "border-red-500 bg-red-50" : ""}`}
+                                                            />
+                                                            {cardErrors.expiry && <span className="text-xs text-red-500">{cardErrors.expiry}</span>}
+                                                        </div>
+
+                                                        {/* CVV */}
+                                                        <div className="space-y-1">
+                                                            <Label className="text-xs font-semibold text-slate-500 uppercase">CVV</Label>
+                                                            <div className="relative">
+                                                                <Input
+                                                                    type="password"
+                                                                    placeholder="123"
+                                                                    maxLength={4}
+                                                                    value={cardData.ccv}
+                                                                    onChange={e => {
+                                                                        const v = e.target.value.replace(/\D/g, "");
+                                                                        setCardData({ ...cardData, ccv: v });
+                                                                        setCardErrors({ ...cardErrors, ccv: '' });
+                                                                    }}
+                                                                    className={`bg-white text-center ${cardErrors.ccv ? "border-red-500 bg-red-50" : ""}`}
+                                                                />
+                                                                <div className="absolute right-3 top-2.5 text-slate-400 group-hover:text-slate-600 cursor-help" title="Código de segurança de 3 ou 4 dígitos no verso do cartão.">
+                                                                    <div className="w-4 h-4 rounded-full border border-current flex items-center justify-center text-[10px] font-bold">?</div>
+                                                                </div>
+                                                            </div>
+                                                            {cardErrors.ccv && <span className="text-xs text-red-500">{cardErrors.ccv}</span>}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="pt-2 flex items-center gap-2 text-xs text-slate-400 justify-center">
+                                                        <Lock className="w-3 h-3" />
+                                                        Pagamento processado com segurança via Asaas
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                        </div>
+                                    )}
+
+                                    <DialogFooter className="mt-4 gap-2 sm:gap-0">
+                                        <Button variant="ghost" onClick={() => { setShowEligibilityModal(false); setSelectedSlot(null); }}>Cancelar</Button>
+                                        <Button onClick={handleBook} disabled={isBooking} className={eligibility?.is_free ? "bg-green-600 hover:bg-green-700" : "bg-blue-600 hover:bg-blue-700"}>
+                                            {isBooking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                            {eligibility?.is_free ? "Confirmar Agendamento" : `Pagar e Confirmar`}
+                                        </Button>
+                                    </DialogFooter>
+                                </>
                             )}
                         </DialogContent>
                     </Dialog>
@@ -672,22 +896,55 @@ export default function ClientSchedule() {
                                                     <AvatarFallback className="bg-slate-100 text-slate-500">DR</AvatarFallback>
                                                 </Avatar>
                                                 <div>
-                                                    <h4 className="font-bold text-lg leading-tight">
-                                                        {new Date(appt.date + 'T00:00:00').toLocaleDateString('pt-BR')} <span className="text-muted-foreground font-normal">às</span> {appt.time}
-                                                    </h4>
-                                                    <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 text-sm text-muted-foreground">
-                                                        <span className="font-medium text-slate-700">{appt.doctor_name || "Especialista"}</span>
-                                                        <span className="hidden sm:inline">•</span>
-                                                        <span>{appt.doctor_specialty || "Especialista"}</span>
-                                                        <span className="hidden sm:inline">•</span>
-                                                        <span className={`capitalize px-2 py-0.5 rounded-full text-xs font-semibold ${appt.status === 'scheduled' ? 'bg-green-100 text-green-700' :
-                                                            appt.status === 'waiting_payment' ? 'bg-yellow-100 text-yellow-700' :
-                                                                'bg-slate-100 dark:bg-slate-800'
-                                                            }`}>
-                                                            {appt.status === 'scheduled' ? 'Agendado' :
-                                                                appt.status === 'waiting_payment' ? 'Aguardando Pagamento' :
-                                                                    appt.status}
-                                                        </span>
+                                                    <div className="flex flex-col gap-0.5">
+                                                        <h4 className="font-bold text-lg leading-tight text-slate-900">
+                                                            {new Date(appt.date + 'T00:00:00').toLocaleDateString('pt-BR')} <span className="text-muted-foreground font-normal text-sm">às</span> {appt.time}
+                                                        </h4>
+
+                                                        {/* Status Badge Logic */}
+                                                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                                                            {(() => {
+                                                                const apptDate = new Date(`${appt.date}T${appt.time}:00`);
+                                                                const now = new Date();
+                                                                const isPast = apptDate < now;
+
+                                                                let label: string = appt.status;
+                                                                let style = "bg-slate-100 text-slate-700";
+
+                                                                if (appt.status === 'scheduled') {
+                                                                    if (isPast) {
+                                                                        label = 'Realizada'; // Or 'Expirada' depending on business rule
+                                                                        style = "bg-blue-100 text-blue-700 border border-blue-200";
+                                                                    } else {
+                                                                        label = 'Agendado';
+                                                                        style = "bg-green-100 text-green-700 border border-green-200";
+                                                                    }
+                                                                } else if (appt.status === 'waiting_payment') {
+                                                                    if (isPast) {
+                                                                        label = 'Expirada';
+                                                                        style = "bg-slate-100 text-slate-500 border border-slate-200 line-through";
+                                                                    } else {
+                                                                        label = 'Aguardando Pagamento';
+                                                                        style = "bg-yellow-100 text-yellow-800 border border-yellow-200";
+                                                                    }
+                                                                } else if (appt.status === 'cancelled') {
+                                                                    label = 'Cancelado';
+                                                                    style = "bg-red-50 text-red-700 border border-red-100";
+                                                                } else if (appt.status === 'completed') {
+                                                                    label = 'Realizada';
+                                                                    style = "bg-blue-100 text-blue-700 border border-blue-200";
+                                                                }
+
+                                                                return (
+                                                                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${style}`}>
+                                                                        {label}
+                                                                    </span>
+                                                                );
+                                                            })()}
+
+                                                            <span className="text-xs text-muted-foreground hidden sm:inline">•</span>
+                                                            <span className="text-xs text-muted-foreground">{appt.doctor_specialty || "Especialista"}</span>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>

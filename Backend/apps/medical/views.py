@@ -1,14 +1,19 @@
 from rest_framework.views import APIView
+from rest_framework import status, generics, views
 from rest_framework.response import Response
-from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
-from datetime import datetime
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from datetime import datetime, timedelta
 from .services import MedicalScheduleService, AppMedicalService
-from .models import Appointments, PatientPhotos
-from apps.accounts.models import User
-from apps.accounts.models import User
-from .serializers import PatientPhotoSerializer
+from .models import Appointments, PatientPhotos, DoctorAvailability, AnamnesisAnswers
+from apps.accounts.models import User, Doctors, Patients
+from apps.accounts.services import BitrixService
+from apps.accounts.config import BitrixConfig
+from .serializers import (
+    PatientPhotoSerializer
+)
 from django.db import transaction
 from .permissions import IsDoctor
 
@@ -65,6 +70,7 @@ class SlotsView(APIView):
 
 class ScheduleAppointmentView(APIView):
     permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
 
     def get(self, request):
         if request.user.role == 'doctor':
@@ -136,12 +142,27 @@ class ScheduleAppointmentView(APIView):
              except Exception:
                  return Response({"error": "ID de médico inválido"}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Fallback if no doctor_id provided (maintain backward compatibility or auto-assign)
         if not doctor_id:
             if hasattr(request.user, 'patients') and request.user.patients.assigned_trichologist:
                 doctor_id = request.user.patients.assigned_trichologist.user.id
 
-        result = MedicalScheduleService.book_appointment(request.user, date_str, time_str, doctor_id=doctor_id)
+        # Extract Payment Info
+        print(f"DEBUG PAYLOAD: {request.data.keys()}")
+        payment_method = request.data.get('payment_method', 'PIX')
+        print(f"DEBUG PAYMENT_METHOD: {payment_method}")
+        
+        # Frontend sends 'credit_card', but service expects 'card_data'
+        # Frontend sends 'credit_card', but service expects 'card_data'
+        card_data = request.data.get('card_data') or request.data.get('credit_card')
+
+        result = MedicalScheduleService.book_appointment(
+            request.user, 
+            date_str, 
+            time_str, 
+            doctor_id=doctor_id,
+            payment_method=payment_method,
+            card_data=card_data
+        )
         
         if "error" in result:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
@@ -431,3 +452,36 @@ class DoctorPatientDetailView(APIView):
         except User.DoesNotExist:
             return Response({"error": "Paciente não encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
+
+class CheckEligibilityView(views.APIView):
+    """
+    Verifica elegibilidade para agendamento e retorna o preço da consulta
+    baseado na especialidade do médico (Preço vindo do Bitrix).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        doctor_id = request.query_params.get('doctor_id')
+        if not doctor_id:
+            return Response({"error": "doctor_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from apps.accounts.models import Doctors
+            doctor = Doctors.objects.get(user_id=doctor_id)
+        except Doctors.DoesNotExist:
+            return Response({"error": "Médico não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        
+        # Mapeamento: Model Choice -> Service Key
+        specialty_map = {
+            'trichologist': 'tricologia',
+            'nutritionist': 'nutricao'
+        }
+        
+        service_specialty = specialty_map.get(doctor.specialty_type, 'tricologia')
+        
+        # Delegate to Service
+        response_data = MedicalScheduleService.get_appointment_eligibility(user, service_specialty)
+        
+        return Response(response_data)
