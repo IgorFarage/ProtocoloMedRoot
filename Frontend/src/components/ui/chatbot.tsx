@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { chatbot } from "@/lib/api";
 import { useToast } from "@/components/ui/use-toast";
-import LiaAvatar from "@/assets/Images/AssistenteLia.png";
+const LiaAvatar = "/Images/AssistenteLia.png";
 import { useAuth } from "@/auth/AuthProvider";
 
 interface Message {
