@@ -942,6 +942,93 @@ class BitrixService:
             results["errors"].append(str(e))
             return results
 
+    @staticmethod
+    def create_appointment_deal(user: Any, appointment: Any, specialty_type: str) -> Optional[str]:
+        """
+        [NORMALIZED 1:N] Cria um Negócio de Consulta no Pipeline 12.
+        - Cria um NOVO Deal para cada consulta (Histórico).
+        - Atualiza o Contato apenas com dados de recência (Última consulta).
+        """
+        if not getattr(user, 'id_bitrix', None): return None
+        
+        try:
+            from .config import BitrixConfig
+            
+            # 1. Preparar Dados Específicos do Evento (Deal Data)
+            doctor_name = appointment.doctor.full_name if appointment.doctor else "Não atribuído"
+            prod_id = BitrixConfig.APPOINTMENT_PRODUCT_IDS.get(specialty_type)
+            
+            # Valor (Regra de Negócio: Plus não paga, Standard paga o valor do produto)
+            opportunity = 0.00
+            if user.current_plan != 'plus' and prod_id:
+                # Busca preço real do produto no Bitrix
+                opportunity = BitrixService.get_product_price(prod_id)
+
+            # FIELD MAPPING (DEAL ONLY)
+            # Estes campos vão para o DEAL, garantindo histórico 1:N
+            cat_id = int(BitrixConfig.PIPELINE_APPOINTMENT_ID)
+            
+            deal_fields = {
+                "TITLE": f"Consulta: {user.full_name} - {specialty_type.capitalize()}",
+                "CATEGORY_ID": cat_id,
+                "CONTACT_ID": user.id_bitrix,
+                "CURRENCY_ID": "BRL",
+                "OPPORTUNITY": opportunity,
+                
+                # Campos de Detalhe (Ficam no Deal)
+                BitrixConfig.DEAL_FIELDS["APPOINTMENT_SPECIALTY"]: specialty_type.capitalize(),
+                BitrixConfig.DEAL_FIELDS["APPOINTMENT_DATE"]: appointment.scheduled_at.strftime("%Y-%m-%d %H:%M"),
+                BitrixConfig.DEAL_FIELDS["APPOINTMENT_DOCTOR"]: doctor_name,
+                
+                # Force Pipeline Stage (Agendadas)
+                "STAGE_ID": "C12:NEW",
+
+                # Snapshot do Status no momento da consulta
+                BitrixConfig.DEAL_FIELDS["PLUS_STATUS"]: "PLUS_USAGE" if user.current_plan == 'plus' else "STANDARD_PAID"
+            }
+            
+            logger.info(f"📤 Criando Deal de Consulta. Payload: {json.dumps(deal_fields)}")
+
+            # 2. Criar Negócio (Sempre cria novo = 1:N)
+            resp = BitrixService._safe_request('POST', 'crm.deal.add.json', json={"fields": deal_fields})
+            deal_id = None
+            if resp and 'result' in resp:
+                deal_id = resp['result']
+                logger.info(f"✅ Deal de Consulta Criado (1:N): {deal_id}")
+                
+                # 2.1 [SAFEGUARD] Verificar se caiu no Pipeline Certo
+                try:
+                    check = BitrixService._safe_request('GET', 'crm.deal.get.json', params={"id": deal_id})
+                    if check and 'result' in check:
+                        current_cat = int(check['result'].get('CATEGORY_ID') or 0)
+                        if current_cat != cat_id:
+                            logger.warning(f"⚠️ Deal {deal_id} criado no Pipeline errado ({current_cat}). Tentando mover para {cat_id}...")
+                            # Tenta mover
+                            move_payload = {"fields": {"CATEGORY_ID": cat_id, "STAGE_ID": "C12:NEW"}}
+                            BitrixService._safe_request('POST', 'crm.deal.update.json', json={"id": deal_id, "fields": move_payload["fields"]})
+                except Exception as ex_move:
+                     logger.error(f"Erro ao verificar/mover pipeline: {ex_move}")
+
+                # 3. Vincular Produto
+                if prod_id:
+                    rows = [{"PRODUCT_ID": prod_id, "PRICE": opportunity, "QUANTITY": 1}]
+                    BitrixService._safe_request('POST', 'crm.deal.productrows.set.json', json={"id": deal_id, "rows": rows})
+
+            # 4. Atualizar Contato (Apenas Resumo/Recência)
+            # Não sobrescrevemos especialidade ou doutor no contato para não perder histórico anterior.
+            contact_fields = {
+                BitrixConfig.DEAL_FIELDS["LAST_CONSULT_DATE"]: appointment.scheduled_at.strftime("%Y-%m-%d"),
+                # Opcional: Manter status do plano atualizado no contato também
+                BitrixConfig.DEAL_FIELDS["PLUS_STATUS"]: deal_fields[BitrixConfig.DEAL_FIELDS["PLUS_STATUS"]]
+            }
+            BitrixService._safe_request('POST', 'crm.contact.update.json', json={"id": user.id_bitrix, "fields": contact_fields})
+            
+            return deal_id
+
+        except Exception as e:
+            logger.exception(f"❌ Erro create_appointment_deal: {e}")
+            return None
+
 class PasswordResetService:
     @staticmethod
     def request_password_reset(email: str) -> bool:
@@ -1151,69 +1238,3 @@ class AssignmentService:
             logger.error(f"❌ Erro ao atribuir equipe médica: {e}")
             return None
 
-    @staticmethod
-    def create_appointment_deal(user: Any, appointment: Any, specialty_type: str) -> Optional[str]:
-        """
-        [NORMALIZED 1:N] Cria um Negócio de Consulta no Pipeline 12.
-        - Cria um NOVO Deal para cada consulta (Histórico).
-        - Atualiza o Contato apenas com dados de recência (Última consulta).
-        """
-        # Evita import circular
-        from .services import BitrixService
-        
-        if not getattr(user, 'id_bitrix', None): return None
-        
-        try:
-            from .config import BitrixConfig
-            
-            # 1. Preparar Dados Específicos do Evento (Deal Data)
-            doctor_name = appointment.doctor.full_name if appointment.doctor else "Não atribuído"
-            prod_id = BitrixConfig.APPOINTMENT_PRODUCT_IDS.get(specialty_type)
-            
-            # Valor (Regra de Negócio: Plus não paga, Standard paga 150)
-            opportunity = 0.00 if user.current_plan == 'plus' else 150.00
-
-            # FIELD MAPPING (DEAL ONLY)
-            # Estes campos vão para o DEAL, garantindo histórico 1:N
-            deal_fields = {
-                "TITLE": f"Consulta: {user.full_name} - {specialty_type.capitalize()}",
-                "CATEGORY_ID": BitrixConfig.PIPELINE_APPOINTMENT_ID,
-                "CONTACT_ID": user.id_bitrix,
-                "CURRENCY_ID": "BRL",
-                "OPPORTUNITY": opportunity,
-                
-                # Campos de Detalhe (Ficam no Deal)
-                BitrixConfig.DEAL_FIELDS["APPOINTMENT_SPECIALTY"]: specialty_type.capitalize(),
-                BitrixConfig.DEAL_FIELDS["APPOINTMENT_DATE"]: appointment.scheduled_at.strftime("%Y-%m-%d %H:%M"),
-                BitrixConfig.DEAL_FIELDS["APPOINTMENT_DOCTOR"]: doctor_name,
-                
-                # Snapshot do Status no momento da consulta
-                BitrixConfig.DEAL_FIELDS["PLUS_STATUS"]: "PLUS_USAGE" if user.current_plan == 'plus' else "STANDARD_PAID"
-            }
-            
-            # 2. Criar Negócio (Sempre cria novo = 1:N)
-            resp = BitrixService._safe_request('POST', 'crm.deal.add.json', json={"fields": deal_fields})
-            deal_id = None
-            if resp and 'result' in resp:
-                deal_id = resp['result']
-                logger.info(f"✅ Deal de Consulta Criado (1:N): {deal_id}")
-                
-                # 3. Vincular Produto
-                if prod_id:
-                    rows = [{"PRODUCT_ID": prod_id, "PRICE": opportunity, "QUANTITY": 1}]
-                    BitrixService._safe_request('POST', 'crm.deal.productrows.set.json', json={"id": deal_id, "rows": rows})
-
-            # 4. Atualizar Contato (Apenas Resumo/Recência)
-            # Não sobrescrevemos especialidade ou doutor no contato para não perder histórico anterior.
-            contact_fields = {
-                BitrixConfig.DEAL_FIELDS["LAST_CONSULT_DATE"]: appointment.scheduled_at.strftime("%Y-%m-%d"),
-                # Opcional: Manter status do plano atualizado no contato também
-                BitrixConfig.DEAL_FIELDS["PLUS_STATUS"]: deal_fields[BitrixConfig.DEAL_FIELDS["PLUS_STATUS"]]
-            }
-            BitrixService._safe_request('POST', 'crm.contact.update.json', json={"id": user.id_bitrix, "fields": contact_fields})
-            
-            return deal_id
-
-        except Exception as e:
-            logger.exception(f"❌ Erro create_appointment_deal: {e}")
-            return None

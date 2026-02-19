@@ -167,6 +167,36 @@ class AsaasService:
                 
         return response
 
+    def check_payment_status(self, payment_id):
+        """
+        Consulta status atual do pagamento no Asaas.
+        Retorna (status_enum, raw_response)
+        """
+        try:
+            response = self._request("GET", f"payments/{payment_id}")
+            if response and 'status' in response:
+                status_asaas = response['status']
+                status_mapped = self.map_status(status_asaas)
+                return status_mapped, response
+            return None, response
+        except Exception as e:
+            logger.error(f"❌ Erro Check Status {payment_id}: {e}")
+            return None, None
+
+    def cancel_payment(self, payment_id):
+        """
+        Cancela uma cobrança no Asaas (Remove o QRCode/Link).
+        """
+        try:
+            response = self._request("DELETE", f"payments/{payment_id}")
+            if response and "deleted" in response and response["deleted"]:
+                return True
+            # Asaas retorna json com 'deleted': true ou erro
+            return False
+        except Exception as e:
+            logger.error(f"❌ Erro ao cancelar pagamento {payment_id}: {e}")
+            return False
+
     def create_subscription(self, customer_id, value, cycle_months, card_data, description="Assinatura ProtocoloMed"):
         """
         Cria uma assinatura no Asaas.
