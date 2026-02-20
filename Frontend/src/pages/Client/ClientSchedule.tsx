@@ -129,6 +129,31 @@ export default function ClientSchedule() {
     // State para Lista de Consultas
     const [myAppointments, setMyAppointments] = useState<Appointment[]>([]);
     const [loadingAppts, setLoadingAppts] = useState(false);
+    const [cancelApptId, setCancelApptId] = useState<number | null>(null);
+    const [isCancelling, setIsCancelling] = useState(false);
+
+    const handleCancelAppointment = async () => {
+        if (!cancelApptId) return;
+        setIsCancelling(true);
+        try {
+            const res = await api.post(`/medical/appointments/${cancelApptId}/cancel/`);
+            toast({
+                title: "Consulta Cancelada",
+                description: res.data.message || "A consulta foi cancelada com sucesso.",
+                className: "bg-green-600 text-white"
+            });
+            fetchAppointments();
+            setCancelApptId(null);
+        } catch (error: any) {
+            toast({
+                title: "Erro ao cancelar",
+                description: error.response?.data?.error || "Ocorreu um erro ao cancelar.",
+                variant: "destructive"
+            });
+        } finally {
+            setIsCancelling(false);
+        }
+    };
 
     const location = useLocation();
     const [selectedDoctorId, setSelectedDoctorId] = useState<string | number | null>(null);
@@ -248,6 +273,8 @@ export default function ClientSchedule() {
                 payload.cardData = {
                     ...cardData,
                     number: cardData.number.replace(/\D/g, ""),
+                    expiryMonth: month,
+                    expiryYear: year,
                     holderInfo: {
                         name: cardData.holderName,
                         email: profile?.email || "cliente@email.com",
@@ -394,6 +421,29 @@ export default function ClientSchedule() {
                     <TabsTrigger value="schedule">Agendar</TabsTrigger>
                     <TabsTrigger value="appointments">Minhas Consultas</TabsTrigger>
                 </TabsList>
+
+                {/* Dialog de Cancelamento */}
+                <Dialog open={!!cancelApptId} onOpenChange={(open) => !open && setCancelApptId(null)}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Cancelar Consulta</DialogTitle>
+                            <DialogDescription>
+                                Tem certeza que deseja cancelar esta consulta?
+                                Caso exista um pagamento confirmado atrelado, o estorno será solicitado automaticamente à sua operadora de cartão de crédito ou conta Pix.
+                                Esse processo pode levar de alguns minutos a algumas faturas.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter className="mt-4 gap-2 sm:gap-0">
+                            <Button variant="outline" onClick={() => setCancelApptId(null)} disabled={isCancelling}>
+                                Voltar
+                            </Button>
+                            <Button variant="destructive" onClick={handleCancelAppointment} disabled={isCancelling}>
+                                {isCancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                Sim, Cancelar Consulta
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
 
                 {/* Dialog de Pix Payment */}
                 <Dialog open={isPaymentModalOpen} onOpenChange={setIsPaymentModalOpen}>
@@ -883,85 +933,125 @@ export default function ClientSchedule() {
                         <div className="space-y-4">
                             {myAppointments.length === 0 ? (
                                 <p className="text-muted-foreground p-4">Você ainda não tem consultas agendadas.</p>
-                            ) : myAppointments.map(appt => (
-                                <Card key={appt.id} className="border-l-4 border-l-primary">
-                                    <CardContent className="p-4 flex items-center justify-between">
-                                        <div className="flex gap-4 items-center">
-                                            <div className="bg-primary/10 p-3 rounded-full hidden sm:block">
-                                                <CalendarIcon className="w-6 h-6 text-primary" />
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <Avatar className="h-10 w-10 border border-slate-200">
-                                                    <AvatarImage src={appt.doctor_photo} />
-                                                    <AvatarFallback className="bg-slate-100 text-slate-500">DR</AvatarFallback>
-                                                </Avatar>
-                                                <div>
-                                                    <div className="flex flex-col gap-0.5">
-                                                        <h4 className="font-bold text-lg leading-tight text-slate-900">
-                                                            {new Date(appt.date + 'T00:00:00').toLocaleDateString('pt-BR')} <span className="text-muted-foreground font-normal text-sm">às</span> {appt.time}
-                                                        </h4>
+                            ) : (() => {
+                                const now = new Date();
+                                const active: typeof myAppointments = [];
+                                const inactive: typeof myAppointments = [];
 
-                                                        {/* Status Badge Logic */}
-                                                        <div className="flex flex-wrap items-center gap-2 mt-1">
-                                                            {(() => {
-                                                                const apptDate = new Date(`${appt.date}T${appt.time}:00`);
-                                                                const now = new Date();
-                                                                const isPast = apptDate < now;
+                                myAppointments.forEach(appt => {
+                                    const apptDate = new Date(`${appt.date}T${appt.time}:00`);
+                                    const isPast = apptDate < now;
 
-                                                                let label: string = appt.status;
-                                                                let style = "bg-slate-100 text-slate-700";
+                                    if (!isPast && (appt.status === 'scheduled' || appt.status === 'waiting_payment')) {
+                                        active.push(appt);
+                                    } else {
+                                        inactive.push(appt);
+                                    }
+                                });
 
-                                                                if (appt.status === 'scheduled') {
-                                                                    if (isPast) {
-                                                                        label = 'Realizada'; // Or 'Expirada' depending on business rule
+                                // Ativas: crescentes (mais próxima primeiro)
+                                active.sort((a, b) => new Date(`${a.date}T${a.time}:00`).getTime() - new Date(`${b.date}T${b.time}:00`).getTime());
+                                // Inativas: decrescentes (mais recentes que passaram primeiro)
+                                inactive.sort((a, b) => new Date(`${b.date}T${b.time}:00`).getTime() - new Date(`${a.date}T${a.time}:00`).getTime());
+
+                                return [...active, ...inactive].map(appt => (
+                                    <Card key={appt.id} className={`border-l-4 ${active.includes(appt) ? 'border-l-primary' : 'border-l-slate-300 opacity-75'}`}>
+                                        <CardContent className="p-4 flex items-center justify-between">
+                                            <div className="flex gap-4 items-center">
+                                                <div className="bg-primary/10 p-3 rounded-full hidden sm:block">
+                                                    <CalendarIcon className="w-6 h-6 text-primary" />
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <Avatar className="h-10 w-10 border border-slate-200">
+                                                        <AvatarImage src={appt.doctor_photo} />
+                                                        <AvatarFallback className="bg-slate-100 text-slate-500">DR</AvatarFallback>
+                                                    </Avatar>
+                                                    <div>
+                                                        <div className="flex flex-col gap-0.5">
+                                                            <h4 className="font-bold text-lg leading-tight text-slate-900">
+                                                                {new Date(appt.date + 'T00:00:00').toLocaleDateString('pt-BR')} <span className="text-muted-foreground font-normal text-sm">às</span> {appt.time}
+                                                            </h4>
+
+                                                            {/* Status Badge Logic */}
+                                                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                                                                {(() => {
+                                                                    const apptDate = new Date(`${appt.date}T${appt.time}:00`);
+                                                                    const now = new Date();
+                                                                    const isPast = apptDate < now;
+
+                                                                    let label: string = appt.status;
+                                                                    let style = "bg-slate-100 text-slate-700";
+
+                                                                    if (appt.status === 'scheduled') {
+                                                                        if (isPast) {
+                                                                            label = 'Realizada'; // Or 'Expirada' depending on business rule
+                                                                            style = "bg-blue-100 text-blue-700 border border-blue-200";
+                                                                        } else {
+                                                                            label = 'Agendado';
+                                                                            style = "bg-green-100 text-green-700 border border-green-200";
+                                                                        }
+                                                                    } else if (appt.status === 'waiting_payment') {
+                                                                        if (isPast) {
+                                                                            label = 'Expirada';
+                                                                            style = "bg-slate-100 text-slate-500 border border-slate-200 line-through";
+                                                                        } else {
+                                                                            label = 'Aguardando Pagamento';
+                                                                            style = "bg-yellow-100 text-yellow-800 border border-yellow-200";
+                                                                        }
+                                                                    } else if (appt.status === 'cancelled') {
+                                                                        label = 'Cancelado';
+                                                                        style = "bg-red-50 text-red-700 border border-red-100";
+                                                                    } else if (appt.status === 'completed') {
+                                                                        label = 'Realizada';
                                                                         style = "bg-blue-100 text-blue-700 border border-blue-200";
-                                                                    } else {
-                                                                        label = 'Agendado';
-                                                                        style = "bg-green-100 text-green-700 border border-green-200";
                                                                     }
-                                                                } else if (appt.status === 'waiting_payment') {
-                                                                    if (isPast) {
-                                                                        label = 'Expirada';
-                                                                        style = "bg-slate-100 text-slate-500 border border-slate-200 line-through";
-                                                                    } else {
-                                                                        label = 'Aguardando Pagamento';
-                                                                        style = "bg-yellow-100 text-yellow-800 border border-yellow-200";
-                                                                    }
-                                                                } else if (appt.status === 'cancelled') {
-                                                                    label = 'Cancelado';
-                                                                    style = "bg-red-50 text-red-700 border border-red-100";
-                                                                } else if (appt.status === 'completed') {
-                                                                    label = 'Realizada';
-                                                                    style = "bg-blue-100 text-blue-700 border border-blue-200";
-                                                                }
 
-                                                                return (
-                                                                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${style}`}>
-                                                                        {label}
-                                                                    </span>
-                                                                );
-                                                            })()}
+                                                                    return (
+                                                                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${style}`}>
+                                                                            {label}
+                                                                        </span>
+                                                                    );
+                                                                })()}
 
-                                                            <span className="text-xs text-muted-foreground hidden sm:inline">•</span>
-                                                            <span className="text-xs text-muted-foreground">{appt.doctor_specialty || "Especialista"}</span>
+                                                                <span className="text-xs text-muted-foreground hidden sm:inline">•</span>
+                                                                <span className="text-xs text-muted-foreground">{appt.doctor_specialty || "Especialista"}</span>
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
                                             </div>
-                                        </div>
 
-                                        <div className="flex flex-col gap-2 items-end">
-                                            {appt.meeting_link && appt.status === 'scheduled' && (
-                                                <Button className="bg-green-600 hover:bg-green-700 w-full md:w-auto" asChild>
-                                                    <a href={appt.meeting_link} target="_blank" rel="noreferrer">
-                                                        <Video className="mr-2 h-4 w-4" /> Entrar na Sala
-                                                    </a>
-                                                </Button>
-                                            )}
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            ))}
+                                            <div className="flex flex-col gap-2 items-end">
+                                                {appt.meeting_link && appt.status === 'scheduled' && (
+                                                    <Button className="bg-green-600 hover:bg-green-700 w-full md:w-auto" asChild>
+                                                        <a href={appt.meeting_link} target="_blank" rel="noreferrer">
+                                                            <Video className="mr-2 h-4 w-4" /> Entrar na Sala
+                                                        </a>
+                                                    </Button>
+                                                )}
+                                                {(() => {
+                                                    const apptDate = new Date(`${appt.date}T${appt.time}:00`);
+                                                    const now = new Date();
+                                                    const canCancel = (apptDate.getTime() - now.getTime()) >= 24 * 3600 * 1000;
+
+                                                    if ((appt.status === 'scheduled' || appt.status === 'waiting_payment') && canCancel) {
+                                                        return (
+                                                            <Button
+                                                                variant="outline"
+                                                                className="w-full md:w-auto border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                                                onClick={() => setCancelApptId(appt.id)}
+                                                            >
+                                                                Cancelar
+                                                            </Button>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))
+                            })()}
                         </div>
                     </ScrollArea>
                 </TabsContent>

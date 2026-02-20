@@ -4,7 +4,7 @@ import { Loader2, LogOut, LayoutDashboard, FileText, Calendar, User, MessageCirc
 import { Outlet, Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-const Logo = "/Images/LOGO-removebg.png";
+import Logo from "@/assets/Images/LOGO-removebg.png";
 import ChatWidget from "@/components/chat/ChatWidget";
 
 export default function ClientLayout() {

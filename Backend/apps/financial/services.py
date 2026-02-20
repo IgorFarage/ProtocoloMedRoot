@@ -197,6 +197,32 @@ class AsaasService:
             logger.error(f"❌ Erro ao cancelar pagamento {payment_id}: {e}")
             return False
 
+    def refund_payment(self, payment_id, value=None, description="Cancelamento de Consulta"):
+        """
+        Realiza o estorno de uma cobrança. Tenta POST /refund (para RECEBIDO/liquidado).
+        Se falhar (ex: cartão CONFIRMADO mas não liquidado), faz o fallback para DELETE /payments.
+        """
+        payload = {"description": description}
+        if value is not None:
+            payload["value"] = float(value)
+
+        try:
+            # 1. Tentar Estorno Padrão (Liquidado)
+            response = self._request("POST", f"payments/{payment_id}/refund", payload)
+            if response and "status" in response and response["status"] in ["REFUNDED", "REFUND_REQUESTED"]:
+                return True
+            
+            # Se deu erro, logar e tentar cancelamento (Void para cartão Confirmado/Pendente)
+            err_msg = response.get("errors", [{"description": "Unknown"}])[0]["description"] if isinstance(response, dict) and "errors" in response else "Erro desconhecido"
+            logger.warning(f"⚠️ Asaas Refund Padrão falhou ({err_msg}). Tentando Cancelamento/Void para cobrança não liquidada...")
+            
+            # 2. Fallback: Cancelamento/Void (Cartão Autorizado mas não Capturado/Liquidado)
+            return self.cancel_payment(payment_id)
+            
+        except Exception as e:
+            logger.error(f"❌ Erro crítico ao estornar pagamento {payment_id}: {e}")
+            return False
+
     def create_subscription(self, customer_id, value, cycle_months, card_data, description="Assinatura ProtocoloMed"):
         """
         Cria uma assinatura no Asaas.

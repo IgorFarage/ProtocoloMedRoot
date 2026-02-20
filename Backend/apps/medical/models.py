@@ -58,6 +58,8 @@ class Appointments(models.Model):
     patient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='appointments_as_patient', null=True, blank=True) 
     doctor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments_as_doctor')
     
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     scheduled_at = models.DateTimeField()
     status = models.CharField(max_length=20, default='scheduled', choices=[
         ('scheduled', 'Agendado'),

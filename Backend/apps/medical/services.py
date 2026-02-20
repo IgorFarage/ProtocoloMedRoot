@@ -436,6 +436,7 @@ class MedicalScheduleService:
         except ValueError:
             return {"error": "Formato de data/hora inválido."}
         except Exception as e:
+            import traceback; traceback.print_exc()
             return {"error": f"Erro interno: {str(e)}"}
 
     @staticmethod
@@ -513,6 +514,63 @@ class MedicalScheduleService:
             return {"error": "Formato de data/hora inválido."}
         except Exception as e:
             return {"error": f"Erro interno: {str(e)}"}
+
+    @staticmethod
+    def cancel_appointment(user: User, appointment_id: int) -> Dict[str, Any]:
+        """
+        Cancela uma consulta. Se houver pagamento atrelado, solicita estorno (refund).
+        """
+        try:
+            from apps.financial.models import Transaction
+            from apps.financial.services import AsaasService
+            
+            # 1. Buscar Appointment (somente se for do user)
+            try:
+                appt = Appointments.objects.get(id=appointment_id, patient=user)
+            except Appointments.DoesNotExist:
+                return {"error": "Agendamento não encontrado."}
+                
+            if appt.status == 'completed':
+                 return {"error": "Consultas já realizadas não podem ser canceladas."}
+            if appt.status == 'cancelled':
+                 return {"error": "Esta consulta já encontra-se cancelada."}
+
+            from django.utils import timezone
+            now = timezone.now()
+            
+            if appt.scheduled_at <= now:
+                return {"error": "Não é possível cancelar uma consulta cuja data já passou."}
+                
+            time_difference = appt.scheduled_at - now
+            if time_difference.total_seconds() < 24 * 3600:
+                return {"error": "Cancelamentos são permitidos apenas com 24 horas de antecedência."}
+
+            with transaction.atomic():
+                # 2. Atualizar Status Consulta
+                appt.status = 'cancelled'
+                appt.save()
+                
+                # 3. Processamento Financeiro (Reembolso/Estorno)
+                txs = Transaction.objects.filter(
+                    user=user, 
+                    mp_metadata__appointment_id=appt.id,
+                    status=Transaction.Status.APPROVED
+                )
+                
+                for tx in txs:
+                    if tx.asaas_payment_id:
+                        asaas = AsaasService()
+                        success = asaas.refund_payment(tx.asaas_payment_id, description=f"Estorno referente à consulta {appt.id}")
+                        if success:
+                            tx.status = Transaction.Status.REFUNDED
+                            tx.save()
+                        else:
+                             pass
+                
+            return {"success": True, "message": "Consulta cancelada com sucesso. Reembolso acionado (quando aplicável)."}
+
+        except Exception as e:
+             return {"error": f"Erro interno ao cancelar: {str(e)}"}
 
 class AppMedicalService:
     @staticmethod

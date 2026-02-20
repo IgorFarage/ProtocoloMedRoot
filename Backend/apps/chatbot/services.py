@@ -7,8 +7,6 @@ logger = logging.getLogger(__name__)
 
 # System Instruction — Persona do Chatbot de Telemedicina (Tricologia)
 # Configurado conforme spec do Google AI Studio (campo system_instruction).
-
-
 SYSTEM_INSTRUCTION = """
 Você é um Especialista em Saúde Capilar (Tricologia e Nutrição) do sistema ProtocoloMedRoot.
 
@@ -196,7 +194,7 @@ class GeminiService:
         }
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response = requests.post(url, json=payload, headers=headers, timeout=60)
             response.raise_for_status()
 
             data = response.json()

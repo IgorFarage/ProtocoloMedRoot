@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { chatbot } from "@/lib/api";
 import { useToast } from "@/components/ui/use-toast";
-const LiaAvatar = "/Images/AssistenteLia.png";
+import LiaAvatar from "@/assets/Images/AssistenteLia.png";
 import { useAuth } from "@/auth/AuthProvider";
 
 interface Message {
@@ -19,11 +19,11 @@ interface Message {
 export function ChatbotWindow() {
     const { user } = useAuth();
 
+    // Extrai o primeiro nome para uma saudação mais pessoal
+    const firstName = user?.full_name ? user.full_name.split(" ")[0] : "";
+
     // Se não estiver logado, não renderiza nada
     if (!user) return null;
-
-    // Extrai o primeiro nome para uma saudação mais pessoal
-    const firstName = user.full_name ? user.full_name.split(" ")[0] : "";
 
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([

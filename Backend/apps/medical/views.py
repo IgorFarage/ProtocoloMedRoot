@@ -186,6 +186,17 @@ class RescheduleAppointmentView(APIView):
             
         return Response(result, status=status.HTTP_200_OK)
 
+class CancelAppointmentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        result = MedicalScheduleService.cancel_appointment(request.user, pk)
+        
+        if "error" in result:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            
+        return Response(result, status=status.HTTP_200_OK)
+
 class PatientEvolutionView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser)
