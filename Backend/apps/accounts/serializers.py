@@ -21,16 +21,10 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         
-        # [NOVO] Sincronizar plano com Bitrix no login
-        try:
-            from apps.accounts.services import BitrixService
-            # Chama o serviço para atualizar o user.current_plan se necessário
-            new_plan = BitrixService.check_and_update_user_plan(self.user)
-            # Atualiza o dado retornado na resposta para refletir a mudança imediata
-            self.user.refresh_from_db()
-        except Exception as e:
-            # Não bloquear login se falhar sync
-            logger.warning(f"Erro sync Bitrix login: {e}")
+        # [REMOVIDO] A sincronização síncrona com o Bitrix via BitrixService.check_and_update_user_plan
+        # foi desativada aqui no momento do Login para evitar gargalos (bottlenecks) na emissão
+        # de JWT em caso de instabilidade na API externa. O banco de dados local passa a ser 
+        # a fonte da verdade oficial para a UI durante o login.
 
         data['user'] = {
             'id': self.user.id,
@@ -82,31 +76,32 @@ class RegisterSerializer(serializers.ModelSerializer):
             
             # Só tentamos salvar o questionário e mandar pro Bitrix SE houver respostas
             if questionnaire_answers:
-                # 2. Salva o Primeiro Questionário
+                # 2. Salva o Primeiro Questionário localmente na transação
                 UserQuestionnaire.objects.create(
                     user=user,
                     answers=questionnaire_answers,
                     is_latest=True
                 )
                 
-                # 3. Integração Bitrix (Sua lógica original preservada)
-                logger.info(f"🔄 Tentando registrar no Bitrix para o user ID: {user.id}")
+        # --- FIM DO BLOCO ATÔMICO (Banco de Dados Seguro e Desbloqueado) ---
                 
-                try:
-                    bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
-                    
-                    if bitrix_id:
-                        user.id_bitrix = str(bitrix_id)
-                        user.save(update_fields=['id_bitrix'])
-                        logger.info(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
-                    else:
-                        logger.warning("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
-                except Exception as e:
-                    logger.warning(f"⚠️ Erro não fatal na integração com Bitrix: {e}")
-            
-            else:
-                # Caso opcional: Se quiser criar Lead no Bitrix apenas com Nome/Email mesmo sem respostas
-                # você pode colocar uma lógica aqui. Por enquanto, deixei passando direto para não dar erro.
-                logger.info(f"ℹ️ Usuário {user.id} criado sem dados de questionário inicial.")
+        # 3. Integração Bitrix (Comunicação via Rede - Fora do Lock)
+        if questionnaire_answers:
+            logger.info(f"🔄 Tentando registrar no Bitrix para o user ID: {user.id}")
+            try:
+                from apps.accounts.services import BitrixService
+                bitrix_id = BitrixService.create_lead(user, questionnaire_answers)
+                
+                if bitrix_id:
+                    user.id_bitrix = str(bitrix_id)
+                    user.save(update_fields=['id_bitrix'])
+                    logger.info(f"✅ SUCESSO: Local ID {user.id} vinculado ao Bitrix ID {user.id_bitrix}")
+                else:
+                    logger.warning("⚠️ ATENÇÃO: Usuário criado localmente, mas falha ao obter ID do Bitrix.")
+            except Exception as e:
+                logger.warning(f"⚠️ Erro não fatal na integração com Bitrix: {e}")
+        else:
+            # Caso opcional: Se quiser criar Lead no Bitrix apenas com Nome/Email mesmo sem respostas
+            logger.info(f"ℹ️ Usuário {user.id} criado sem dados de questionário inicial.")
             
         return user

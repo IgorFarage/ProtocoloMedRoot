@@ -410,6 +410,7 @@ class MedicalScheduleService:
                     pix_data = None
                     if billing_type_asaas == "PIX":
                         pix_data = {
+                            "price": float(price),
                             "qr_code": payment_res.get('payload'),
                             "qr_code_base64": payment_res.get('encodedImage'),
                             "ticket_url": payment_res.get('invoiceUrl')
@@ -493,20 +494,20 @@ class MedicalScheduleService:
                     meeting_link=appt.meeting_link 
                 )
                 
-                try:
-                    specialty = 'consulta'
-                    if hasattr(appt.doctor, 'doctors'):
-                         # FIX: Access via related_name or OneToOne defaults
-                         # The model Doctors has OneToOne to User.
-                         # related_name default is 'doctors' because model name is Doctors? 
-                         # Actually model is Doctors, so user.doctors is the way.
-                        specialty = (appt.doctor.doctors.specialty_type or 'consulta')
-                    
-                    from apps.accounts.services import BitrixService
-                    # Marca Deal antigo como perdido/reagendado? Ou deixa lá?
-                    # Cria novo deal
-                    BitrixService.create_appointment_deal(user, new_appt, specialty)
-                except: pass
+            try:
+                specialty = 'consulta'
+                if hasattr(appt.doctor, 'doctors'):
+                     # FIX: Access via related_name or OneToOne defaults
+                     # The model Doctors has OneToOne to User.
+                     # related_name default is 'doctors' because model name is Doctors? 
+                     # Actually model is Doctors, so user.doctors is the way.
+                    specialty = (appt.doctor.doctors.specialty_type or 'consulta')
+                
+                from apps.accounts.services import BitrixService
+                # Marca Deal antigo como perdido/reagendado? Ou deixa lá?
+                # Cria novo deal
+                BitrixService.create_appointment_deal(user, new_appt, specialty)
+            except: pass
                 
             return {"success": True, "message": "Reagendamento confirmado (Novo ID gerado)."}
 
@@ -550,22 +551,22 @@ class MedicalScheduleService:
                 appt.status = 'cancelled'
                 appt.save()
                 
-                # 3. Processamento Financeiro (Reembolso/Estorno)
-                txs = Transaction.objects.filter(
-                    user=user, 
-                    mp_metadata__appointment_id=appt.id,
-                    status=Transaction.Status.APPROVED
-                )
-                
-                for tx in txs:
-                    if tx.asaas_payment_id:
-                        asaas = AsaasService()
-                        success = asaas.refund_payment(tx.asaas_payment_id, description=f"Estorno referente à consulta {appt.id}")
-                        if success:
-                            tx.status = Transaction.Status.REFUNDED
-                            tx.save()
-                        else:
-                             pass
+            # 3. Processamento Financeiro (Reembolso/Estorno)
+            txs = Transaction.objects.filter(
+                user=user, 
+                mp_metadata__appointment_id=appt.id,
+                status=Transaction.Status.APPROVED
+            )
+            
+            for tx in txs:
+                if tx.asaas_payment_id:
+                    asaas = AsaasService()
+                    success = asaas.refund_payment(tx.asaas_payment_id, description=f"Estorno referente à consulta {appt.id}")
+                    if success:
+                        tx.status = Transaction.Status.REFUNDED
+                        tx.save(update_fields=['status'])
+                    else:
+                         pass
                 
             return {"success": True, "message": "Consulta cancelada com sucesso. Reembolso acionado (quando aplicável)."}
 
@@ -599,8 +600,11 @@ class AppMedicalService:
         return photo_entry
 
     @staticmethod
-    def get_patient_photos(patient_user: User):
+    def get_patient_photos(patient_user: User) -> List[PatientPhotos]:
+        """
+        Retorna o histórico de fotos de evolução do paciente de forma hierárquica (mais recente primeiro).
+        """
         patient_profile = getattr(patient_user, 'patients', None)
         if not patient_profile:
             return []
-        return patient_profile.photos.all().order_by('-taken_at')
+        return list(patient_profile.photos.all().order_by('-taken_at'))

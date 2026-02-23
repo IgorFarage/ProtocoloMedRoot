@@ -76,14 +76,39 @@ const validateCard = (number: string) => {
     return (sum % 10) === 0;
 };
 
+export interface PixPaymentData {
+    price?: number;
+    qr_code?: string;
+    qr_code_base64?: string;
+    ticket_url?: string;
+}
+
+export interface CardValidationErrors {
+    number?: string;
+    expiry?: string;
+    ccv?: string;
+    holderName?: string;
+    general?: string;
+}
+
+export interface BookingPayload {
+    date: string;
+    time: string;
+    doctor_id: string | number;
+    payment_method: string;
+    idempotency_key: string;
+    cardData?: unknown;
+}
+
 export default function ClientSchedule() {
     const navigate = useNavigate();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { loading: loadingData, profile, calculateProtocol } = useClientData() as any;
     const { toast } = useToast();
 
     // Payment State
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-    const [paymentData, setPaymentData] = useState<any>(null);
+    const [paymentData, setPaymentData] = useState<PixPaymentData | null>(null);
     const [paymentMethod, setPaymentMethod] = useState<'PIX' | 'CREDIT_CARD'>('PIX');
     const [cardData, setCardData] = useState({
         holderName: '',
@@ -92,7 +117,7 @@ export default function ClientSchedule() {
         ccv: '',
         cpf: '' // Added CPF for holder info if needed
     });
-    const [cardErrors, setCardErrors] = useState({
+    const [cardErrors, setCardErrors] = useState<CardValidationErrors>({
         number: '',
         expiry: '',
         ccv: '',
@@ -122,9 +147,8 @@ export default function ClientSchedule() {
     const [loadingSlots, setLoadingSlots] = useState(false);
     const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
     const [isBooking, setIsBooking] = useState(false);
+    const [activeTab, setActiveTab] = useState("schedule");
     const [bookingSuccess, setBookingSuccess] = useState(false);
-
-    const [conflictData, setConflictData] = useState<any>(null);
 
     // State para Lista de Consultas
     const [myAppointments, setMyAppointments] = useState<Appointment[]>([]);
@@ -144,10 +168,11 @@ export default function ClientSchedule() {
             });
             fetchAppointments();
             setCancelApptId(null);
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const err = error as { response?: { data?: { error?: string } } };
             toast({
                 title: "Erro ao cancelar",
-                description: error.response?.data?.error || "Ocorreu um erro ao cancelar.",
+                description: err.response?.data?.error || "Ocorreu um erro ao cancelar.",
                 variant: "destructive"
             });
         } finally {
@@ -230,7 +255,7 @@ export default function ClientSchedule() {
 
         // Validation for Credit Card
         if (paymentMethod === 'CREDIT_CARD') {
-            const errors: any = {};
+            const errors: CardValidationErrors = {};
             const cleanNumber = cardData.number.replace(/\D/g, "");
             console.log(`🔍 Validating Card: ${cleanNumber.substring(0, 4)}... (Length: ${cleanNumber.length})`);
 
@@ -260,10 +285,10 @@ export default function ClientSchedule() {
         try {
             const dateStr = date.toISOString().split('T')[0];
 
-            const payload: any = {
+            const payload: BookingPayload = {
                 date: dateStr,
                 time: selectedSlot,
-                doctor_id: selectedDoctorId,
+                doctor_id: selectedDoctorId as string | number,
                 payment_method: paymentMethod,
                 idempotency_key: crypto.randomUUID()
             };
@@ -319,9 +344,10 @@ export default function ClientSchedule() {
                 throw new Error(response.data.error || "Erro desconhecido.");
             }
 
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Erro no agendamento:", error);
-            const errorMsg = error.response?.data?.error || error.message || "Erro ao agendar.";
+            const err = error as { response?: { data?: { error?: string } }, message?: string };
+            const errorMsg = err.response?.data?.error || err.message || "Erro ao agendar.";
 
             if (errorMsg.includes("concorrência")) {
                 setCardErrors(prev => ({ ...prev, general: "Horário disputado! Tente novamente em alguns segundos." }));
@@ -369,16 +395,16 @@ export default function ClientSchedule() {
             });
 
             setSelectedSlot(null);
-            // setConflictData(null); // Deprecated
             setEligibility(null); // Clear eligibility
             fetchAppointments();
             setSlots(prev => prev.filter(s => s !== selectedSlot));
             setShowEligibilityModal(false); // Close modal
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Erro reschedule:", error);
+            const err = error as { response?: { data?: { error?: string } } };
             toast({
                 title: "Erro ao reagendar",
-                description: error.response?.data?.error || "Não foi possível realizar a troca.",
+                description: err.response?.data?.error || "Não foi possível realizar a troca.",
                 variant: "destructive"
             });
         } finally {
@@ -416,7 +442,7 @@ export default function ClientSchedule() {
                 </div>
             </div>
 
-            <Tabs defaultValue="schedule" className="w-full">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
                 <TabsList className="grid w-full grid-cols-2 lg:w-[400px]">
                     <TabsTrigger value="schedule">Agendar</TabsTrigger>
                     <TabsTrigger value="appointments">Minhas Consultas</TabsTrigger>
@@ -622,7 +648,7 @@ export default function ClientSchedule() {
                     </div>
 
                     {/* Smart Eligibility Dialog */}
-                    <Dialog open={!!selectedSlot && showEligibilityModal && !conflictData} onOpenChange={(open) => {
+                    <Dialog open={!!selectedSlot && showEligibilityModal} onOpenChange={(open) => {
                         if (!open) {
                             setShowEligibilityModal(false);
                             setSelectedSlot(null);
@@ -881,42 +907,7 @@ export default function ClientSchedule() {
                         </DialogContent>
                     </Dialog>
 
-                    {/* Dialog de Conflito Mensal (Reagendamento Lógico) */}
-                    <Dialog open={!!conflictData} onOpenChange={(open) => !open && setConflictData(null)}>
-                        <DialogContent className="border-l-4 border-l-yellow-500">
-                            <DialogHeader>
-                                <DialogTitle className="text-yellow-700 flex items-center gap-2">
-                                    <Clock className="h-5 w-5" />
-                                    Limite Mensal Atingido
-                                </DialogTitle>
-                                <DialogDescription className="pt-2">
-                                    Você já possui uma consulta com este especialista em {conflictData?.existing_date ? new Date(conflictData.existing_date).toLocaleDateString() : 'data existente'}.
-                                    <br /><br />
-                                    <strong>Deseja trocar o horário existente para este novo?</strong>
-                                    <br />
-                                    <span className="text-xs text-muted-foreground block mt-2">
-                                        * Reagendamentos permitidos apenas com 24h de antecedência.
-                                    </span>
-                                </DialogDescription>
-                            </DialogHeader>
-                            <div className="py-2 flex items-center justify-center gap-4 text-sm">
-                                <div className="text-slate-500 line-through">
-                                    {conflictData?.existing_date ? new Date(conflictData.existing_date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
-                                </div>
-                                <ArrowLeft className="h-4 w-4 text-slate-400 rotate-180" />
-                                <div className="font-bold text-green-600">
-                                    {date?.toLocaleDateString('pt-BR')} às {selectedSlot}
-                                </div>
-                            </div>
-                            <DialogFooter className="gap-2 sm:gap-0">
-                                <Button variant="ghost" onClick={() => setConflictData(null)}>Manter Atual</Button>
-                                <Button onClick={handleReschedule} disabled={isBooking} className="bg-yellow-600 hover:bg-yellow-700 text-white">
-                                    {isBooking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    Sim, Trocar Horário
-                                </Button>
-                            </DialogFooter>
-                        </DialogContent>
-                    </Dialog>
+                    {/* JSX antigo de Conflito de Horário (conflictData) removido visando limpeza de VDOM */}
                 </TabsContent>
 
                 {/* TAB 2: MINHAS CONSULTAS */}
@@ -1032,17 +1023,35 @@ export default function ClientSchedule() {
                                                 {(() => {
                                                     const apptDate = new Date(`${appt.date}T${appt.time}:00`);
                                                     const now = new Date();
-                                                    const canCancel = (apptDate.getTime() - now.getTime()) >= 24 * 3600 * 1000;
+                                                    const canReschedule = (apptDate.getTime() - now.getTime()) >= 24 * 3600 * 1000;
 
-                                                    if ((appt.status === 'scheduled' || appt.status === 'waiting_payment') && canCancel) {
+                                                    if ((appt.status === 'scheduled' || appt.status === 'waiting_payment') && canReschedule) {
                                                         return (
-                                                            <Button
-                                                                variant="outline"
-                                                                className="w-full md:w-auto border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-                                                                onClick={() => setCancelApptId(appt.id)}
-                                                            >
-                                                                Cancelar
-                                                            </Button>
+                                                            <div className="flex flex-col items-center gap-1 w-full md:w-auto">
+                                                                <Button
+                                                                    variant="outline"
+                                                                    className="w-full border-blue-200 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                                                                    onClick={() => {
+                                                                        setActiveTab("schedule");
+
+                                                                        // The actual rescheduling logic is handled by setting eligibility on the schedule tab
+                                                                        toast({
+                                                                            title: "Vamos Reagendar",
+                                                                            description: "Escolha uma nova data e horário no calendário."
+                                                                        });
+                                                                    }}
+                                                                >
+                                                                    <Clock className="w-4 h-4 mr-2" /> Reagendar
+                                                                </Button>
+
+                                                                {/* O Cancelamento fica minúsculo embaixo */}
+                                                                <button
+                                                                    onClick={() => setCancelApptId(appt.id)}
+                                                                    className="text-[10px] text-muted-foreground hover:text-red-600 hover:underline mt-1 bg-transparent border-none cursor-pointer p-0"
+                                                                >
+                                                                    Preciso cancelar em definitivo
+                                                                </button>
+                                                            </div>
                                                         );
                                                     }
                                                     return null;

@@ -19,4 +19,4 @@ media/
 # Node
 node_modules/
 dist/
-.eslintcache
+.eslintcache.agents/
