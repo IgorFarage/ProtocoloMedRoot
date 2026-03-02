@@ -32,6 +32,8 @@ import { ClientDataProvider } from "@/hooks/useClientData";
 import DoctorDashboard from "./pages/Doctor/DoctorDashboard";
 import DoctorRecord from "./pages/Doctor/DoctorRecord";
 import DoctorTelemedicine from "./pages/Doctor/DoctorTelemedicine";
+import { DoctorVideoScreen } from "./pages/VideoConsultation/DoctorVideoScreen";
+import { PatientVideoScreen } from "./pages/VideoConsultation/PatientVideoScreen";
 import DoctorSchedule from "./pages/Doctor/DoctorSchedule";
 import DoctorProfileSettings from "./pages/Doctor/DoctorProfileSettings";
 import DoctorAvailability from "./pages/Doctor/DoctorAvailability";
@@ -136,6 +138,18 @@ const App = () => {
                 <Route path="/medico/teleconsulta/:id" element={
                   <ProtectedRoute requireRole="doctor">
                     <DoctorTelemedicine />
+                  </ProtectedRoute>
+                }
+                />
+                <Route path="/medico/videoconsulta/:id" element={
+                  <ProtectedRoute requireRole="doctor">
+                    <DoctorVideoScreen />
+                  </ProtectedRoute>
+                }
+                />
+                <Route path="/paciente/videoconsulta/:id" element={
+                  <ProtectedRoute requireRole="patient">
+                    <PatientVideoScreen />
                   </ProtectedRoute>
                 }
                 />
