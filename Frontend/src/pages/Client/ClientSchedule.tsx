@@ -1014,10 +1014,11 @@ export default function ClientSchedule() {
 
                                             <div className="flex flex-col gap-2 items-end">
                                                 {appt.meeting_link && appt.status === 'scheduled' && (
-                                                    <Button className="bg-green-600 hover:bg-green-700 w-full md:w-auto" asChild>
-                                                        <a href={appt.meeting_link} target="_blank" rel="noreferrer">
-                                                            <Video className="mr-2 h-4 w-4" /> Entrar na Sala
-                                                        </a>
+                                                    <Button
+                                                        className="bg-green-600 hover:bg-green-700 w-full md:w-auto"
+                                                        onClick={() => navigate(`/paciente/videoconsulta/${appt.id}`)}
+                                                    >
+                                                        <Video className="mr-2 h-4 w-4" /> Entrar na Sala
                                                     </Button>
                                                 )}
                                                 {(() => {

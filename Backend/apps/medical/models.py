@@ -68,6 +68,23 @@ class Appointments(models.Model):
         ('waiting_payment', 'Aguardando Pagamento')
     ])
     meeting_link = models.CharField(max_length=255, null=True, blank=True)
+    
+    # ---------------------------
+    # Telemedicina (Daily.co)
+    # ---------------------------
+    daily_room_name = models.CharField(max_length=100, null=True, blank=True, help_text="Nome da sala privada no Daily.co")
+    daily_patient_token = models.TextField(null=True, blank=True, help_text="Token de acesso do Paciente (Visitante)")
+    daily_doctor_token = models.TextField(null=True, blank=True, help_text="Token de acesso do Médico (Owner)")
+
+    # ---------------------------
+    # Prontuário Eletrônico (EHR)
+    # ---------------------------
+    clinical_notes = models.TextField(null=True, blank=True, help_text="Anotações gerais e evolução clínica da consulta")
+    prescription_data = models.JSONField(null=True, blank=True, help_text="Dados estruturados do Receituário de Medicamentos")
+    exam_request_data = models.JSONField(null=True, blank=True, help_text="Dados estruturados do Pedido de Exames")
+
+    consultation_start = models.DateTimeField(null=True, blank=True, help_text="Data/hora real do INÍCIO do atendimento")
+    consultation_end = models.DateTimeField(null=True, blank=True, help_text="Data/hora real do TÉRMINO do atendimento")
 
     class Meta:
         verbose_name = 'Consulta Médica'

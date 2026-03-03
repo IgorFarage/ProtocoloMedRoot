@@ -22,6 +22,26 @@ class MedicalScheduleService:
         return User.objects.filter(role='doctor').first()
 
     @staticmethod
+    def _provision_telemedicine_room(appt: Appointments):
+        try:
+            from apps.medical.integrations.videosdk_service import VideoSDKService
+            import time
+            
+            # Gera ou força uma sala com o prefixo
+            custom_id = f"protocolo-{appt.id}-{int(time.time())}"
+            room_id = VideoSDKService.create_room(custom_room_id=custom_id)
+            
+            if room_id:
+                appt.daily_room_name = room_id # Reaproveitamos a coluna para o Meeting ID
+                # Em VideoSDK, tokens JWT expiram, então nem precisamos salvar no BD,
+                # geramos On-The-Fly na View! Mas vamos salvar temporários para retro-compatibilidade MVP ou simplesmente nulos.
+                appt.daily_patient_token = VideoSDKService.generate_token(is_owner=False)
+                appt.daily_doctor_token = VideoSDKService.generate_token(is_owner=True)
+                appt.save(update_fields=['daily_room_name', 'daily_patient_token', 'daily_doctor_token'])
+        except Exception as e:
+            print(f"Erro ao provisionar sala VideoSDK: {e}")
+
+    @staticmethod
     def get_available_slots(target_date: date, doctor_user: User = None) -> List[str]:
         """
         Gera slots de horário para o dia, baseados na disponibilidade do médico.
@@ -323,6 +343,10 @@ class MedicalScheduleService:
                 if is_free:
                      appt.status = 'scheduled'
                      appt.save()
+                     
+                     # VideoSDK
+                     MedicalScheduleService._provision_telemedicine_room(appt)
+                     
                      # Sync Bitrix Async (or here)
                      try:
                         BitrixService.create_appointment_deal(user, appt, specialty)
@@ -396,6 +420,10 @@ class MedicalScheduleService:
                 if tx_status == Transaction.Status.APPROVED:
                     appt.status = 'scheduled'
                     appt.save()
+                    
+                    # VideoSDK
+                    MedicalScheduleService._provision_telemedicine_room(appt)
+                    
                     # Sync Bitrix
                     try:
                         deal_id = BitrixService.create_appointment_deal(user, appt, specialty)

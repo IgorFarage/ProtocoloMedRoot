@@ -34,6 +34,7 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@videosdk.live/rtc-js-prebuilt": path.resolve(__dirname, "node_modules/@videosdk.live/rtc-js-prebuilt/dist/index.js")
     },
   },
 }));

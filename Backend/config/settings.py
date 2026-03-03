@@ -216,6 +216,9 @@ CHATBOT_API_KEY = os.getenv('CHATBOT_API_KEY')
 CHATBOT_MODEL = os.getenv('CHATBOT_MODEL', 'gemini-2.5-flash')
 CHATBOT_MOCK_MODE = os.getenv('CHATBOT_MOCK_MODE', 'False').lower() == 'true'
 
+VIDEOSDK_API_KEY = os.getenv('VIDEOSDK_API_KEY')
+VIDEOSDK_SECRET = os.getenv('VIDEOSDK_SECRET')
+
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:8080',
 

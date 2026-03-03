@@ -314,7 +314,7 @@ const DoctorSchedule = () => {
                                                     <Button
                                                         variant="default"
                                                         size="sm"
-                                                        onClick={() => navigate(`/medico/teleconsulta/${appointment.patientId}`)}
+                                                        onClick={() => navigate(`/medico/videoconsulta/${appointment.id}`)}
                                                         className="gap-2"
                                                     >
                                                         <Video className="h-4 w-4" />

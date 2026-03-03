@@ -496,3 +496,52 @@ class CheckEligibilityView(views.APIView):
         response_data = MedicalScheduleService.get_appointment_eligibility(user, service_specialty)
         
         return Response(response_data)
+
+class TelemedicineRoomView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            from apps.medical.integrations.videosdk_service import VideoSDKService
+            appt = Appointments.objects.get(id=pk)
+            is_doctor = request.user.role == 'doctor' and appt.doctor_id == request.user.id
+            is_patient = request.user.role == 'patient' and appt.patient_id == request.user.id
+            
+            if not is_doctor and not is_patient:
+                return Response({"error": "Acesso negado à sala de consulta."}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Recuperamos o Meeting ID salvo. Se for antigo (Daily url completa), precisamos só do último fragmento se quisermos usar o Prebuilt
+            # Mas vamos extrair o `daily_room_name` onde salvamos o UUID/MeetingId.
+            meeting_id = appt.daily_room_name
+            
+            # Gera Token JWT válido por 24h na mosca
+            fresh_token = VideoSDKService.generate_token(is_owner=is_doctor)
+
+            return Response({
+                "room_url": meeting_id, # Frontend React vai usar isso como meetingId no VideoSDK
+                "token": fresh_token,
+                "is_owner": is_doctor
+            })
+
+        except Appointments.DoesNotExist:
+            return Response({"error": "Consulta não encontrada"}, status=status.HTTP_404_NOT_FOUND)
+
+class ClinicalDataUpdateView(APIView):
+    permission_classes = [IsAuthenticated, IsDoctor]
+
+    def patch(self, request, pk):
+        try:
+            appt = Appointments.objects.get(id=pk, doctor=request.user)
+            
+            if 'clinical_notes' in request.data:
+                appt.clinical_notes = request.data['clinical_notes']
+            if 'prescription_data' in request.data:
+                appt.prescription_data = request.data['prescription_data']
+            if 'exam_request_data' in request.data:
+                appt.exam_request_data = request.data['exam_request_data']
+                
+            appt.save(update_fields=['clinical_notes', 'prescription_data', 'exam_request_data'])
+            return Response({"message": "Dados clínicos atualizados com sucesso."})
+
+        except Appointments.DoesNotExist:
+            return Response({"error": "Consulta não encontrada."}, status=status.HTTP_404_NOT_FOUND)

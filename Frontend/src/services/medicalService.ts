@@ -16,13 +16,22 @@ export const medicalService = {
     uploadEvolutionPhoto: async (file: File): Promise<EvolutionPhoto> => {
         const formData = new FormData();
         formData.append('photo', file);
-        // formData.append('is_public', 'false'); // Opcional, backend default false
 
         const response = await api.post<EvolutionPhoto>('/medical/evolution/', formData, {
             headers: {
                 'Content-Type': 'multipart/form-data',
             },
         });
+        return response.data;
+    },
+
+    getTelemedicineRoom: async (appointmentId: number | string) => {
+        const response = await api.get(`/medical/appointments/${appointmentId}/telemedicine/`);
+        return response.data;
+    },
+
+    updateClinicalData: async (appointmentId: number | string, data: any) => {
+        const response = await api.patch(`/medical/appointments/${appointmentId}/clinical-data/`, data);
         return response.data;
     }
 };
