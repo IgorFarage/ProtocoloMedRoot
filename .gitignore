@@ -21,5 +21,8 @@ node_modules/
 dist/
 .eslintcache
 
-# Agents
+# Pasta de testes
+ArquivosTeste/
+
+# Agentes
 .agents/
