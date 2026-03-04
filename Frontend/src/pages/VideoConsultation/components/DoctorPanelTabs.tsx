@@ -1,6 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { FileText, ClipboardList, Pill, Microscope, Loader2, Save } from 'lucide-react';
+import { FileText, ClipboardList, Pill, Microscope, Loader2, Save, Calendar, Activity } from 'lucide-react';
 import { PrescriptionDragAndDrop } from './PrescriptionDragAndDrop';
 import { ExamRequestForm } from './ExamRequestForm';
 import { useForm } from 'react-hook-form';
@@ -10,7 +10,9 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { useToast } from '@/hooks/use-toast';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { medicalService, PatientDetails } from '@/services/medicalService';
+import { Badge } from '@/components/ui/badge';
 
 const formSchema = z.object({
     evolution: z.string().min(10, {
@@ -18,9 +20,42 @@ const formSchema = z.object({
     }),
 });
 
-export function DoctorPanelTabs() {
+interface DoctorPanelTabsProps {
+    patientId?: string;
+    appointmentId?: string;
+}
+
+export function DoctorPanelTabs({ patientId, appointmentId }: DoctorPanelTabsProps) {
     const { toast } = useToast();
     const [isSaving, setIsSaving] = useState(false);
+    const [hasSavedNotes, setHasSavedNotes] = useState(false);
+
+    // Medical History State
+    const [patientData, setPatientData] = useState<PatientDetails | null>(null);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+    useEffect(() => {
+        if (!patientId) return;
+
+        const fetchHistory = async () => {
+            setIsLoadingHistory(true);
+            try {
+                const data = await medicalService.getPatientDetails(patientId);
+                setPatientData(data);
+            } catch (error) {
+                console.error("Erro ao buscar histórico do paciente:", error);
+                toast({
+                    title: "Erro no Histórico",
+                    description: "Não foi possível carregar os dados anteriores do paciente.",
+                    variant: "destructive",
+                });
+            } finally {
+                setIsLoadingHistory(false);
+            }
+        };
+
+        fetchHistory();
+    }, [patientId, toast]);
 
     const form = useForm<z.infer<typeof formSchema>>({
         resolver: zodResolver(formSchema),
@@ -30,23 +65,39 @@ export function DoctorPanelTabs() {
     });
 
     async function onSubmit(values: z.infer<typeof formSchema>) {
-        setIsSaving(true);
-        // Simulating API call
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        console.log(values);
-        setIsSaving(false);
+        if (!appointmentId) {
+            toast({
+                title: "Erro ao salvar",
+                description: "Não foi possível identificar a consulta atual. Tente recarregar a página.",
+                variant: "destructive",
+            });
+            return;
+        }
 
-        toast({
-            title: "Prontuário salvo!",
-            description: "A evolução clínica foi registrada com sucesso no histórico do paciente.",
-            variant: "default", // or "success" if configured in the project's shadcn theme
-        });
+        setIsSaving(true);
+        try {
+            await medicalService.saveClinicalNotes(appointmentId, values.evolution);
+            setHasSavedNotes(true);
+            toast({
+                title: hasSavedNotes ? "Prontuário atualizado!" : "Prontuário salvo!",
+                description: "A evolução clínica foi registrada com sucesso nesta consulta.",
+            });
+        } catch (error: any) {
+            console.error("Erro ao salvar prontuário", error);
+            toast({
+                title: "Erro",
+                description: "Ocorreu um erro ao salvar o prontuário. Tente novamente.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsSaving(false);
+        }
     }
 
     return (
-        <div className="flex flex-col h-full">
-            <Tabs defaultValue="prontuario" className="w-full flex-1 flex flex-col">
-                <div className="px-6 py-4 border-b">
+        <div className="flex flex-col h-full overflow-hidden">
+            <Tabs defaultValue="prontuario" className="w-full flex-1 flex flex-col h-full overflow-hidden">
+                <div className="px-6 py-4 border-b shrink-0">
                     <TabsList className="w-full justify-start gap-2 bg-transparent h-auto p-0 border-b border-transparent">
                         <TabsTrigger
                             value="historico"
@@ -75,13 +126,87 @@ export function DoctorPanelTabs() {
                     </TabsList>
                 </div>
 
-                <ScrollArea className="flex-1 w-full bg-slate-50/50">
-                    <div className="p-6 h-full">
-                        <TabsContent value="historico" className="mt-0 h-full">
-                            <div className="flex flex-col gap-4">
-                                <h2 className="text-lg font-semibold text-slate-800">Histórico do Paciente</h2>
-                                <div className="text-sm text-slate-500 italic">Nenhum prontuário anterior encontrado.</div>
-                                {/* Aqui entrará uma lista de cards com resumo das consultas */}
+                <div className="flex-1 overflow-y-auto bg-slate-50/50">
+                    <div className="p-6">
+                        <TabsContent value="historico" className="mt-0 outline-none">
+                            <div className="flex flex-col gap-6">
+
+                                {/* Current Protocol / Medications Section */}
+                                <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                                    <h3 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+                                        <Activity className="w-4 h-4 text-blue-500" />
+                                        Protocolo Ativo
+                                    </h3>
+
+                                    {isLoadingHistory ? (
+                                        <div className="flex gap-2 animate-pulse">
+                                            <div className="h-6 w-24 bg-slate-200 rounded-full"></div>
+                                            <div className="h-6 w-32 bg-slate-200 rounded-full"></div>
+                                        </div>
+                                    ) : patientData ? (
+                                        <div className="flex flex-col gap-2">
+                                            <p className="text-sm font-medium text-slate-600">
+                                                {patientData.currentProtocol.name || "Nenhum protocolo identificado"}
+                                            </p>
+                                            <div className="flex flex-wrap gap-2">
+                                                {patientData.currentProtocol.medications.length > 0 ? (
+                                                    patientData.currentProtocol.medications.map((med, idx) => (
+                                                        <Badge key={idx} variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200">
+                                                            {med}
+                                                        </Badge>
+                                                    ))
+                                                ) : (
+                                                    <span className="text-sm text-slate-400 italic">Sem medicamentos listados.</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-slate-500">Dados não disponíveis.</p>
+                                    )}
+                                </div>
+
+                                {/* Past Appointments Section */}
+                                <div>
+                                    <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                                        <Calendar className="w-5 h-5 text-slate-500" />
+                                        Consultas Anteriores
+                                    </h3>
+
+                                    {isLoadingHistory ? (
+                                        <div className="flex flex-col gap-3">
+                                            {[1, 2].map(i => (
+                                                <div key={i} className="h-32 bg-slate-200 animate-pulse rounded-lg"></div>
+                                            ))}
+                                        </div>
+                                    ) : patientData?.past_appointments && patientData.past_appointments.length > 0 ? (
+                                        <div className="flex flex-col gap-4">
+                                            {patientData.past_appointments.map(appt => (
+                                                <div key={appt.id} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col gap-3">
+                                                    <div className="flex justify-between items-start border-b pb-2">
+                                                        <div>
+                                                            <p className="font-semibold text-slate-800">{appt.date}</p>
+                                                            <p className="text-xs text-slate-500">Com Dr(a). {appt.doctor_name}</p>
+                                                        </div>
+                                                        <Badge variant="outline" className="text-slate-500">Finalizada</Badge>
+                                                    </div>
+
+                                                    <div className="text-sm text-slate-600">
+                                                        <span className="font-medium text-slate-700 block mb-1">Evolução:</span>
+                                                        {appt.clinical_notes ? (
+                                                            <p className="whitespace-pre-wrap">{appt.clinical_notes}</p>
+                                                        ) : (
+                                                            <p className="italic text-slate-400">Sem anotações clínicas registradas.</p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-slate-500 italic p-4 bg-slate-50 rounded border border-dashed text-center">
+                                            Nenhum prontuário anterior encontrado para este paciente.
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </TabsContent>
 
@@ -119,7 +244,7 @@ export function DoctorPanelTabs() {
                                                     ) : (
                                                         <>
                                                             <Save className="mr-2 h-4 w-4" />
-                                                            Salvar Prontuário
+                                                            {hasSavedNotes ? "Atualizar Prontuário" : "Salvar Prontuário"}
                                                         </>
                                                     )}
                                                 </Button>
@@ -133,18 +258,18 @@ export function DoctorPanelTabs() {
                         <TabsContent value="receituario" className="mt-0 h-full">
                             <div className="flex flex-col gap-4 h-full">
                                 <h2 className="text-lg font-semibold text-slate-800">Prescrição Médica</h2>
-                                <PrescriptionDragAndDrop />
+                                <PrescriptionDragAndDrop appointmentId={appointmentId} />
                             </div>
                         </TabsContent>
 
                         <TabsContent value="exames" className="mt-0 h-full">
                             <div className="flex flex-col gap-4 h-full">
                                 <h2 className="text-lg font-semibold text-slate-800">Pedido de Exames</h2>
-                                <ExamRequestForm />
+                                <ExamRequestForm appointmentId={appointmentId} />
                             </div>
                         </TabsContent>
                     </div>
-                </ScrollArea>
+                </div>
             </Tabs>
         </div>
     );

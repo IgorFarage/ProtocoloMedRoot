@@ -8,6 +8,8 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Microscope, Printer } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { PrintableExamRequest } from './PrintableExamRequest';
+import { useState } from 'react';
+import { useToast } from '@/components/ui/use-toast';
 
 const examSchema = z.object({
     clinicalIndication: z.string().min(3, {
@@ -20,8 +22,11 @@ const examSchema = z.object({
 
 type ExamFormValues = z.infer<typeof examSchema>;
 
-export function ExamRequestForm() {
+export function ExamRequestForm({ appointmentId }: { appointmentId?: string }) {
     const printRef = useRef<HTMLDivElement>(null);
+    const { toast } = useToast();
+    const [isSaving, setIsSaving] = useState(false);
+    const [hasSavedExam, setHasSavedExam] = useState(false);
 
     const form = useForm<ExamFormValues>({
         resolver: zodResolver(examSchema),
@@ -41,23 +46,73 @@ export function ExamRequestForm() {
                 family: 'Inter',
                 source: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap'
             }
-        ]
+        ],
+        onAfterPrint: () => {
+            toast({
+                title: "Pedido pronto!",
+                description: "O documento de exames foi gerado e salvo.",
+                variant: "default",
+            });
+        }
     });
 
-    // We do not need a traditional submit, since it just prints a PDF
-    function onSubmit(data: ExamFormValues) {
-        if (handlePrint) {
+    async function onSubmit(data: ExamFormValues) {
+        if (!appointmentId) {
+            toast({
+                title: "Erro ao salvar",
+                description: "Consulta não identificada. O documento não será salvo no histórico.",
+                variant: "destructive"
+            });
             handlePrint();
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            // Higienizar as quebras de linha substituindo \n por espaço e removendo espaços duplos
+            const cleanExams = data.requestedExams.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+            const cleanIndication = data.clinicalIndication.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+
+            const payload = [
+                {
+                    clinicalIndication: cleanIndication,
+                    requestedExams: cleanExams,
+                    date: new Date().toISOString()
+                }
+            ];
+
+            const { medicalService } = await import('@/services/medicalService');
+            await medicalService.saveExamRequestData(appointmentId, payload);
+
+            setHasSavedExam(true);
+            handlePrint();
+
+        } catch (error) {
+            console.error("Falha ao salvar exames no BD", error);
+            toast({
+                title: "Erro de Sincronização",
+                description: "Falha ao gravar pedido de exames no banco. Verifique sua conexão.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsSaving(false);
         }
     }
 
-    // Trigger Print without form validation block if they want to print empty (optional, but requestedExams min 3 forces it)
     const onGeneratePDFClick = () => {
         form.handleSubmit(onSubmit)();
     };
 
     return (
         <div className="flex flex-col h-full bg-white border border-slate-200 shadow-sm rounded-lg relative overflow-hidden">
+            {isSaving && (
+                <div className="absolute inset-0 z-50 bg-white/50 backdrop-blur-sm flex items-center justify-center">
+                    <div className="flex flex-col items-center p-4 bg-white rounded-lg shadow-lg border border-slate-200">
+                        <div className="w-6 h-6 border-4 border-primary border-t-transparent rounded-full animate-spin mb-2"></div>
+                        <span className="text-sm font-medium text-slate-700">Salvando pedido de exames...</span>
+                    </div>
+                </div>
+            )}
             <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center gap-2">
                 <Microscope className="w-5 h-5 text-primary" />
                 <h3 className="font-semibold text-slate-800">Formulário de Solicitação</h3>
@@ -108,7 +163,7 @@ export function ExamRequestForm() {
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
                 <Button onClick={onGeneratePDFClick} className="shadow-sm">
                     <Printer className="w-4 h-4 mr-2" />
-                    Gerar Pedido PDF
+                    {hasSavedExam ? "Atualizar e Imprimir" : "Gerar Pedido PDF"}
                 </Button>
             </div>
 

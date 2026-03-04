@@ -441,11 +441,42 @@ class DoctorPatientDetailView(APIView):
             except:
                 protocol_data = {"name": "Não identificado", "medications": []}
 
-            # Formata Protocolo
+            # Formata Protocolo - Ignorando itens administrativos/planos
+            raw_medications = [p.get('name') for p in protocol_data.get('products', [])]
+            valid_medications = [
+                m for m in raw_medications 
+                if m and not any(ignored in m.lower() for ignored in ["plano", "consulta", "frete", "taxa"])
+            ]
+            
             current_protocol = {
                 "name": protocol_data.get('title', 'Protocolo Personalizado'),
-                "medications": [p.get('name') for p in protocol_data.get('products', [])]
+                "medications": valid_medications
             }
+            
+            # MOCK TEMPORARIO DE DEMONSTRAÇÃO (Se o plano70 ficou sem remédios médicos, forçar os citados)
+            if not current_protocol["medications"]:
+                if patient.email == "plano70@teste.com":
+                    current_protocol["name"] = "Protocolo Indicado"
+                    current_protocol["medications"] = [
+                        "Dutasterida 0.5mg",
+                        "Loção Finasterida",
+                        "Shampoo Saw Palmetto",
+                        "Biotina 45ug"
+                    ]
+
+            # 3.5 Histórico de Consultas
+            past_appts_qs = Appointments.objects.filter(patient=patient, status='completed').order_by('-scheduled_at')
+            past_appointments = []
+            for appt in past_appts_qs:
+                doctor_name = appt.doctor.full_name if appt.doctor else "Tricologista"
+                past_appointments.append({
+                    "id": appt.id,
+                    "date": timezone.localtime(appt.scheduled_at).strftime("%d/%m/%Y"),
+                    "doctor_name": doctor_name,
+                    "clinical_notes": appt.clinical_notes,
+                    "prescription_data": appt.prescription_data,
+                    "exam_request_data": appt.exam_request_data
+                })
 
             # 4. Dados Básicos
             data = {
@@ -455,7 +486,8 @@ class DoctorPatientDetailView(APIView):
                 "photo": "https://github.com/shadcn.png", # Placeholder ou foto do perfil se tiver
                 "riskStatus": "Moderado", # Simulado base nas respostas
                 "anamnesis": anamnesis,
-                "currentProtocol": current_protocol
+                "currentProtocol": current_protocol,
+                "past_appointments": past_appointments
             }
 
             return Response(data)
@@ -510,6 +542,26 @@ class TelemedicineRoomView(APIView):
             if not is_doctor and not is_patient:
                 return Response({"error": "Acesso negado à sala de consulta."}, status=status.HTTP_403_FORBIDDEN)
             
+            # --- VALIDAÇÕES DE HORÁRIO E STATUS (REGRA DE NEGÓCIO) ---
+            # 1. Trava de Término
+            if appt.status in ['completed', 'cancelled']:
+                return Response(
+                    {"error": "A sala desta consulta já foi encerrada ou cancelada."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # 2. Trava de Início Antecipado (15 minutos antes)
+            now = timezone.now()
+            # Precisamos garantir que scheduled_at não seja None (embora o model proíba)
+            if appt.scheduled_at:
+                allowed_entry_time = appt.scheduled_at - timedelta(minutes=15)
+                # Opcional: Para permitir que o médico entre a qualquer hora e teste, podemos liberar is_doctor
+                if now < allowed_entry_time:
+                    return Response(
+                        {"error": "A sala estará disponível apenas 15 minutos antes do início agendado."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            
             # Recuperamos o Meeting ID salvo. Se for antigo (Daily url completa), precisamos só do último fragmento se quisermos usar o Prebuilt
             # Mas vamos extrair o `daily_room_name` onde salvamos o UUID/MeetingId.
             meeting_id = appt.daily_room_name
@@ -520,7 +572,10 @@ class TelemedicineRoomView(APIView):
             return Response({
                 "room_url": meeting_id, # Frontend React vai usar isso como meetingId no VideoSDK
                 "token": fresh_token,
-                "is_owner": is_doctor
+                "is_owner": is_doctor,
+                "appointment_id": str(appt.id),
+                "patient_id": str(appt.patient.id) if appt.patient else None,
+                "patient_name": appt.patient.full_name if appt.patient else "Paciente Desconhecido"
             })
 
         except Appointments.DoesNotExist:

@@ -89,7 +89,7 @@ function DraggableItem({ product }: { product: Product }) {
 }
 
 // Componente Droppable (A Receita)
-function DroppableArea({ items, onRemove, onUpdate, onPrint }: { items: PrescriptionItem[], onRemove: (uniqueId: string) => void, onUpdate: (uniqueId: string, field: 'dose' | 'posology', value: string) => void, onPrint: () => void }) {
+function DroppableArea({ items, hasSavedRx, onRemove, onUpdate, onPrint }: { items: PrescriptionItem[], hasSavedRx: boolean, onRemove: (uniqueId: string) => void, onUpdate: (uniqueId: string, field: 'dose' | 'posology', value: string) => void, onPrint: () => void }) {
     const { setNodeRef, isOver } = useDroppable({
         id: 'prescription-area',
     });
@@ -162,7 +162,7 @@ function DroppableArea({ items, onRemove, onUpdate, onPrint }: { items: Prescrip
                 <div className="p-4 border-t border-slate-100 flex justify-end bg-slate-50 rounded-b-lg">
                     <Button onClick={onPrint} size="sm" className="shadow-sm font-medium w-full sm:w-auto">
                         <Printer className="w-4 h-4 mr-2" />
-                        Criar prescrição
+                        {hasSavedRx ? "Atualizar e Imprimir" : "Criar prescrição"}
                     </Button>
                 </div>
             )}
@@ -171,25 +171,66 @@ function DroppableArea({ items, onRemove, onUpdate, onPrint }: { items: Prescrip
 }
 
 // Componente Principal
-export function PrescriptionDragAndDrop() {
+export function PrescriptionDragAndDrop({ appointmentId }: { appointmentId?: string }) {
     const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
     const [prescription, setPrescription] = useState<PrescriptionItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [hasSavedRx, setHasSavedRx] = useState(false);
     const { toast } = useToast();
 
-    // Referral para o componente invisível de impressão
     const printRef = useRef<HTMLDivElement>(null);
-    const handlePrint = useReactToPrint({
+    const triggerPrint = useReactToPrint({
         contentRef: printRef,
         documentTitle: `ProtocoloMed_Receita_${new Date().getTime()}`,
         onAfterPrint: () => {
             toast({
-                title: "Sucesso!",
-                description: "O documento foi enviado para visualização.",
+                title: "Receita pronta!",
+                description: "O documento foi preparado para impressão e os dados foram salvos.",
                 variant: "default",
             });
         }
     });
+
+    const handlePrintAndSave = async () => {
+        if (!appointmentId) {
+            toast({
+                title: "Erro ao salvar",
+                description: "Consulta não identificada. Apenas será impresso.",
+                variant: "destructive",
+            });
+            triggerPrint();
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            // Formatar os dados da receita para o backend
+            const payload = prescription.map(p => ({
+                id: p.id,
+                name: p.name,
+                dose: p.dose || '',
+                posology: p.posology || ''
+            }));
+
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { medicalService } = await import('@/services/medicalService');
+            await medicalService.savePrescriptionData(appointmentId, payload);
+
+            // Sucesso no BD, Dispara print e atualiza o estado visual
+            setHasSavedRx(true);
+            triggerPrint();
+        } catch (error) {
+            console.error("Falha ao salvar receita no BD", error);
+            toast({
+                title: "Erro de Sincronização",
+                description: "Falha ao gravar receita no banco. Verifique sua conexão.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsSaving(false);
+        }
+    };
 
     // Configuração dos Sensores para só iniciar o arrasto se mover o mouse ao menos 5 pixels ou tocar um tempo.
     // Isso previne que um clique rápido (como no botão expandir) seja confundido com arrasto.
@@ -307,7 +348,17 @@ export function PrescriptionDragAndDrop() {
                     </div>
 
                     {/* Painel Direito: Receita em si */}
-                    <DroppableArea items={prescription} onRemove={handleRemoveItem} onUpdate={handleUpdateItem} onPrint={handlePrint} />
+                    <div className="w-1/2 relative">
+                        {isSaving && (
+                            <div className="absolute inset-0 z-50 bg-white/50 backdrop-blur-sm flex items-center justify-center rounded-lg">
+                                <div className="flex flex-col items-center p-4 bg-white rounded-lg shadow-lg border border-slate-200">
+                                    <div className="w-6 h-6 border-4 border-primary border-t-transparent rounded-full animate-spin mb-2"></div>
+                                    <span className="text-sm font-medium text-slate-700">Salvando receita...</span>
+                                </div>
+                            </div>
+                        )}
+                        <DroppableArea items={prescription} hasSavedRx={hasSavedRx} onRemove={handleRemoveItem} onUpdate={handleUpdateItem} onPrint={handlePrintAndSave} />
+                    </div>
 
                 </div>
             </DndContext>

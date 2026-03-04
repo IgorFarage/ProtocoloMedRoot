@@ -19,13 +19,16 @@ interface Message {
 export function ChatbotWindow() {
     const { user } = useAuth();
 
+    // Hooks DEVEM OBRIGATORIAMENTE ser chamados antes de qualquer "return" condicional
+    const [isOpen, setIsOpen] = useState(false);
+    const [inputValue, setInputValue] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const { toast } = useToast();
+
     // Extrai o primeiro nome para uma saudação mais pessoal
     const firstName = user?.full_name ? user.full_name.split(" ")[0] : "";
 
-    // Se não estiver logado, não renderiza nada
-    if (!user) return null;
-
-    const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
         {
             id: "welcome",
@@ -34,12 +37,6 @@ export function ChatbotWindow() {
             timestamp: new Date(),
         },
     ]);
-    const [inputValue, setInputValue] = useState("");
-    const [isLoading, setIsLoading] = useState(false);
-    const scrollRef = useRef<HTMLDivElement>(null);
-    const { toast } = useToast();
-
-    const toggleChat = () => setIsOpen(!isOpen);
 
     const scrollToBottom = () => {
         if (scrollRef.current) {
@@ -52,6 +49,11 @@ export function ChatbotWindow() {
             scrollToBottom();
         }
     }, [messages, isOpen]);
+
+    // O Early return agora fica SEGURO, pois todos os Hooks de cima (useState, useRef, useToast, useEffect) já foram registrados
+    if (!user) return null;
+
+    const toggleChat = () => setIsOpen(!isOpen);
 
     const handleSendMessage = async () => {
         if (!inputValue.trim()) return;
