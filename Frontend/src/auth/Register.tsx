@@ -19,14 +19,21 @@ const Register = () => {
     const [formData, setFormData] = useState({
         full_name: "",
         email: "",
+        cpf: "",
         phone: "",
         date_of_birth: "",
         password: "",
         confirmPassword: ""
     });
 
+    const formatCPF = (value: string) => {
+        return value.replace(/\D/g, '').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})/, '$1-$2').replace(/(-\d{2})\d+?$/, '$1');
+    };
+
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setFormData({ ...formData, [e.target.id]: e.target.value });
+        let val = e.target.value;
+        if (e.target.id === 'cpf') val = formatCPF(val);
+        setFormData({ ...formData, [e.target.id]: val });
     };
 
     const handleRegister = async (e: React.FormEvent) => {
@@ -45,6 +52,7 @@ const Register = () => {
                 email: formData.email,
                 password: formData.password,
                 full_name: formData.full_name,
+                cpf: formData.cpf,
                 phone: formData.phone,
                 date_of_birth: formData.date_of_birth
             });
@@ -100,6 +108,10 @@ const Register = () => {
                         <div className="space-y-2">
                             <Label htmlFor="email">E-mail</Label>
                             <Input id="email" type="email" placeholder="seu@email.com" required onChange={handleChange} />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="cpf">CPF</Label>
+                            <Input id="cpf" type="text" placeholder="000.000.000-00" maxLength={14} required value={formData.cpf} onChange={handleChange} />
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="phone">Celular (WhatsApp)</Label>

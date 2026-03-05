@@ -569,13 +569,21 @@ class TelemedicineRoomView(APIView):
             # Gera Token JWT válido por 24h na mosca
             fresh_token = VideoSDKService.generate_token(is_owner=is_doctor)
 
+            # Busca as infos do médico logado
+            doctor_name = appt.doctor.full_name if appt.doctor else "Dr(a). [Desconhecida]"
+            doctor_crm = "Não Informado"
+            if appt.doctor and hasattr(appt.doctor, 'doctors'):
+                doctor_crm = appt.doctor.doctors.crm
+
             return Response({
                 "room_url": meeting_id, # Frontend React vai usar isso como meetingId no VideoSDK
                 "token": fresh_token,
                 "is_owner": is_doctor,
                 "appointment_id": str(appt.id),
                 "patient_id": str(appt.patient.id) if appt.patient else None,
-                "patient_name": appt.patient.full_name if appt.patient else "Paciente Desconhecido"
+                "patient_name": appt.patient.full_name if appt.patient else "Paciente Desconhecido",
+                "doctor_name": doctor_name,
+                "doctor_crm": doctor_crm
             })
 
         except Appointments.DoesNotExist:

@@ -193,6 +193,7 @@ class UserProfileView(APIView):
         profile_data = {
             "name": user.full_name,
             "email": user.email,
+            "cpf": user.cpf,
             "role": user.role,
             "plan": user.current_plan,
             "phone": user.phone,
@@ -572,20 +573,24 @@ class DoctorRegisterView(APIView):
              full_name = data.get('full_name', '').strip()
 
         crm = data.get('crm')
+        cpf = data.get('cpf')
         specialty = data.get('specialty', 'Tricologia')
         specialty_type = data.get('specialty_type', 'trichologist')
         
-        if not email or not password or not full_name or not crm:
-             return Response({"error": "Todos os campos são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+        if not email or not password or not full_name or not crm or not cpf:
+             return Response({"error": "Todos os campos (incluindo CPF) são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
              
         # 2. Verifica se usuário já existe
         if User.objects.filter(email=email).exists():
             return Response({"error": "E-mail já cadastrado."}, status=status.HTTP_400_BAD_REQUEST)
             
+        if User.objects.filter(cpf=cpf).exists():
+            return Response({"error": "Este CPF já está cadastrado em nossa base."}, status=status.HTTP_400_BAD_REQUEST)
+            
         try:
             with transaction.atomic():
                 # 3. Criar Usuário Base
-                user = User.objects.create_user(email=email, password=password, full_name=full_name)
+                user = User.objects.create_user(email=email, password=password, full_name=full_name, cpf=cpf)
                 # Adiciona prefixo Dr./Dra. se não tiver
                 if not (user.full_name.startswith("Dr.") or user.full_name.startswith("Dra.")):
                     user.full_name = f"Dr(a). {user.full_name}"
@@ -631,6 +636,7 @@ class DoctorProfileUpdateView(APIView):
         data = {
             "fullName": user.full_name,
             "email": user.email,
+            "cpf": user.cpf,
             "phone": user.phone,
             "crm": doctor.crm,
             "specialty": doctor.specialty, # Free text legacy

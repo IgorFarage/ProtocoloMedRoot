@@ -18,6 +18,7 @@ const DoctorRegister = () => {
         title: "Dr.",
         full_name: "",
         email: "",
+        cpf: "",
         crm: "",
         crm_uf: "",
         specialty: "",
@@ -27,8 +28,22 @@ const DoctorRegister = () => {
         confirmPassword: ""
     });
 
+    const formatCPF = (value: string) => {
+        return value
+            .replace(/\D/g, "")
+            .replace(/(\d{3})(\d)/, "$1.$2")
+            .replace(/(\d{3})(\d)/, "$1.$2")
+            .replace(/(\d{3})(\d{1,2})/, "$1-$2")
+            .replace(/(-\d{2})\d+?$/, "$1");
+    };
+
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setFormData({ ...formData, [e.target.id]: e.target.value });
+        const { id, value } = e.target;
+        if (id === "cpf") {
+            setFormData({ ...formData, cpf: formatCPF(value) });
+        } else {
+            setFormData({ ...formData, [id]: value });
+        }
     };
 
     const handleRegister = async (e: React.FormEvent) => {
@@ -44,12 +59,18 @@ const DoctorRegister = () => {
             return;
         }
 
+        if (formData.cpf.length < 14) {
+            toast({ variant: "destructive", title: "CPF incompleto" });
+            return;
+        }
+
         setLoading(true);
 
         try {
             await api.post("/accounts/register-doctor/", {
                 email: formData.email,
                 password: formData.password,
+                cpf: formData.cpf,
                 full_name: `${formData.title} ${formData.full_name}`,
                 crm: `${formData.crm}/${formData.crm_uf}`,
                 specialty: formData.specialty,
@@ -116,7 +137,19 @@ const DoctorRegister = () => {
                                     />
                                 </div>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="cpf">CPF</Label>
+                                    <Input
+                                        id="cpf"
+                                        placeholder="000.000.000-00"
+                                        maxLength={14}
+                                        required
+                                        value={formData.cpf}
+                                        onChange={handleChange}
+                                    />
+                                </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="crm">CRM (Número)</Label>
                                     <Input

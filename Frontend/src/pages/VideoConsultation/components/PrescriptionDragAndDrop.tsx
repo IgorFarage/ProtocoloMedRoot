@@ -171,7 +171,7 @@ function DroppableArea({ items, hasSavedRx, onRemove, onUpdate, onPrint }: { ite
 }
 
 // Componente Principal
-export function PrescriptionDragAndDrop({ appointmentId }: { appointmentId?: string }) {
+export function PrescriptionDragAndDrop({ appointmentId, patientName, doctorName, doctorCrm }: { appointmentId?: string, patientName?: string, doctorName?: string, doctorCrm?: string }) {
     const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
     const [prescription, setPrescription] = useState<PrescriptionItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -365,7 +365,13 @@ export function PrescriptionDragAndDrop({ appointmentId }: { appointmentId?: str
 
             {/* Container Invisível que sustenta a Folha A4 para Impressão */}
             <div className="hidden">
-                <PrintablePrescription ref={printRef} prescriptionList={prescription.map(p => ({ id: p.id, name: p.name, description: stripHtml(p.description), dose: p.dose, posology: p.posology }))} />
+                <PrintablePrescription
+                    ref={printRef}
+                    prescriptionList={prescription.map(p => ({ id: p.id, name: p.name, description: stripHtml(p.description), dose: p.dose, posology: p.posology }))}
+                    patientName={patientName}
+                    doctorName={doctorName}
+                    doctorCrm={doctorCrm}
+                />
             </div>
         </>
     );

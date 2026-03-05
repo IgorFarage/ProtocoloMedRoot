@@ -18,7 +18,7 @@ export function DoctorVideoScreen() {
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [roomData, setRoomData] = useState<{ url: string; token: string; patientId: string | null; appointmentId: string | null } | null>(null);
+    const [roomData, setRoomData] = useState<{ url: string; token: string; patientId: string | null; appointmentId: string | null; doctorName?: string; doctorCrm?: string } | null>(null);
     const meetingRef = useRef<any>(null);
 
     // 1. Busca dados da Sala/Token (JWT VideoSDK) na API Django
@@ -29,7 +29,14 @@ export function DoctorVideoScreen() {
                 const data = await medicalService.getTelemedicineRoom(id);
                 // No backend enviamos meetingId em "room_url" e jwt em "token" e agora "patient_id" e "appointment_id"
                 if (!data.meetingId) throw new Error("ID da sala não retornado pelo servidor.");
-                setRoomData({ url: data.meetingId, token: data.token, patientId: data.patientId || null, appointmentId: data.appointmentId || null });
+                setRoomData({
+                    url: data.meetingId,
+                    token: data.token,
+                    patientId: data.patientId || null,
+                    appointmentId: data.appointmentId || null,
+                    doctorName: data.doctorName,
+                    doctorCrm: data.doctorCrm
+                });
             } catch (err: any) {
                 setError(err.response?.data?.error || "Erro ao carregar a sala de consulta.");
             } finally {
@@ -175,7 +182,12 @@ export function DoctorVideoScreen() {
 
                 {/* Right Panel: Doctor Tools */}
                 <ResizablePanel defaultSize={50} minSize={30} className="bg-white flex flex-col h-full z-0">
-                    <DoctorPanelTabs patientId={roomData?.patientId || undefined} appointmentId={roomData?.appointmentId || undefined} />
+                    <DoctorPanelTabs
+                        patientId={roomData?.patientId || undefined}
+                        appointmentId={roomData?.appointmentId || undefined}
+                        doctorName={roomData?.doctorName}
+                        doctorCrm={roomData?.doctorCrm}
+                    />
                 </ResizablePanel>
             </ResizablePanelGroup>
         </div>

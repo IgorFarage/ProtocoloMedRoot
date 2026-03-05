@@ -43,6 +43,7 @@ class UserQuestionnaireSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     # ALTERAÇÃO 1: Adicionei 'required=False' e 'allow_null=True' e TELEFONE OBRIGATÓRIO
     phone = serializers.CharField(required=True)
+    cpf = serializers.CharField(required=True, min_length=14, max_length=14)
     date_of_birth = serializers.DateField(required=True, input_formats=['%Y-%m-%d', '%d/%m/%Y'])
     # Isso impede o erro 400 se o dado não vier.
     questionnaire_data = serializers.JSONField(write_only=True, required=False, allow_null=True)
@@ -50,11 +51,16 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['email', 'full_name', 'phone', 'date_of_birth', 'password', 'questionnaire_data']
+        fields = ['email', 'full_name', 'cpf', 'phone', 'date_of_birth', 'password', 'questionnaire_data']
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Este e-mail já está cadastrado.")
+        return value
+
+    def validate_cpf(self, value):
+        if User.objects.filter(cpf=value).exists():
+            raise serializers.ValidationError("Este CPF já está cadastrado em nossa base.")
         return value
 
     def create(self, validated_data):
@@ -68,6 +74,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             user = User.objects.create_user(
                 email=email,
                 full_name=validated_data.get('full_name', ''),
+                cpf=validated_data.get('cpf', ''),
                 phone=validated_data.get('phone', ''),
                 date_of_birth=validated_data.get('date_of_birth'),
                 password=password,

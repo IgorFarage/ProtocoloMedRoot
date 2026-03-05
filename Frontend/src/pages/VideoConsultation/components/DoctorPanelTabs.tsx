@@ -23,9 +23,11 @@ const formSchema = z.object({
 interface DoctorPanelTabsProps {
     patientId?: string;
     appointmentId?: string;
+    doctorName?: string;
+    doctorCrm?: string;
 }
 
-export function DoctorPanelTabs({ patientId, appointmentId }: DoctorPanelTabsProps) {
+export function DoctorPanelTabs({ patientId, appointmentId, doctorName, doctorCrm }: DoctorPanelTabsProps) {
     const { toast } = useToast();
     const [isSaving, setIsSaving] = useState(false);
     const [hasSavedNotes, setHasSavedNotes] = useState(false);
@@ -258,14 +260,24 @@ export function DoctorPanelTabs({ patientId, appointmentId }: DoctorPanelTabsPro
                         <TabsContent value="receituario" className="mt-0 h-full">
                             <div className="flex flex-col gap-4 h-full">
                                 <h2 className="text-lg font-semibold text-slate-800">Prescrição Médica</h2>
-                                <PrescriptionDragAndDrop appointmentId={appointmentId} />
+                                <PrescriptionDragAndDrop
+                                    appointmentId={appointmentId}
+                                    patientName={patientData?.name}
+                                    doctorName={doctorName}
+                                    doctorCrm={doctorCrm}
+                                />
                             </div>
                         </TabsContent>
 
                         <TabsContent value="exames" className="mt-0 h-full">
                             <div className="flex flex-col gap-4 h-full">
                                 <h2 className="text-lg font-semibold text-slate-800">Pedido de Exames</h2>
-                                <ExamRequestForm appointmentId={appointmentId} />
+                                <ExamRequestForm
+                                    appointmentId={appointmentId}
+                                    patientName={patientData?.name}
+                                    doctorName={doctorName}
+                                    doctorCrm={doctorCrm}
+                                />
                             </div>
                         </TabsContent>
                     </div>

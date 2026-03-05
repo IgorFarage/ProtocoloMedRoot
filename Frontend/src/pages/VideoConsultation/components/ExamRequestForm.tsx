@@ -22,7 +22,7 @@ const examSchema = z.object({
 
 type ExamFormValues = z.infer<typeof examSchema>;
 
-export function ExamRequestForm({ appointmentId }: { appointmentId?: string }) {
+export function ExamRequestForm({ appointmentId, patientName, doctorName, doctorCrm }: { appointmentId?: string, patientName?: string, doctorName?: string, doctorCrm?: string }) {
     const printRef = useRef<HTMLDivElement>(null);
     const { toast } = useToast();
     const [isSaving, setIsSaving] = useState(false);
@@ -173,8 +173,9 @@ export function ExamRequestForm({ appointmentId }: { appointmentId?: string }) {
                     ref={printRef}
                     clinicalIndication={values.clinicalIndication}
                     requestedExams={values.requestedExams}
-                // Se houvesse o nome real do paciente no estado do VideoConsultation poderíamos injetar. 
-                // O boilerplate da prop opcional usa uma linha em branco.
+                    patientName={patientName}
+                    doctorName={doctorName}
+                    doctorCrm={doctorCrm}
                 />
             </div>
         </div>

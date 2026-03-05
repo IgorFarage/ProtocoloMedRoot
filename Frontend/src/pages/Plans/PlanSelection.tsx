@@ -357,6 +357,7 @@ const PlanSelection = () => {
             const payload = {
                 full_name: formData.full_name,
                 email: formData.email,
+                cpf: formData.cpf,
                 phone: formData.phone,
                 date_of_birth: formData.date_of_birth,
                 password: formData.password,
@@ -798,9 +799,10 @@ const PlanSelection = () => {
                                     </div>
                                     <div className="grid md:grid-cols-2 gap-4">
                                         <div className="space-y-2"><Label>Nome Completo</Label><Input id="full_name" value={formData.full_name} onChange={handleInputChange} required /></div>
+                                        <div className="space-y-2"><Label>CPF</Label><Input id="cpf" value={formData.cpf} onChange={handleInputChange} required placeholder="000.000.000-00" maxLength={14} /></div>
                                         <div className="space-y-2"><Label>Celular</Label><Input id="phone" value={formData.phone} onChange={handleInputChange} required placeholder="(11) 99999-9999" maxLength={15} /></div>
-                                        <div className="space-y-2"><Label>Data de Nascimento</Label><Input id="date_of_birth" type="date" value={formData.date_of_birth} onChange={handleInputChange} required /></div>
                                         <div className="space-y-2"><Label>E-mail</Label><Input id="email" type="email" value={formData.email} onChange={handleInputChange} required disabled={!!profile} className={profile ? "bg-gray-100" : ""} /></div>
+                                        <div className="space-y-2"><Label>Data de Nascimento</Label><Input id="date_of_birth" type="date" value={formData.date_of_birth} onChange={handleInputChange} required /></div>
 
                                         {!profile && (
                                             <>

@@ -13,6 +13,7 @@ export interface ProtocolItem {
 export interface UserProfile {
     name: string;
     email: string;
+    cpf?: string;
     role: string;
     plan: string;
     phone?: string;

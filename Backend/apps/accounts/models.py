@@ -37,6 +37,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Identificação
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True)
+    cpf = models.CharField(max_length=14, unique=True, null=True, blank=True, help_text="Cadastro de Pessoa Física")
     full_name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20, null=True, blank=True)
     date_of_birth = models.DateField(null=True, blank=True)

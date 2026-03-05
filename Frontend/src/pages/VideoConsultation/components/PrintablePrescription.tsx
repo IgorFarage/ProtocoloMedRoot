@@ -9,12 +9,25 @@ interface PrintablePrescriptionProps {
         posology?: string;
     }[];
     patientName?: string;
+    doctorName?: string;
+    doctorCrm?: string;
 }
 
 export const PrintablePrescription = React.forwardRef<HTMLDivElement, PrintablePrescriptionProps>(
-    ({ prescriptionList, patientName = "______________________________________________________" }, ref) => {
+    ({ prescriptionList, patientName = "______________________________________________________", doctorName = "Dr(a). [Equipe Médica]", doctorCrm = "______" }, ref) => {
 
         const dateNow = new Date().toLocaleDateString('pt-BR');
+
+        // Tratamento do CRM para extrair Número e UF (ex: "12345 - SP" ou "12345/DF")
+        const formatCrm = (crmString: string) => {
+            if (!crmString || crmString === "______" || crmString === "Não Informado") return { number: "______", uf: "DF" };
+            const parts = crmString.split(/[-/]/).map(s => s.trim());
+            if (parts.length > 1) {
+                return { number: parts[0], uf: parts[parts.length - 1] };
+            }
+            return { number: crmString, uf: "DF" };
+        };
+        const { number: crmNumber, uf: crmUf } = formatCrm(doctorCrm);
 
         return (
             <div ref={ref} className="bg-white text-black font-sans leading-normal">
@@ -96,15 +109,15 @@ export const PrintablePrescription = React.forwardRef<HTMLDivElement, PrintableP
                         <div className="flex gap-4">
                             <div className="flex flex-1 bg-[#EBF0F6] px-2 py-1">
                                 <span className="font-semibold w-40">NOME DO(A) MÉDICO(A):</span>
-                                <span className="flex-1">Dr(a). [Equipe Médica]</span>
+                                <span className="flex-1">{doctorName}</span>
                             </div>
                             <div className="flex w-48 bg-[#EBF0F6] px-2 py-1">
                                 <span className="font-semibold w-12">CRM:</span>
-                                <span className="flex-1">______</span>
+                                <span className="flex-1">{crmNumber}</span>
                             </div>
                             <div className="flex w-24 bg-[#EBF0F6] px-2 py-1">
                                 <span className="font-semibold w-8">UF:</span>
-                                <span className="flex-1">___</span>
+                                <span className="flex-1 uppercase">{crmUf}</span>
                             </div>
                         </div>
 
@@ -113,35 +126,35 @@ export const PrintablePrescription = React.forwardRef<HTMLDivElement, PrintableP
                                 <span className="font-semibold w-48">LOCAL DE ATENDIMENTO:</span>
                                 <span className="flex-1">ProtocoloMed</span>
                             </div>
-                            <div className="flex w-48 bg-[#EBF0F6] px-2 py-1">
-                                <span className="font-semibold w-12">CNES:</span>
-                                <span className="flex-1">_______</span>
+                            <div className="flex flex-1 bg-[#EBF0F6] px-2 py-1">
+                                <span className="font-semibold w-16">E-MAIL:</span>
+                                <span className="flex-1 truncate">contato@protocolomed.com.br</span>
                             </div>
                         </div>
 
                         <div className="flex gap-4 border-b border-transparent">
                             <div className="flex flex-1 bg-[#EBF0F6] px-2 py-1">
                                 <span className="font-semibold w-24">ENDEREÇO:</span>
-                                <span className="flex-1">Telemedicina Online</span>
+                                <span className="flex-1">SCLRN 703, Bloco "H", Loja 32</span>
                             </div>
                             <div className="flex w-64 bg-[#EBF0F6] px-2 py-1">
                                 <span className="font-semibold w-16">BAIRRO:</span>
-                                <span className="flex-1">Digital</span>
+                                <span className="flex-1">Asa Norte</span>
                             </div>
                         </div>
 
                         <div className="flex gap-4">
                             <div className="flex flex-1 bg-[#EBF0F6] px-2 py-1">
                                 <span className="font-semibold w-20">CIDADE:</span>
-                                <span className="flex-1">São Paulo</span>
+                                <span className="flex-1">Brasília</span>
                             </div>
                             <div className="flex w-24 bg-[#EBF0F6] px-2 py-1">
                                 <span className="font-semibold w-8">UF:</span>
-                                <span className="flex-1 text-center">SP</span>
+                                <span className="flex-1 text-center">DF</span>
                             </div>
                             <div className="flex w-64 bg-[#EBF0F6] px-2 py-1">
                                 <span className="font-semibold w-24">TELEFONE:</span>
-                                <span className="flex-1">(11) 9999-9999</span>
+                                <span className="flex-1">(61) 99970-4822</span>
                             </div>
                         </div>
 

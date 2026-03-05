@@ -60,6 +60,7 @@ const ClientProfile = () => {
     const [formData, setFormData] = useState({
         name: "",
         email: "",
+        cpf: "",
         phone: "",
         date_of_birth: "",
         street: "", // ADDRESS
@@ -77,6 +78,7 @@ const ClientProfile = () => {
                 ...prev,
                 name: profile.name || user?.full_name || "",
                 email: profile.email || user?.email || "",
+                cpf: profile.cpf || "",
                 phone: profile.phone || "",
                 date_of_birth: profile.date_of_birth || "",
                 street: profile.address?.street || "",
@@ -158,6 +160,7 @@ const ClientProfile = () => {
                     ...prev,
                     name: profile.name || user?.full_name || "",
                     email: profile.email || user?.email || "",
+                    cpf: profile.cpf || "",
                     phone: profile.phone || "",
                     date_of_birth: profile.date_of_birth || "",
                     street: profile.address?.street || "",
@@ -308,6 +311,24 @@ const ClientProfile = () => {
                                                 />
                                             </div>
                                         </div>
+                                    </div>
+
+                                    {/* CPF e E-mail */}
+                                    <div className="grid md:grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label htmlFor="cpf">CPF</Label>
+                                            <div className="relative">
+                                                <UserIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                <Input
+                                                    id="cpf"
+                                                    name="cpf"
+                                                    value={formData.cpf}
+                                                    readOnly
+                                                    className="pl-9 bg-gray-50 text-gray-900 disabled:opacity-100"
+                                                    disabled
+                                                />
+                                            </div>
+                                        </div>
                                         <div className="space-y-2">
                                             <Label htmlFor="email">E-mail</Label>
                                             <div className="relative">
@@ -322,8 +343,6 @@ const ClientProfile = () => {
                                                 />
                                             </div>
                                         </div>
-
-
                                     </div>
 
                                     {/* Telefone e Data de Nascimento */}

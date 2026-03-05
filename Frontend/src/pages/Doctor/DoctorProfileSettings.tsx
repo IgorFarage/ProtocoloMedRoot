@@ -27,6 +27,7 @@ const DoctorProfileSettings = () => {
 
     const [fullName, setFullName] = useState("");
     const [crm, setCrm] = useState("");
+    const [cpf, setCpf] = useState("");
     const [email, setEmail] = useState("");
     const [biography, setBiography] = useState("");
     const [phone, setPhone] = useState("");
@@ -45,6 +46,7 @@ const DoctorProfileSettings = () => {
 
                 setFullName(data.fullName || "");
                 setEmail(data.email || "");
+                setCpf(data.cpf || "");
                 setPhone(data.phone || "");
                 setCrm(data.crm || "");
                 setBiography(data.bio || "");
@@ -206,14 +208,26 @@ const DoctorProfileSettings = () => {
                                 />
                             </div>
 
-                            <div className="space-y-2">
-                                <Label htmlFor="crm">CRM</Label>
-                                <Input
-                                    id="crm"
-                                    value={crm}
-                                    onChange={(e) => setCrm(e.target.value)}
-                                    placeholder="Ex: 123456/SP"
-                                />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="cpf">CPF</Label>
+                                    <Input
+                                        id="cpf"
+                                        value={cpf}
+                                        readOnly
+                                        disabled
+                                        className="bg-muted"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="crm">CRM</Label>
+                                    <Input
+                                        id="crm"
+                                        value={crm}
+                                        onChange={(e) => setCrm(e.target.value)}
+                                        placeholder="Ex: 123456/SP"
+                                    />
+                                </div>
                             </div>
 
                             <div className="space-y-2">

@@ -48,7 +48,7 @@ export const medicalService = {
         return response.data;
     },
 
-    getTelemedicineRoom: async (appointmentId: string): Promise<{ meetingId: string, token: string, isOwner: boolean, patientId?: string, patientName?: string, appointmentId: string }> => {
+    getTelemedicineRoom: async (appointmentId: string): Promise<{ meetingId: string, token: string, isOwner: boolean, patientId?: string, patientName?: string, appointmentId: string, doctorName?: string, doctorCrm?: string }> => {
         const response = await api.get(`/medical/appointments/${appointmentId}/telemedicine/`);
         return {
             meetingId: response.data.room_url,
@@ -56,7 +56,9 @@ export const medicalService = {
             isOwner: response.data.is_owner,
             patientId: response.data.patient_id,
             patientName: response.data.patient_name,
-            appointmentId: response.data.appointment_id
+            appointmentId: response.data.appointment_id,
+            doctorName: response.data.doctor_name,
+            doctorCrm: response.data.doctor_crm
         };
     },
 
