@@ -26,11 +26,29 @@ class Migration(migrations.Migration):
             name='consultation_start',
             field=models.DateTimeField(blank=True, help_text='Data/hora real do INÍCIO do atendimento', null=True),
         ),
-        migrations.AddField(
-            model_name='appointments',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
-            preserve_default=False,
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AddField(
+                    model_name='appointments',
+                    name='created_at',
+                    field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+                    preserve_default=False,
+                ),
+            ],
+            database_operations=[
+                migrations.RunSQL(
+                    sql="""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='medical_appointments' AND column_name='created_at') THEN
+                            ALTER TABLE medical_appointments ADD COLUMN created_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                    END
+                    $$;
+                    """,
+                    reverse_sql="ALTER TABLE medical_appointments DROP COLUMN IF EXISTS created_at;"
+                )
+            ]
         ),
         migrations.AddField(
             model_name='appointments',
@@ -57,9 +75,27 @@ class Migration(migrations.Migration):
             name='prescription_data',
             field=models.JSONField(blank=True, help_text='Dados estruturados do Receituário de Medicamentos', null=True),
         ),
-        migrations.AddField(
-            model_name='appointments',
-            name='updated_at',
-            field=models.DateTimeField(auto_now=True),
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AddField(
+                    model_name='appointments',
+                    name='updated_at',
+                    field=models.DateTimeField(auto_now=True),
+                ),
+            ],
+            database_operations=[
+                migrations.RunSQL(
+                    sql="""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='medical_appointments' AND column_name='updated_at') THEN
+                            ALTER TABLE medical_appointments ADD COLUMN updated_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                    END
+                    $$;
+                    """,
+                    reverse_sql="ALTER TABLE medical_appointments DROP COLUMN IF EXISTS updated_at;"
+                )
+            ]
         ),
     ]
