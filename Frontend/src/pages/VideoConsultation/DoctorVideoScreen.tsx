@@ -65,6 +65,10 @@ export function DoctorVideoScreen() {
             webcamEnabled: true,
             participantCanToggleSelfWebcam: true,
             participantCanToggleSelfMic: true,
+            
+            // Otimizações de Áudio para Volume
+            micQuality: "speech_standard", // Foca a captação na frequência da voz humana
+            cameraOptimizationMode: "motion", // Prioriza taxa de quadros e sincronia áudio/vídeo
 
             chatEnabled: true,
 
@@ -74,6 +78,11 @@ export function DoctorVideoScreen() {
                 title: "Iniciando Atendimento Médico",
                 meetingUrl: window.location.href,
             },
+
+            leftScreenRejoinButtonEnabled: false,
+            leftScreenActionButtonLabel: "Voltar para o Painel",
+            leftScreenActionButtonHref: window.location.origin + "/medico/agenda",
+            redirectOnLeave: window.location.origin + "/medico/agenda",
 
             brandingEnabled: true,
             brandLogoURL: "https://protocolo.med.br/favicon.ico",
