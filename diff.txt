@@ -1,0 +1,800 @@
+﻿diff --git a/Backend/apps/accounts/management/commands/force_bitrix_update.py b/Backend/apps/accounts/management/commands/force_bitrix_update.py
+index 213eac0..8dcf05e 100644
+--- a/Backend/apps/accounts/management/commands/force_bitrix_update.py
++++ b/Backend/apps/accounts/management/commands/force_bitrix_update.py
+@@ -129,12 +129,10 @@ class Command(BaseCommand):
+                 plan_title=f"ProtocoloMed - {plan_slug}",
+                 total_amount=final_total,
+                 answers=answers,
+-                answers=answers,
+                 payment_data={
+                     "status": "approved",
+                     "asaas_payment_id": last_trans.asaas_payment_id,
+-                    "mercado_pago_id": last_trans.mercado_pago_id,
+-                    "id": last_trans.asaas_payment_id or last_trans.mercado_pago_id
++                    "id": last_trans.asaas_payment_id
+                 } if last_trans else None 
+             )
+ 
+diff --git a/Backend/apps/accounts/management/commands/inspect_user.py b/Backend/apps/accounts/management/commands/inspect_user.py
+index 026a240..4f58bed 100644
+--- a/Backend/apps/accounts/management/commands/inspect_user.py
++++ b/Backend/apps/accounts/management/commands/inspect_user.py
+@@ -42,7 +42,6 @@ class Command(BaseCommand):
+                 "role": user.role,
+                 "current_plan": user.current_plan,
+                 "id_bitrix": user.id_bitrix,
+-                "customer_id_mp": user.customer_id_mp,
+                 "date_joined": user.created_at,
+                 "is_active": user.is_active,
+             },
+@@ -66,8 +65,7 @@ class Command(BaseCommand):
+         if hasattr(user, 'patients'):
+             p = user.patients
+             data["PERFIL"]["paciente"] = {
+-                "gender": p.gender,
+-                "assigned_doctor_id": str(p.assigned_doctor.user.id) if p.assigned_doctor else None
++                "gender": p.gender
+             }
+         
+         if hasattr(user, 'doctors'):
+diff --git a/Backend/apps/accounts/models.py b/Backend/apps/accounts/models.py
+index b25a0f7..223bf0e 100644
+--- a/Backend/apps/accounts/models.py
++++ b/Backend/apps/accounts/models.py
+@@ -53,7 +53,6 @@ class User(AbstractBaseUser, PermissionsMixin):
+ 
+     # Integrações
+     id_bitrix = models.CharField(max_length=50, null=True, blank=True, help_text="ID do contato no CRM")
+-    customer_id_mp = models.CharField(max_length=50, null=True, blank=True, help_text="ID do Cliente no Mercado Pago")
+     asaas_customer_id = models.CharField(max_length=50, null=True, blank=True, help_text="ID do Cliente no Asaas")
+     
+     # Lógica de Negócio
+@@ -165,9 +164,6 @@ class Patients(models.Model):
+     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
+     gender = models.CharField(max_length=20, blank=True, null=True)
+     
+-    # Legacy Field (Will be removed after migration)
+-    assigned_doctor = models.ForeignKey(Doctors, on_delete=models.SET_NULL, null=True, blank=True, related_name='legacy_patients')
+-    
+     # New Medical Team
+     assigned_trichologist = models.ForeignKey(
+         Doctors, 
+diff --git a/Backend/apps/accounts/services.py b/Backend/apps/accounts/services.py
+index 5b53598..1d56c7d 100644
+--- a/Backend/apps/accounts/services.py
++++ b/Backend/apps/accounts/services.py
+@@ -235,7 +235,7 @@ class BitrixService:
+             # 4. Dados de Pagamento (Sem mover Stage)
+             if payment_data:
+                 # [ASAAS MIGRATION] Prioritize Asaas ID
+-                p_id = payment_data.get('asaas_payment_id') or payment_data.get('mercado_pago_id') or payment_data.get('id')
++                p_id = payment_data.get('asaas_payment_id') or payment_data.get('id')
+                 if p_id: 
+                     fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_ID"]] = str(p_id)
+                 if payment_data.get('date_created'): 
+diff --git a/Backend/apps/financial/admin.py b/Backend/apps/financial/admin.py
+index 3d06be6..5559009 100644
+--- a/Backend/apps/financial/admin.py
++++ b/Backend/apps/financial/admin.py
+@@ -13,5 +13,5 @@ class TransactionAdmin(admin.ModelAdmin):
+     # Atualizamos 'plan' para 'plan_type', pois foi assim que definimos no model novo
+     list_display = ('id', 'user', 'plan_type', 'amount', 'status', 'created_at', 'coupon')
+     list_filter = ('status', 'plan_type', 'cycle')
+-    search_fields = ('user__email', 'external_reference', 'mercado_pago_id')
++    search_fields = ('user__email', 'external_reference', 'asaas_payment_id')
+     readonly_fields = ('id', 'created_at', 'updated_at', 'external_reference')
+\ No newline at end of file
+diff --git a/Backend/apps/financial/management/commands/sync_bitrix_transactions.py b/Backend/apps/financial/management/commands/sync_bitrix_transactions.py
+index 9645209..23a63ca 100644
+--- a/Backend/apps/financial/management/commands/sync_bitrix_transactions.py
++++ b/Backend/apps/financial/management/commands/sync_bitrix_transactions.py
+@@ -78,12 +78,11 @@ class Command(BaseCommand):
+                 real_status = 'approved' if transaction.status == Transaction.Status.APPROVED else 'pending'
+                 
+                 # [ASAAS MIGRATION]
+-                p_id = transaction.asaas_payment_id or transaction.mercado_pago_id or meta.get("payment_response", {}).get('id')
++                p_id = transaction.asaas_payment_id or meta.get("payment_response", {}).get('id')
+                 
+                 payment_info = {
+                     "id": p_id,
+                     "asaas_payment_id": transaction.asaas_payment_id,
+-                    "mercado_pago_id": transaction.mercado_pago_id,
+                     "date_created": str(transaction.created_at),
+                     "status": real_status
+                 }
+diff --git a/Backend/apps/financial/management/commands/sync_payment_status.py b/Backend/apps/financial/management/commands/sync_payment_status.py
+index ee32c94..544d555 100644
+--- a/Backend/apps/financial/management/commands/sync_payment_status.py
++++ b/Backend/apps/financial/management/commands/sync_payment_status.py
+@@ -33,7 +33,7 @@ class Command(BaseCommand):
+             status=Transaction.Status.PENDING,
+             created_at__gte=limit_date
+         ).filter(
+-            Q(mercado_pago_id__isnull=False) | Q(asaas_payment_id__isnull=False)
++            asaas_payment_id__isnull=False
+         )
+ 
+         count = pending_transactions.count()
+@@ -72,22 +72,7 @@ class Command(BaseCommand):
+                          self.stdout.write(self.style.WARNING("      ⚠️ Asaas ID não encontrado na API."))
+ 
+ 
+-                # --- STRATEGY: MERCADO PAGO (LEGACY) ---
+-                elif transaction.mercado_pago_id:
+-                    self.stdout.write(f"      [MP] ID: {transaction.mercado_pago_id}")
+-                    import mercadopago
+-                    sdk = mercadopago.SDK(settings.MERCADO_PAGO_ACCESS_TOKEN)
+-                    payment_response = sdk.payment().get(int(transaction.mercado_pago_id))
+-                    
+-                    if payment_response["status"] == 200:
+-                        payment_data = payment_response["response"]
+-                        status_mp = payment_data.get("status")
+-                        payment_json = payment_data
+-                        
+-                        if status_mp in ['approved', 'authorized']:
+-                            real_status = 'approved'
+-                        elif status_mp in ['cancelled', 'rejected']:
+-                            real_status = 'rejected'
++                # --- STRATEGY: MERCADO PAGO (LEGACY) REMOVIDA ---
+                 
+                 # --- DECISION ---
+                 # Check for Approved (String or Enum)
+@@ -121,7 +106,7 @@ class Command(BaseCommand):
+                                 products_list = protocol.get('products', [])
+                         
+                         # Prepare Deal Payload
+-                        p_id = transaction.asaas_payment_id or transaction.mercado_pago_id
++                        p_id = transaction.asaas_payment_id
+                         
+                         deal_id = BitrixService.prepare_deal_payment(
+                             user=transaction.user,
+@@ -132,8 +117,7 @@ class Command(BaseCommand):
+                             payment_data={
+                                 "status": "approved",
+                                 "id": p_id,
+-                                "asaas_payment_id": transaction.asaas_payment_id,
+-                                "mercado_pago_id": transaction.mercado_pago_id
++                                "asaas_payment_id": transaction.asaas_payment_id
+                             }
+                         )
+                         
+diff --git a/Backend/apps/financial/models.py b/Backend/apps/financial/models.py
+index 0b47d40..7397729 100644
+--- a/Backend/apps/financial/models.py
++++ b/Backend/apps/financial/models.py
+@@ -56,7 +56,6 @@ class Transaction(models.Model):
+         DEBIT_CARD = 'debit_card', 'Cartão de Débito' # Adicionado
+         TICKET = 'ticket', 'Boleto'
+         PIX = 'bank_transfer', 'Pix'
+-        STARTUP_CREDIT = 'wallet_purchase', 'Crédito MP'
+         UNKNOWN = 'unknown', 'Desconhecido'
+ 
+     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+@@ -79,8 +78,6 @@ class Transaction(models.Model):
+     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Valor economizado")
+ 
+     # Integração
+-    mercado_pago_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+-    subscription_id = models.CharField(max_length=100, null=True, blank=True, help_text="ID da Assinatura (Preapproval) no MP")
+     asaas_payment_id = models.CharField(max_length=100, unique=True, null=True, blank=True, help_text="ID do Pagamento no Asaas")
+     asaas_subscription_id = models.CharField(max_length=100, null=True, blank=True, help_text="ID da Assinatura no Asaas")
+     external_reference = models.CharField(max_length=100, unique=True)
+@@ -95,7 +92,6 @@ class Transaction(models.Model):
+     )
+     bitrix_sync_attempts = models.IntegerField(default=0)
+     last_sync_attempt = models.DateTimeField(null=True, blank=True)
+-    mp_metadata = models.JSONField(default=dict, blank=True)
+     
+     created_at = models.DateTimeField(auto_now_add=True)
+     updated_at = models.DateTimeField(auto_now=True)
+diff --git a/Backend/apps/medical/models.py b/Backend/apps/medical/models.py
+index c4b4dfc..7bec072 100644
+--- a/Backend/apps/medical/models.py
++++ b/Backend/apps/medical/models.py
+@@ -69,13 +69,6 @@ class Appointments(models.Model):
+     ])
+     meeting_link = models.CharField(max_length=255, null=True, blank=True)
+     
+-    # ---------------------------
+-    # Telemedicina (Daily.co)
+-    # ---------------------------
+-    daily_room_name = models.CharField(max_length=100, null=True, blank=True, help_text="Nome da sala privada no Daily.co")
+-    daily_patient_token = models.TextField(null=True, blank=True, help_text="Token de acesso do Paciente (Visitante)")
+-    daily_doctor_token = models.TextField(null=True, blank=True, help_text="Token de acesso do Médico (Owner)")
+-
+     # ---------------------------
+     # Prontuário Eletrônico (EHR)
+     # ---------------------------
+diff --git a/Backend/apps/medical/services.py b/Backend/apps/medical/services.py
+index fcefec9..956437b 100644
+--- a/Backend/apps/medical/services.py
++++ b/Backend/apps/medical/services.py
+@@ -32,12 +32,8 @@ class MedicalScheduleService:
+             room_id = VideoSDKService.create_room(custom_room_id=custom_id)
+             
+             if room_id:
+-                appt.daily_room_name = room_id # Reaproveitamos a coluna para o Meeting ID
+-                # Em VideoSDK, tokens JWT expiram, então nem precisamos salvar no BD,
+-                # geramos On-The-Fly na View! Mas vamos salvar temporários para retro-compatibilidade MVP ou simplesmente nulos.
+-                appt.daily_patient_token = VideoSDKService.generate_token(is_owner=False)
+-                appt.daily_doctor_token = VideoSDKService.generate_token(is_owner=True)
+-                appt.save(update_fields=['daily_room_name', 'daily_patient_token', 'daily_doctor_token'])
++                appt.meeting_link = room_id # Reaproveitamos meeting_link para salvar o VideoSDK Meeting ID
++                appt.save(update_fields=['meeting_link'])
+         except Exception as e:
+             print(f"Erro ao provisionar sala VideoSDK: {e}")
+ 
+diff --git a/Backend/apps/medical/views.py b/Backend/apps/medical/views.py
+index 72b31e3..bb86694 100644
+--- a/Backend/apps/medical/views.py
++++ b/Backend/apps/medical/views.py
+@@ -562,9 +562,9 @@ class TelemedicineRoomView(APIView):
+                         status=status.HTTP_403_FORBIDDEN
+                     )
+             
+-            # Recuperamos o Meeting ID salvo. Se for antigo (Daily url completa), precisamos só do último fragmento se quisermos usar o Prebuilt
+-            # Mas vamos extrair o `daily_room_name` onde salvamos o UUID/MeetingId.
+-            meeting_id = appt.daily_room_name
++            # O Meeting ID em VideoSDK que salvamos no antigo campo ou onde quer que esteja.
++            # Como removemos daily_room_name, idealmente criamos um video_room_id ou reusamos meeting_link
++            meeting_id = appt.meeting_link or f"protocolo-{appt.id}"
+             
+             # Gera Token JWT válido por 24h na mosca
+             fresh_token = VideoSDKService.generate_token(is_owner=is_doctor)
+diff --git a/Frontend/src/auth/Register.tsx b/Frontend/src/auth/Register.tsx
+index 40468d9..5a0bb67 100644
+--- a/Frontend/src/auth/Register.tsx
++++ b/Frontend/src/auth/Register.tsx
+@@ -111,7 +111,7 @@ const Register = () => {
+                         </div>
+                         <div className="space-y-2">
+                             <Label htmlFor="cpf">CPF</Label>
+-                            <Input id="cpf" type="text" placeholder="000.000.000-00" maxLength={14} required value={formData.cpf} onChange={handleChange} />
++                            <Input id="cpf" type="text" inputMode="numeric" placeholder="000.000.000-00" maxLength={14} required value={formData.cpf} onChange={handleChange} />
+                         </div>
+                         <div className="space-y-2">
+                             <Label htmlFor="phone">Celular (WhatsApp)</Label>
+diff --git a/Frontend/src/index.css b/Frontend/src/index.css
+index f2247ed..59d4aed 100644
+--- a/Frontend/src/index.css
++++ b/Frontend/src/index.css
+@@ -84,6 +84,6 @@ All colors MUST be HSL.
+   }
+ 
+   body {
+-    @apply bg-background text-foreground;
++    @apply bg-background text-foreground min-h-[100dvh];
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/Frontend/src/pages/Client/ClientLayout.tsx b/Frontend/src/pages/Client/ClientLayout.tsx
+index 3bceb06..6ca4243 100644
+--- a/Frontend/src/pages/Client/ClientLayout.tsx
++++ b/Frontend/src/pages/Client/ClientLayout.tsx
+@@ -5,12 +5,17 @@ import { Outlet, Link, useLocation } from "react-router-dom";
+ import { Button } from "@/components/ui/button";
+ import { Badge } from "@/components/ui/badge";
+ import Logo from "@/assets/Images/LOGO-removebg.png";
++import { useState } from "react";
+ import ChatWidget from "@/components/chat/ChatWidget";
+-
++import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetDescription } from "@/components/ui/sheet";
++import { Menu } from "lucide-react";
++import { useIsMobile } from "@/hooks/use-mobile";
+ export default function ClientLayout() {
+     const { user, loading, logout } = useAuth();
+     const { profile } = useClientData();
+     const location = useLocation();
++    const isMobile = useIsMobile();
++    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+ 
+     if (loading) {
+         return (
+@@ -33,85 +38,112 @@ export default function ClientLayout() {
+         { label: "Minha Conta", path: "/perfil", icon: User },
+     ];
+ 
+-    return (
+-        <div className="min-h-screen flex flex-col md:flex-row bg-gray-50/50">
+-            {/* SIDEBAR / NAVBAR */}
+-            <aside className="w-full md:w-64 bg-white border-r border-gray-100 shadow-sm flex-shrink-0 z-10">
+-                <div className="p-6 flex flex-col h-full">
+-                    <div className="mb-8 flex flex-col items-center md:items-start space-y-2">
+-                        <Link to="/" className="hover:opacity-80 transition-opacity">
+-                            <img src={Logo} alt="ProtocoloMed" className="h-12" />
+-                        </Link>
++    const SidebarContent = (
++        <div className="p-6 flex flex-col h-full bg-white">
++            <div className="mb-8 flex flex-col items-center md:items-start space-y-2">
++                <Link to="/" className="hover:opacity-80 transition-opacity" onClick={() => setIsMobileMenuOpen(false)}>
++                    <img src={Logo} alt="ProtocoloMed" className="h-12" />
++                </Link>
+ 
+-                        <div className="flex flex-wrap gap-2 items-center">
+-                            {/* Indicador de Status (Ativo/Inativo) */}
+-                            {/* Indicador de Status (Ativo/Inativo/Pendente) */}
+-                            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1.5 ${hasActivePlan
+-                                ? 'bg-green-100 text-green-700 border border-green-200'
+-                                : isPending
+-                                    ? 'bg-orange-100 text-orange-700 border border-orange-200'
+-                                    : 'bg-red-100 text-red-700 border border-red-200'
+-                                }`}>
+-                                <div className={`h-1.5 w-1.5 rounded-full ${hasActivePlan ? 'bg-green-500' : isPending ? 'bg-orange-500' : 'bg-red-500'}`} />
+-                                {hasActivePlan ? 'ATIVA' : isPending ? 'PENDENTE' : 'INATIVO'}
+-                            </div>
++                <div className="flex flex-wrap gap-2 items-center">
++                    {/* Indicador de Status (Ativo/Inativo/Pendente) */}
++                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1.5 ${hasActivePlan
++                        ? 'bg-green-100 text-green-700 border border-green-200'
++                        : isPending
++                            ? 'bg-orange-100 text-orange-700 border border-orange-200'
++                            : 'bg-red-100 text-red-700 border border-red-200'
++                        }`}>
++                        <div className={`h-1.5 w-1.5 rounded-full ${hasActivePlan ? 'bg-green-500' : isPending ? 'bg-orange-500' : 'bg-red-500'}`} />
++                        {hasActivePlan ? 'ATIVA' : isPending ? 'PENDENTE' : 'INATIVO'}
++                    </div>
+ 
+-                            {/* Indicador Plus (Dourado) */}
+-                            {isPlus && (
+-                                <div className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-700 border border-yellow-200 flex items-center gap-1.5">
+-                                    <span className="text-yellow-500 text-[10px]">🌟</span>
+-                                    PLUS
+-                                </div>
+-                            )}
++                    {/* Indicador Plus (Dourado) */}
++                    {isPlus && (
++                        <div className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-700 border border-yellow-200 flex items-center gap-1.5">
++                            <span className="text-yellow-500 text-[10px]">🌟</span>
++                            PLUS
+                         </div>
+-                    </div>
++                    )}
++                </div>
++            </div>
+ 
+-                    <nav className="space-y-1 flex-1">
+-                        {navItems.map((item) => {
+-                            const isActive = location.pathname === item.path;
+-                            return (
+-                                <Link
+-                                    key={item.path}
+-                                    to={item.path}
+-                                    className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${isActive
+-                                        ? 'bg-primary/5 text-primary'
+-                                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+-                                        }`}
+-                                >
+-                                    <item.icon className={`h-5 w-5 ${isActive ? 'text-primary' : 'text-gray-400'}`} />
+-                                    {item.label}
+-                                </Link>
+-                            )
+-                        })}
+-                    </nav>
++            <nav className="space-y-1 flex-1">
++                {navItems.map((item) => {
++                    const isActive = location.pathname === item.path;
++                    return (
++                        <Link
++                            key={item.path}
++                            to={item.path}
++                            onClick={() => setIsMobileMenuOpen(false)}
++                            className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${isActive
++                                ? 'bg-primary/5 text-primary'
++                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
++                                }`}
++                        >
++                            <item.icon className={`h-5 w-5 ${isActive ? 'text-primary' : 'text-gray-400'}`} />
++                            {item.label}
++                        </Link>
++                    )
++                })}
++            </nav>
+ 
+-                    <div className="pt-6 border-t mt-auto space-y-4">
+-                        {/* Botão de Upgrade (Apenas se não for Plus) */}
+-                        {!isPlus && hasActivePlan && (
+-                            <Button asChild className="w-full bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-500 hover:to-amber-600 text-white font-bold shadow-md border-none animate-in fade-in zoom-in duration-500">
+-                                <Link to="/planos" state={{ isUpgrade: true }}>
+-                                    <span className="mr-2">👑</span> Upgrade Plus
+-                                </Link>
+-                            </Button>
+-                        )}
+-                        <div className="flex items-center gap-3 px-2 mb-4">
+-                            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
+-                                {user?.full_name?.charAt(0) || "U"}
+-                            </div>
+-                            <div className="overflow-hidden">
+-                                <p className="text-sm font-medium truncate">{user?.full_name}</p>
+-                                <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+-                            </div>
+-                        </div>
+-                        <Button onClick={logout} variant="ghost" className="w-full justify-start gap-2 text-red-600 hover:text-red-700 hover:bg-red-50">
+-                            <LogOut className="h-4 w-4" /> Sair
+-                        </Button>
++            <div className="pt-6 border-t mt-auto space-y-4">
++                {/* Botão de Upgrade (Apenas se não for Plus) */}
++                {!isPlus && hasActivePlan && (
++                    <Button asChild className="w-full bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-500 hover:to-amber-600 text-white font-bold shadow-md border-none animate-in fade-in zoom-in duration-500">
++                        <Link to="/planos" state={{ isUpgrade: true }} onClick={() => setIsMobileMenuOpen(false)}>
++                            <span className="mr-2">👑</span> Upgrade Plus
++                        </Link>
++                    </Button>
++                )}
++                <div className="flex items-center gap-3 px-2 mb-4">
++                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
++                        {user?.full_name?.charAt(0) || "U"}
++                    </div>
++                    <div className="overflow-hidden">
++                        <p className="text-sm font-medium truncate">{user?.full_name}</p>
++                        <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                     </div>
+                 </div>
+-            </aside>
++                <Button onClick={logout} variant="ghost" className="w-full justify-start gap-2 text-red-600 hover:text-red-700 hover:bg-red-50">
++                    <LogOut className="h-4 w-4" /> Sair
++                </Button>
++            </div>
++        </div>
++    );
++
++    return (
++        <div className="min-h-[100dvh] flex flex-col md:flex-row bg-gray-50/50">
++            {/* MD+ DESKTOP SIDEBAR */}
++            {!isMobile && (
++                <aside className="w-64 bg-white border-r border-gray-100 shadow-sm flex-shrink-0 z-10 sticky top-0 h-screen">
++                    {SidebarContent}
++                </aside>
++            )}
++
++            {/* MOBILE HEADER */}
++            {isMobile && (
++                <header className="w-full bg-white border-b border-gray-100 p-4 flex items-center justify-between sticky top-0 z-50 shadow-sm">
++                    <Link to="/" className="hover:opacity-80 transition-opacity">
++                        <img src={Logo} alt="ProtocoloMed" className="h-8" />
++                    </Link>
++                    <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
++                        <SheetTrigger asChild>
++                            <Button variant="ghost" size="icon">
++                                <Menu className="h-6 w-6 text-gray-700" />
++                            </Button>
++                        </SheetTrigger>
++                        <SheetContent side="left" className="w-[300px] p-0">
++                            <SheetTitle className="sr-only">Menu do Cliente</SheetTitle>
++                            <SheetDescription className="sr-only">Navegação para o painel do cliente</SheetDescription>
++                            {SidebarContent}
++                        </SheetContent>
++                    </Sheet>
++                </header>
++            )}
+ 
+             {/* MAIN CONTENT AREA */}
+-            <main className="flex-1 p-8 overflow-y-auto max-h-screen relative">
++            <main className="flex-1 p-4 md:p-8 overflow-y-auto max-h-[100dvh] relative">
+                 <Outlet />
+             </main>
+ 
+diff --git a/Frontend/src/pages/Client/ClientProfile.tsx b/Frontend/src/pages/Client/ClientProfile.tsx
+index fc7222b..3c44411 100644
+--- a/Frontend/src/pages/Client/ClientProfile.tsx
++++ b/Frontend/src/pages/Client/ClientProfile.tsx
+@@ -354,6 +354,8 @@ const ClientProfile = () => {
+                                                 <Input
+                                                     id="phone"
+                                                     name="phone"
++                                                    type="tel"
++                                                    inputMode="tel"
+                                                     value={formData.phone}
+                                                     onChange={handleChange}
+                                                     className="pl-9 text-gray-900 disabled:opacity-100"
+diff --git a/Frontend/src/pages/Doctor/DoctorDashboard.tsx b/Frontend/src/pages/Doctor/DoctorDashboard.tsx
+index 8f087ce..03ce78f 100644
+--- a/Frontend/src/pages/Doctor/DoctorDashboard.tsx
++++ b/Frontend/src/pages/Doctor/DoctorDashboard.tsx
+@@ -11,6 +11,8 @@ import { User, Calendar as CalendarIcon, List, LogOut, Upload, Loader2, RefreshC
+ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+ import { Badge } from "@/components/ui/badge";
+ import api from "@/lib/api";
++import { useIsMobile } from "@/hooks/use-mobile";
++import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription, DrawerFooter, DrawerClose } from "@/components/ui/drawer";
+ 
+ import { useToast } from "@/components/ui/use-toast";
+ import { DoctorInfo, DoctorStats, Patient } from "@/types/medical";
+@@ -20,6 +22,8 @@ const MedicoDashboard = () => {
+     const navigate = useNavigate();
+     const { toast } = useToast();
+     const [date, setDate] = useState<Date | undefined>(new Date());
++    const isMobile = useIsMobile();
++    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+ 
+     // State for Real Data
+     const [loading, setLoading] = useState(true);
+@@ -237,7 +241,10 @@ const MedicoDashboard = () => {
+                                             <li key={p.id}>
+                                                 <Button
+                                                     variant={selectedPatient?.id === p.id ? "secondary" : "ghost"}
+-                                                    onClick={() => setSelectedPatient(p)}
++                                                    onClick={() => {
++                                                        setSelectedPatient(p);
++                                                        if (isMobile) setIsDrawerOpen(true);
++                                                    }}
+                                                     className="w-full text-left justify-between h-auto py-3"
+                                                 >
+                                                     <div className="flex flex-col items-start">
+@@ -257,18 +264,86 @@ const MedicoDashboard = () => {
+                         </CardContent>
+                     </Card>
+ 
+-                    <Card className="md:col-span-1">
+-                        <CardHeader>
+-                            <CardTitle className="text-xl font-semibold">Detalhes do paciente</CardTitle>
+-                        </CardHeader>
+-                        <CardContent className="pt-6 space-y-4">
+-                            {selectedPatient ? (
+-                                <div>
++                    {!isMobile && (
++                        <Card className="md:col-span-1">
++                            <CardHeader>
++                                <CardTitle className="text-xl font-semibold">Detalhes do paciente</CardTitle>
++                            </CardHeader>
++                            <CardContent className="pt-6 space-y-4">
++                                {selectedPatient ? (
++                                    <div>
++                                        <h3 className="text-2xl font-bold mb-2">{selectedPatient.name}</h3>
++                                        <p className="text-sm text-muted-foreground">{selectedPatient.email}</p>
++                                        <p className="text-sm text-muted-foreground mt-1">Última visita: {selectedPatient.lastVisit}</p>
++
++                                        <Separator className="my-4" />
++
++                                        <div className="space-y-2">
++                                            <p className="font-medium">Sua Atribuição:</p>
++                                            <Badge variant="secondary" className="text-sm font-normal">
++                                                {selectedPatient.myRole || "Médico Responsável"}
++                                            </Badge>
++                                        </div>
++
++                                        <Separator className="my-4" />
++
++                                        <div className="space-y-2">
++                                            <p className="font-medium">Risco (Baseado no histórico):</p>
++                                            <span className={`text-lg ${getRiskColor(selectedPatient.riskLevel)}`}>
++                                                {selectedPatient.riskLevel}
++                                            </span>
++                                        </div>
++
++                                        <Separator className="my-4" />
++
++                                        <div className="space-y-2">
++                                            <p className="font-medium">Próxima consulta:</p>
++                                            <span className="text-lg font-semibold text-primary">
++                                                {selectedPatient.nextAppointment}
++                                            </span>
++                                        </div>
++
++                                        <Separator className="my-4" />
++
++                                        <div className="space-y-2">
++                                            <p className="font-medium">Ações:</p>
++                                            <Button
++                                                className="w-full"
++                                                variant="default"
++                                                onClick={() => navigate(`/medico/paciente/${selectedPatient.id}`)}
++                                            >
++                                                Ver histórico completo
++                                            </Button>
++                                        </div>
++                                    </div>
++                                ) : (
++                                    <div className="flex flex-col items-center justify-center h-[300px] text-center text-muted-foreground">
++                                        <User className="h-12 w-12 mb-4 opacity-20" />
++                                        <p>Selecione um paciente para ver detalhes.</p>
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
++                    )}
++                </div>
++            </div>
++
++            {/* Mobile Drawer */}
++            {isMobile && (
++                <Drawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
++                    <DrawerContent>
++                        <DrawerHeader>
++                            <DrawerTitle>Detalhes do Paciente</DrawerTitle>
++                            <DrawerDescription>Resumo e ações</DrawerDescription>
++                        </DrawerHeader>
++                        <div className="p-4 max-h-[70vh] overflow-y-auto">
++                            {selectedPatient && (
++                                <div className="space-y-4">
+                                     <h3 className="text-2xl font-bold mb-2">{selectedPatient.name}</h3>
+                                     <p className="text-sm text-muted-foreground">{selectedPatient.email}</p>
+                                     <p className="text-sm text-muted-foreground mt-1">Última visita: {selectedPatient.lastVisit}</p>
+ 
+-                                    <Separator className="my-4" />
++                                    <Separator className="my-2" />
+ 
+                                     <div className="space-y-2">
+                                         <p className="font-medium">Sua Atribuição:</p>
+@@ -277,16 +352,16 @@ const MedicoDashboard = () => {
+                                         </Badge>
+                                     </div>
+ 
+-                                    <Separator className="my-4" />
++                                    <Separator className="my-2" />
+ 
+                                     <div className="space-y-2">
+-                                        <p className="font-medium">Risco (Baseado no histórico):</p>
++                                        <p className="font-medium">Risco:</p>
+                                         <span className={`text-lg ${getRiskColor(selectedPatient.riskLevel)}`}>
+                                             {selectedPatient.riskLevel}
+                                         </span>
+                                     </div>
+ 
+-                                    <Separator className="my-4" />
++                                    <Separator className="my-2" />
+ 
+                                     <div className="space-y-2">
+                                         <p className="font-medium">Próxima consulta:</p>
+@@ -295,29 +370,22 @@ const MedicoDashboard = () => {
+                                         </span>
+                                     </div>
+ 
+-                                    <Separator className="my-4" />
+-
+-                                    <div className="space-y-2">
+-                                        <p className="font-medium">Ações:</p>
+-                                        <Button
+-                                            className="w-full"
+-                                            variant="default"
+-                                            onClick={() => navigate(`/medico/paciente/${selectedPatient.id}`)}
+-                                        >
+-                                            Ver histórico completo
+-                                        </Button>
+-                                    </div>
+-                                </div>
+-                            ) : (
+-                                <div className="flex flex-col items-center justify-center h-[300px] text-center text-muted-foreground">
+-                                    <User className="h-12 w-12 mb-4 opacity-20" />
+-                                    <p>Selecione um paciente para ver detalhes.</p>
++                                    <Button
++                                        className="w-full mt-4"
++                                        variant="default"
++                                        onClick={() => navigate(`/medico/paciente/${selectedPatient.id}`)}
++                                    >
++                                        Ver histórico completo
++                                    </Button>
++                                    <DrawerClose asChild>
++                                        <Button variant="outline" className="w-full">Voltar à lista</Button>
++                                    </DrawerClose>
+                                 </div>
+                             )}
+-                        </CardContent>
+-                    </Card>
+-                </div>
+-            </div>
++                        </div>
++                    </DrawerContent>
++                </Drawer>
++            )}
+         </div>
+     );
+ };
+diff --git a/Frontend/src/pages/Doctor/DoctorSchedule.tsx b/Frontend/src/pages/Doctor/DoctorSchedule.tsx
+index 922fd08..ef66470 100644
+--- a/Frontend/src/pages/Doctor/DoctorSchedule.tsx
++++ b/Frontend/src/pages/Doctor/DoctorSchedule.tsx
+@@ -274,23 +274,23 @@ const DoctorSchedule = () => {
+                                             key={appointment.id}
+                                             className="border rounded-lg p-4 hover:shadow-md transition-shadow"
+                                         >
+-                                            <div className="flex items-start justify-between">
++                                            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                                                 <div className="space-y-3 flex-1">
+                                                     {/* Time and Patient */}
+-                                                    <div className="flex items-center gap-3">
+-                                                        <div className="flex items-center gap-2 text-lg font-semibold">
++                                                    <div className="flex flex-wrap items-center gap-3">
++                                                        <div className="flex items-center gap-2 text-lg font-semibold whitespace-nowrap">
+                                                             <Clock className="h-4 w-4 text-muted-foreground" />
+                                                             {appointment.time}
+                                                         </div>
+-                                                        <Separator orientation="vertical" className="h-6" />
++                                                        <Separator orientation="vertical" className="h-6 hidden sm:block" />
+                                                         <div className="flex items-center gap-2">
+                                                             <User className="h-4 w-4 text-muted-foreground" />
+-                                                            <span className="font-medium">{appointment.patientName}</span>
++                                                            <span className="font-medium truncate max-w-[200px]">{appointment.patientName}</span>
+                                                         </div>
+                                                     </div>
+ 
+                                                     {/* Badges */}
+-                                                    <div className="flex gap-2">
++                                                    <div className="flex flex-wrap gap-2">
+                                                         <Badge variant="outline" className={getTypeColor(appointment.type)}>
+                                                             {appointment.type}
+                                                         </Badge>
+@@ -301,12 +301,12 @@ const DoctorSchedule = () => {
+                                                 </div>
+ 
+                                                 {/* Actions */}
+-                                                <div className="flex gap-2">
++                                                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto mt-2 lg:mt-0">
+                                                     <Button
+                                                         variant="outline"
+                                                         size="sm"
+                                                         onClick={() => navigate(`/medico/paciente/${appointment.patientId}`)}
+-                                                        className="gap-2"
++                                                        className="gap-2 w-full sm:w-auto"
+                                                     >
+                                                         <FileText className="h-4 w-4" />
+                                                         Ver prontuário
+@@ -315,7 +315,7 @@ const DoctorSchedule = () => {
+                                                         variant="default"
+                                                         size="sm"
+                                                         onClick={() => navigate(`/medico/videoconsulta/${appointment.id}`)}
+-                                                        className="gap-2"
++                                                        className="gap-2 w-full sm:w-auto"
+                                                     >
+                                                         <Video className="h-4 w-4" />
+                                                         Iniciar teleconsulta
+diff --git a/Frontend/src/pages/VideoConsultation/DoctorVideoScreen.tsx b/Frontend/src/pages/VideoConsultation/DoctorVideoScreen.tsx
+index f35aa5f..3978957 100644
+--- a/Frontend/src/pages/VideoConsultation/DoctorVideoScreen.tsx
++++ b/Frontend/src/pages/VideoConsultation/DoctorVideoScreen.tsx
+@@ -11,10 +11,12 @@ import { DoctorPanelTabs } from './components/DoctorPanelTabs';
+ import { medicalService } from '@/services/medicalService';
+ import { Alert, AlertDescription } from '@/components/ui/alert';
+ import { VideoSDKMeeting } from '@videosdk.live/rtc-js-prebuilt';
++import { useIsMobile } from '@/hooks/use-mobile';
+ 
+ export function DoctorVideoScreen() {
+     const { id } = useParams<{ id: string }>();
+     const navigate = useNavigate();
++    const isMobile = useIsMobile();
+ 
+     const [loading, setLoading] = useState(true);
+     const [error, setError] = useState<string | null>(null);
+@@ -65,7 +67,7 @@ export function DoctorVideoScreen() {
+             webcamEnabled: true,
+             participantCanToggleSelfWebcam: true,
+             participantCanToggleSelfMic: true,
+-            
++
+             // Otimizações de Áudio para Volume
+             micQuality: "speech_standard", // Foca a captação na frequência da voz humana
+             cameraOptimizationMode: "motion", // Prioriza taxa de quadros e sincronia áudio/vídeo
+@@ -125,8 +127,8 @@ export function DoctorVideoScreen() {
+     }, [roomData, navigate]);
+ 
+     return (
+-        <div className="flex h-screen w-full bg-slate-50">
+-            <ResizablePanelGroup direction="horizontal" className="w-full h-full">
++        <div className="flex h-[100dvh] w-full bg-slate-50 flex-col lg:flex-row">
++            <ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"} className="w-full h-full">
+ 
+                 {/* Left Panel: Video Consultation (VideoSDK) */}
+                 <ResizablePanel defaultSize={50} minSize={30} maxSize={70} className="flex flex-col bg-slate-950 text-white shadow-xl z-10">
+diff --git a/Frontend/src/pages/VideoConsultation/PatientVideoScreen.tsx b/Frontend/src/pages/VideoConsultation/PatientVideoScreen.tsx
+index 45e9d3a..6952fb9 100644
+--- a/Frontend/src/pages/VideoConsultation/PatientVideoScreen.tsx
++++ b/Frontend/src/pages/VideoConsultation/PatientVideoScreen.tsx
+@@ -100,7 +100,7 @@ export function PatientVideoScreen() {
+     }, [roomData, joined, navigate]);
+ 
+     return (
+-        <div className="flex h-screen w-full bg-slate-50 flex-col">
++        <div className="flex h-[100dvh] w-full bg-slate-50 flex-col">
+ 
+             {/* Minimal Header */}
+             <div className="p-4 flex items-center justify-between bg-white border-b shadow-sm z-10 shrink-0">
+@@ -139,7 +139,7 @@ export function PatientVideoScreen() {
+                             <p className="text-slate-400 text-sm mb-6">
+                                 O navegador exige autorização manual para liberar sua câmera e microfone nesta rede segura.
+                             </p>
+-                            <button 
++                            <button
+                                 onClick={() => setJoined(true)}
+                                 className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold shadow-lg shadow-blue-500/20 transition-all active:scale-95"
+                             >

@@ -274,23 +274,23 @@ const DoctorSchedule = () => {
                                             key={appointment.id}
                                             className="border rounded-lg p-4 hover:shadow-md transition-shadow"
                                         >
-                                            <div className="flex items-start justify-between">
+                                            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
                                                 <div className="space-y-3 flex-1">
                                                     {/* Time and Patient */}
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="flex items-center gap-2 text-lg font-semibold">
+                                                    <div className="flex flex-wrap items-center gap-3">
+                                                        <div className="flex items-center gap-2 text-lg font-semibold whitespace-nowrap">
                                                             <Clock className="h-4 w-4 text-muted-foreground" />
                                                             {appointment.time}
                                                         </div>
-                                                        <Separator orientation="vertical" className="h-6" />
+                                                        <Separator orientation="vertical" className="h-6 hidden sm:block" />
                                                         <div className="flex items-center gap-2">
                                                             <User className="h-4 w-4 text-muted-foreground" />
-                                                            <span className="font-medium">{appointment.patientName}</span>
+                                                            <span className="font-medium truncate max-w-[200px]">{appointment.patientName}</span>
                                                         </div>
                                                     </div>
 
                                                     {/* Badges */}
-                                                    <div className="flex gap-2">
+                                                    <div className="flex flex-wrap gap-2">
                                                         <Badge variant="outline" className={getTypeColor(appointment.type)}>
                                                             {appointment.type}
                                                         </Badge>
@@ -301,12 +301,12 @@ const DoctorSchedule = () => {
                                                 </div>
 
                                                 {/* Actions */}
-                                                <div className="flex gap-2">
+                                                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto mt-2 lg:mt-0">
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
                                                         onClick={() => navigate(`/medico/paciente/${appointment.patientId}`)}
-                                                        className="gap-2"
+                                                        className="gap-2 w-full sm:w-auto"
                                                     >
                                                         <FileText className="h-4 w-4" />
                                                         Ver prontuário
@@ -315,7 +315,7 @@ const DoctorSchedule = () => {
                                                         variant="default"
                                                         size="sm"
                                                         onClick={() => navigate(`/medico/videoconsulta/${appointment.id}`)}
-                                                        className="gap-2"
+                                                        className="gap-2 w-full sm:w-auto"
                                                     >
                                                         <Video className="h-4 w-4" />
                                                         Iniciar teleconsulta

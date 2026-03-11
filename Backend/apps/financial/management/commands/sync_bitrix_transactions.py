@@ -78,12 +78,11 @@ class Command(BaseCommand):
                 real_status = 'approved' if transaction.status == Transaction.Status.APPROVED else 'pending'
                 
                 # [ASAAS MIGRATION]
-                p_id = transaction.asaas_payment_id or transaction.mercado_pago_id or meta.get("payment_response", {}).get('id')
+                p_id = transaction.asaas_payment_id or meta.get("payment_response", {}).get('id')
                 
                 payment_info = {
                     "id": p_id,
                     "asaas_payment_id": transaction.asaas_payment_id,
-                    "mercado_pago_id": transaction.mercado_pago_id,
                     "date_created": str(transaction.created_at),
                     "status": real_status
                 }

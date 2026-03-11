@@ -11,6 +11,8 @@ import { User, Calendar as CalendarIcon, List, LogOut, Upload, Loader2, RefreshC
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import api from "@/lib/api";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription, DrawerFooter, DrawerClose } from "@/components/ui/drawer";
 
 import { useToast } from "@/components/ui/use-toast";
 import { DoctorInfo, DoctorStats, Patient } from "@/types/medical";
@@ -20,6 +22,8 @@ const MedicoDashboard = () => {
     const navigate = useNavigate();
     const { toast } = useToast();
     const [date, setDate] = useState<Date | undefined>(new Date());
+    const isMobile = useIsMobile();
+    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
     // State for Real Data
     const [loading, setLoading] = useState(true);
@@ -237,7 +241,10 @@ const MedicoDashboard = () => {
                                             <li key={p.id}>
                                                 <Button
                                                     variant={selectedPatient?.id === p.id ? "secondary" : "ghost"}
-                                                    onClick={() => setSelectedPatient(p)}
+                                                    onClick={() => {
+                                                        setSelectedPatient(p);
+                                                        if (isMobile) setIsDrawerOpen(true);
+                                                    }}
                                                     className="w-full text-left justify-between h-auto py-3"
                                                 >
                                                     <div className="flex flex-col items-start">
@@ -257,18 +264,86 @@ const MedicoDashboard = () => {
                         </CardContent>
                     </Card>
 
-                    <Card className="md:col-span-1">
-                        <CardHeader>
-                            <CardTitle className="text-xl font-semibold">Detalhes do paciente</CardTitle>
-                        </CardHeader>
-                        <CardContent className="pt-6 space-y-4">
-                            {selectedPatient ? (
-                                <div>
+                    {!isMobile && (
+                        <Card className="md:col-span-1">
+                            <CardHeader>
+                                <CardTitle className="text-xl font-semibold">Detalhes do paciente</CardTitle>
+                            </CardHeader>
+                            <CardContent className="pt-6 space-y-4">
+                                {selectedPatient ? (
+                                    <div>
+                                        <h3 className="text-2xl font-bold mb-2">{selectedPatient.name}</h3>
+                                        <p className="text-sm text-muted-foreground">{selectedPatient.email}</p>
+                                        <p className="text-sm text-muted-foreground mt-1">Última visita: {selectedPatient.lastVisit}</p>
+
+                                        <Separator className="my-4" />
+
+                                        <div className="space-y-2">
+                                            <p className="font-medium">Sua Atribuição:</p>
+                                            <Badge variant="secondary" className="text-sm font-normal">
+                                                {selectedPatient.myRole || "Médico Responsável"}
+                                            </Badge>
+                                        </div>
+
+                                        <Separator className="my-4" />
+
+                                        <div className="space-y-2">
+                                            <p className="font-medium">Risco (Baseado no histórico):</p>
+                                            <span className={`text-lg ${getRiskColor(selectedPatient.riskLevel)}`}>
+                                                {selectedPatient.riskLevel}
+                                            </span>
+                                        </div>
+
+                                        <Separator className="my-4" />
+
+                                        <div className="space-y-2">
+                                            <p className="font-medium">Próxima consulta:</p>
+                                            <span className="text-lg font-semibold text-primary">
+                                                {selectedPatient.nextAppointment}
+                                            </span>
+                                        </div>
+
+                                        <Separator className="my-4" />
+
+                                        <div className="space-y-2">
+                                            <p className="font-medium">Ações:</p>
+                                            <Button
+                                                className="w-full"
+                                                variant="default"
+                                                onClick={() => navigate(`/medico/paciente/${selectedPatient.id}`)}
+                                            >
+                                                Ver histórico completo
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center h-[300px] text-center text-muted-foreground">
+                                        <User className="h-12 w-12 mb-4 opacity-20" />
+                                        <p>Selecione um paciente para ver detalhes.</p>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )}
+                </div>
+            </div>
+
+            {/* Mobile Drawer */}
+            {isMobile && (
+                <Drawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
+                    <DrawerContent>
+                        <DrawerHeader>
+                            <DrawerTitle>Detalhes do Paciente</DrawerTitle>
+                            <DrawerDescription>Resumo e ações</DrawerDescription>
+                        </DrawerHeader>
+                        <div className="p-4 max-h-[70vh] overflow-y-auto">
+                            {selectedPatient && (
+                                <div className="space-y-4">
                                     <h3 className="text-2xl font-bold mb-2">{selectedPatient.name}</h3>
                                     <p className="text-sm text-muted-foreground">{selectedPatient.email}</p>
                                     <p className="text-sm text-muted-foreground mt-1">Última visita: {selectedPatient.lastVisit}</p>
 
-                                    <Separator className="my-4" />
+                                    <Separator className="my-2" />
 
                                     <div className="space-y-2">
                                         <p className="font-medium">Sua Atribuição:</p>
@@ -277,16 +352,16 @@ const MedicoDashboard = () => {
                                         </Badge>
                                     </div>
 
-                                    <Separator className="my-4" />
+                                    <Separator className="my-2" />
 
                                     <div className="space-y-2">
-                                        <p className="font-medium">Risco (Baseado no histórico):</p>
+                                        <p className="font-medium">Risco:</p>
                                         <span className={`text-lg ${getRiskColor(selectedPatient.riskLevel)}`}>
                                             {selectedPatient.riskLevel}
                                         </span>
                                     </div>
 
-                                    <Separator className="my-4" />
+                                    <Separator className="my-2" />
 
                                     <div className="space-y-2">
                                         <p className="font-medium">Próxima consulta:</p>
@@ -295,29 +370,22 @@ const MedicoDashboard = () => {
                                         </span>
                                     </div>
 
-                                    <Separator className="my-4" />
-
-                                    <div className="space-y-2">
-                                        <p className="font-medium">Ações:</p>
-                                        <Button
-                                            className="w-full"
-                                            variant="default"
-                                            onClick={() => navigate(`/medico/paciente/${selectedPatient.id}`)}
-                                        >
-                                            Ver histórico completo
-                                        </Button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center h-[300px] text-center text-muted-foreground">
-                                    <User className="h-12 w-12 mb-4 opacity-20" />
-                                    <p>Selecione um paciente para ver detalhes.</p>
+                                    <Button
+                                        className="w-full mt-4"
+                                        variant="default"
+                                        onClick={() => navigate(`/medico/paciente/${selectedPatient.id}`)}
+                                    >
+                                        Ver histórico completo
+                                    </Button>
+                                    <DrawerClose asChild>
+                                        <Button variant="outline" className="w-full">Voltar à lista</Button>
+                                    </DrawerClose>
                                 </div>
                             )}
-                        </CardContent>
-                    </Card>
-                </div>
-            </div>
+                        </div>
+                    </DrawerContent>
+                </Drawer>
+            )}
         </div>
     );
 };

@@ -354,6 +354,8 @@ const ClientProfile = () => {
                                                 <Input
                                                     id="phone"
                                                     name="phone"
+                                                    type="tel"
+                                                    inputMode="tel"
                                                     value={formData.phone}
                                                     onChange={handleChange}
                                                     className="pl-9 text-gray-900 disabled:opacity-100"

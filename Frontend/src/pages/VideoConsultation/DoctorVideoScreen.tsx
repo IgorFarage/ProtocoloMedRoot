@@ -11,10 +11,12 @@ import { DoctorPanelTabs } from './components/DoctorPanelTabs';
 import { medicalService } from '@/services/medicalService';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { VideoSDKMeeting } from '@videosdk.live/rtc-js-prebuilt';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 export function DoctorVideoScreen() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
+    const isMobile = useIsMobile();
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -65,7 +67,7 @@ export function DoctorVideoScreen() {
             webcamEnabled: true,
             participantCanToggleSelfWebcam: true,
             participantCanToggleSelfMic: true,
-            
+
             // Otimizações de Áudio para Volume
             micQuality: "speech_standard", // Foca a captação na frequência da voz humana
             cameraOptimizationMode: "motion", // Prioriza taxa de quadros e sincronia áudio/vídeo
@@ -125,8 +127,8 @@ export function DoctorVideoScreen() {
     }, [roomData, navigate]);
 
     return (
-        <div className="flex h-screen w-full bg-slate-50">
-            <ResizablePanelGroup direction="horizontal" className="w-full h-full">
+        <div className="flex h-[100dvh] w-full bg-slate-50 flex-col lg:flex-row">
+            <ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"} className="w-full h-full">
 
                 {/* Left Panel: Video Consultation (VideoSDK) */}
                 <ResizablePanel defaultSize={50} minSize={30} maxSize={70} className="flex flex-col bg-slate-950 text-white shadow-xl z-10">

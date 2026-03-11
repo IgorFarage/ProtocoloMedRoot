@@ -33,7 +33,7 @@ class Command(BaseCommand):
             status=Transaction.Status.PENDING,
             created_at__gte=limit_date
         ).filter(
-            Q(mercado_pago_id__isnull=False) | Q(asaas_payment_id__isnull=False)
+            asaas_payment_id__isnull=False
         )
 
         count = pending_transactions.count()
@@ -72,22 +72,7 @@ class Command(BaseCommand):
                          self.stdout.write(self.style.WARNING("      ⚠️ Asaas ID não encontrado na API."))
 
 
-                # --- STRATEGY: MERCADO PAGO (LEGACY) ---
-                elif transaction.mercado_pago_id:
-                    self.stdout.write(f"      [MP] ID: {transaction.mercado_pago_id}")
-                    import mercadopago
-                    sdk = mercadopago.SDK(settings.MERCADO_PAGO_ACCESS_TOKEN)
-                    payment_response = sdk.payment().get(int(transaction.mercado_pago_id))
-                    
-                    if payment_response["status"] == 200:
-                        payment_data = payment_response["response"]
-                        status_mp = payment_data.get("status")
-                        payment_json = payment_data
-                        
-                        if status_mp in ['approved', 'authorized']:
-                            real_status = 'approved'
-                        elif status_mp in ['cancelled', 'rejected']:
-                            real_status = 'rejected'
+                # --- STRATEGY: MERCADO PAGO (LEGACY) REMOVIDA ---
                 
                 # --- DECISION ---
                 # Check for Approved (String or Enum)
@@ -121,7 +106,7 @@ class Command(BaseCommand):
                                 products_list = protocol.get('products', [])
                         
                         # Prepare Deal Payload
-                        p_id = transaction.asaas_payment_id or transaction.mercado_pago_id
+                        p_id = transaction.asaas_payment_id
                         
                         deal_id = BitrixService.prepare_deal_payment(
                             user=transaction.user,
@@ -132,8 +117,7 @@ class Command(BaseCommand):
                             payment_data={
                                 "status": "approved",
                                 "id": p_id,
-                                "asaas_payment_id": transaction.asaas_payment_id,
-                                "mercado_pago_id": transaction.mercado_pago_id
+                                "asaas_payment_id": transaction.asaas_payment_id
                             }
                         )
                         

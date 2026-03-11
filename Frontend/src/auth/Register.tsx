@@ -111,7 +111,7 @@ const Register = () => {
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="cpf">CPF</Label>
-                            <Input id="cpf" type="text" placeholder="000.000.000-00" maxLength={14} required value={formData.cpf} onChange={handleChange} />
+                            <Input id="cpf" type="text" inputMode="numeric" placeholder="000.000.000-00" maxLength={14} required value={formData.cpf} onChange={handleChange} />
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="phone">Celular (WhatsApp)</Label>

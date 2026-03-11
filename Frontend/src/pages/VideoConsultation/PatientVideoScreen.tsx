@@ -100,7 +100,7 @@ export function PatientVideoScreen() {
     }, [roomData, joined, navigate]);
 
     return (
-        <div className="flex h-screen w-full bg-slate-50 flex-col">
+        <div className="flex h-[100dvh] w-full bg-slate-50 flex-col">
 
             {/* Minimal Header */}
             <div className="p-4 flex items-center justify-between bg-white border-b shadow-sm z-10 shrink-0">
@@ -139,7 +139,7 @@ export function PatientVideoScreen() {
                             <p className="text-slate-400 text-sm mb-6">
                                 O navegador exige autorização manual para liberar sua câmera e microfone nesta rede segura.
                             </p>
-                            <button 
+                            <button
                                 onClick={() => setJoined(true)}
                                 className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold shadow-lg shadow-blue-500/20 transition-all active:scale-95"
                             >

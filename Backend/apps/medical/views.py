@@ -562,9 +562,9 @@ class TelemedicineRoomView(APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
             
-            # Recuperamos o Meeting ID salvo. Se for antigo (Daily url completa), precisamos só do último fragmento se quisermos usar o Prebuilt
-            # Mas vamos extrair o `daily_room_name` onde salvamos o UUID/MeetingId.
-            meeting_id = appt.daily_room_name
+            # O Meeting ID em VideoSDK que salvamos no antigo campo ou onde quer que esteja.
+            # Como removemos daily_room_name, idealmente criamos um video_room_id ou reusamos meeting_link
+            meeting_id = appt.meeting_link or f"protocolo-{appt.id}"
             
             # Gera Token JWT válido por 24h na mosca
             fresh_token = VideoSDKService.generate_token(is_owner=is_doctor)

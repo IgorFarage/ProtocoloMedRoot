@@ -56,7 +56,6 @@ class Transaction(models.Model):
         DEBIT_CARD = 'debit_card', 'Cartão de Débito' # Adicionado
         TICKET = 'ticket', 'Boleto'
         PIX = 'bank_transfer', 'Pix'
-        STARTUP_CREDIT = 'wallet_purchase', 'Crédito MP'
         UNKNOWN = 'unknown', 'Desconhecido'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -79,8 +78,6 @@ class Transaction(models.Model):
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Valor economizado")
 
     # Integração
-    mercado_pago_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
-    subscription_id = models.CharField(max_length=100, null=True, blank=True, help_text="ID da Assinatura (Preapproval) no MP")
     asaas_payment_id = models.CharField(max_length=100, unique=True, null=True, blank=True, help_text="ID do Pagamento no Asaas")
     asaas_subscription_id = models.CharField(max_length=100, null=True, blank=True, help_text="ID da Assinatura no Asaas")
     external_reference = models.CharField(max_length=100, unique=True)
@@ -95,7 +92,6 @@ class Transaction(models.Model):
     )
     bitrix_sync_attempts = models.IntegerField(default=0)
     last_sync_attempt = models.DateTimeField(null=True, blank=True)
-    mp_metadata = models.JSONField(default=dict, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

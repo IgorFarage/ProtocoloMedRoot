@@ -53,7 +53,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # Integrações
     id_bitrix = models.CharField(max_length=50, null=True, blank=True, help_text="ID do contato no CRM")
-    customer_id_mp = models.CharField(max_length=50, null=True, blank=True, help_text="ID do Cliente no Mercado Pago")
     asaas_customer_id = models.CharField(max_length=50, null=True, blank=True, help_text="ID do Cliente no Asaas")
     
     # Lógica de Negócio
@@ -164,9 +163,6 @@ class Patients(models.Model):
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     gender = models.CharField(max_length=20, blank=True, null=True)
-    
-    # Legacy Field (Will be removed after migration)
-    assigned_doctor = models.ForeignKey(Doctors, on_delete=models.SET_NULL, null=True, blank=True, related_name='legacy_patients')
     
     # New Medical Team
     assigned_trichologist = models.ForeignKey(

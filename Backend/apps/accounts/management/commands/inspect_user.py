@@ -42,7 +42,6 @@ class Command(BaseCommand):
                 "role": user.role,
                 "current_plan": user.current_plan,
                 "id_bitrix": user.id_bitrix,
-                "customer_id_mp": user.customer_id_mp,
                 "date_joined": user.created_at,
                 "is_active": user.is_active,
             },
@@ -66,8 +65,7 @@ class Command(BaseCommand):
         if hasattr(user, 'patients'):
             p = user.patients
             data["PERFIL"]["paciente"] = {
-                "gender": p.gender,
-                "assigned_doctor_id": str(p.assigned_doctor.user.id) if p.assigned_doctor else None
+                "gender": p.gender
             }
         
         if hasattr(user, 'doctors'):

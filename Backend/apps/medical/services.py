@@ -32,12 +32,8 @@ class MedicalScheduleService:
             room_id = VideoSDKService.create_room(custom_room_id=custom_id)
             
             if room_id:
-                appt.daily_room_name = room_id # Reaproveitamos a coluna para o Meeting ID
-                # Em VideoSDK, tokens JWT expiram, então nem precisamos salvar no BD,
-                # geramos On-The-Fly na View! Mas vamos salvar temporários para retro-compatibilidade MVP ou simplesmente nulos.
-                appt.daily_patient_token = VideoSDKService.generate_token(is_owner=False)
-                appt.daily_doctor_token = VideoSDKService.generate_token(is_owner=True)
-                appt.save(update_fields=['daily_room_name', 'daily_patient_token', 'daily_doctor_token'])
+                appt.meeting_link = room_id # Reaproveitamos meeting_link para salvar o VideoSDK Meeting ID
+                appt.save(update_fields=['meeting_link'])
         except Exception as e:
             print(f"Erro ao provisionar sala VideoSDK: {e}")
 

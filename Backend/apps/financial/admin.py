@@ -13,5 +13,5 @@ class TransactionAdmin(admin.ModelAdmin):
     # Atualizamos 'plan' para 'plan_type', pois foi assim que definimos no model novo
     list_display = ('id', 'user', 'plan_type', 'amount', 'status', 'created_at', 'coupon')
     list_filter = ('status', 'plan_type', 'cycle')
-    search_fields = ('user__email', 'external_reference', 'mercado_pago_id')
+    search_fields = ('user__email', 'external_reference', 'asaas_payment_id')
     readonly_fields = ('id', 'created_at', 'updated_at', 'external_reference')

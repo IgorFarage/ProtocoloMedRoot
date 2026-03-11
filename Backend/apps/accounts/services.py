@@ -235,7 +235,7 @@ class BitrixService:
             # 4. Dados de Pagamento (Sem mover Stage)
             if payment_data:
                 # [ASAAS MIGRATION] Prioritize Asaas ID
-                p_id = payment_data.get('asaas_payment_id') or payment_data.get('mercado_pago_id') or payment_data.get('id')
+                p_id = payment_data.get('asaas_payment_id') or payment_data.get('id')
                 if p_id: 
                     fields_to_save[BitrixConfig.DEAL_FIELDS["PAYMENT_ID"]] = str(p_id)
                 if payment_data.get('date_created'): 

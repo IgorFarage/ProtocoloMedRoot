@@ -129,12 +129,10 @@ class Command(BaseCommand):
                 plan_title=f"ProtocoloMed - {plan_slug}",
                 total_amount=final_total,
                 answers=answers,
-                answers=answers,
                 payment_data={
                     "status": "approved",
                     "asaas_payment_id": last_trans.asaas_payment_id,
-                    "mercado_pago_id": last_trans.mercado_pago_id,
-                    "id": last_trans.asaas_payment_id or last_trans.mercado_pago_id
+                    "id": last_trans.asaas_payment_id
                 } if last_trans else None 
             )
 
