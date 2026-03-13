@@ -1,6 +1,7 @@
 # Arquivos de Ambiente e Segurança
 venv/
 .env
+.env.prod
 
 # Arquivos de Cache e Compilação
 __pycache__/
@@ -26,3 +27,6 @@ ArquivosTeste/
 
 # Agentes
 .agents/
+
+# Added by ggshield
+.cache_ggshield

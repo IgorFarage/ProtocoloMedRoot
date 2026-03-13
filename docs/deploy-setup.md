@@ -34,8 +34,8 @@ JWT_ACCESS_TOKEN_LIFETIME=30 # minutos
 ```env
 DB_ENGINE=django.db.backends.postgresql
 DB_NAME=medroot_db
-DB_USER=medroot_admin
-DB_PASSWORD=senha_segura
+DB_USER=seu_usuario_bd
+DB_PASSWORD=sua_senha_bd
 DB_HOST=127.0.0.1 ou rds.url.com
 DB_PORT=5432
 ```
@@ -62,10 +62,10 @@ VIDEOSDK_API_ENDPOINT=https://api.videosdk.live/v2
 
 ### Disparo de Email (SMTP Transacional - Opcional)
 ```env
-EMAIL_HOST=smtp.sendgrid.net  # ou aws ses, mailgun, etc
+EMAIL_HOST=smtp.exemplo.com  # ou aws ses, mailgun, etc
 EMAIL_PORT=587
-EMAIL_HOST_USER=apikey
-EMAIL_HOST_PASSWORD=sua_senha
+EMAIL_HOST_USER=sua_apikey
+EMAIL_HOST_PASSWORD=sua_senha_aqui
 DEFAULT_FROM_EMAIL=contato@seudominio.com.br
 ```
 
