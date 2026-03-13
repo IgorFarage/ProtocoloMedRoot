@@ -30,3 +30,7 @@ ArquivosTeste/
 
 # Added by ggshield
 .cache_ggshield
+
+# Arquivos de Backup do Banco
+backup_producao_*.json
+backup_producao_*.sql
